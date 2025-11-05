@@ -343,20 +343,18 @@
         </div>
 
         <!-- Footer -->
-        <div class="footer">
-          <a href="{% url 'sales:sales' %}" class="text-decoration-none" id="btn">
-            <button type="button" class="btn button">Cancel</button>
-          </a>
-
-          <div class="dropdown">
-            <button type="button" class="btn btn-green">Save ▼</button>
-            <div class="dropdown-menu">
-              <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
-              <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
-              <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
-            </div>
+      <div class="footer">
+        <a href="{% url 'expenses:expenses' %}"><button class="btn btn-cancel" type="button">Cancel</button></a>
+        <div class="dropdown">
+          <button type="button" class="btn btn-green">Save ▼</button>
+          <div class="dropdown-menu">
+            <button type="submit" name="save_action" value="save">Save</button>
+              <button type="submit" name="save_action" value="save&new">Save & New</button>
+              <button type="submit" name="save_action" value="save&close">Save & Close</button>
+        
           </div>
         </div>
+      </div>
       </form>
     </div>
   </div>
