@@ -164,6 +164,29 @@
               <button type="button" class="btn btn-sm button ms-2" onclick="showAddClass()">+ Add</button>
             </div>
           </div>
+<!-- Add Category Box -->
+<div id="addCategoryBox" style="display:none; margin-top: 15px;">
+  <div class="form-group">
+    <label>New Category Name</label>
+    <input type="text" id="newCategoryName" class="form-control" placeholder="Enter category name">
+  </div>
+  <div style="margin-top: 10px;">
+    <button type="button" class="btn-light-green" onclick="saveNewCategory()">Save Category</button>
+    <button type="button" class="btn btn-cancel" onclick="document.getElementById('addCategoryBox').style.display='none'">Cancel</button>
+  </div>
+</div>
+
+<!-- Add Class Box -->
+<div id="addClassBox" style="display:none; margin-top: 15px;">
+  <div class="form-group">
+    <label>New Class Name</label>
+    <input type="text" id="newClassName" class="form-control" placeholder="Enter class name">
+  </div>
+  <div style="margin-top: 10px;">
+    <button type="button" class="btn-light-green" onclick="saveNewClass()">Save Class</button>
+    <button type="button" class="btn btn-cancel" onclick="document.getElementById('addClassBox').style.display='none'">Cancel</button>
+  </div>
+</div>
 
           <!-- Taxable -->
           <div class="form-group mx-5">
@@ -334,7 +357,6 @@
             </div>
           </div>
         </div>
-
       </form>
     </div>
   </div>
