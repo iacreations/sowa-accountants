@@ -1,0 +1,49 @@
+{% load static %}
+
+{% include 'includes/navbar.html' %}
+<style>
+  @media (min-width: 768px) 
+{
+ .todo-container{
+  margin: 20%;
+ }
+
+}
+</style>
+{% include 'includes/sidebar.html' %}
+
+    <div class="action">
+      <H1>TASKS</H1>
+      <div class="search_bar">
+        <input type="text" placeholder="Search Tasks" />
+      </div>
+ 
+     </div>
+    <div class="main_body">
+      <div class="todo-container" style="margin:0; margin-top: 10px;">
+        <div class="todo-column">
+          <h2>Tasks</h2>
+          <ul>
+            <li>Task 1 <i class="bx bx-check"></i></li>
+            <li>Task 2 <i class="bx bx-check"></i></li>
+            <li>Task 3 <i class="bx bx-check"></i></li>
+          </ul>
+        </div>
+        
+        <div class="todo-column">
+          <h2>Completed</h2>
+          <ul>
+            <li>Completed Task 1 <i class="bx bx-check-circle"></i></li>
+            <li>Completed Task 2 <i class="bx bx-check-circle"></i></li>
+          </ul>
+        </div>
+        <div class="todo-column">
+          <h2>Archived</h2>
+          <ul>
+            <li>Archived Task 1 <i class="bx bx-archive"></i></li>
+            <li>Archived Task 2 <i class="bx bx-archive"></i></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+ {% include 'includes/footer.html' %}

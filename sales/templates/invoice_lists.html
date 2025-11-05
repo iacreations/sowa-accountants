@@ -1,0 +1,198 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+ <style>
+  .badge {
+    display:inline-block; padding:4px 10px; border-radius:999px;
+    font-weight:700; font-size:12px; white-space:nowrap;
+  }
+  .badge-paid     { background:#e8f5e9; color:#2e7d32; }      /* green */
+  .badge-partial  { background:#fff8e1; color:#a05a00; }      /* amber */
+  .badge-overdue  { background:#ffebee; color:#b71c1c; }      /* red */
+  .badge-warning  { background:#fff8e1; color:#a05a00; }      /* amber */
+  .badge-neutral  { background:#f2f2f2; color:#444; }         /* gray */
+  .action-link { color:#39B54B; text-decoration:none; font-weight:900; }
+  .action-link:hover { text-decoration:underline; }
+
+  /* dropdown */
+
+  .action-cell { white-space: nowrap; text-align: left; }
+  .row-actions {
+    display: inline-flex; align-items: center; gap: 6px; position: relative;
+  }
+
+  .edit-link {
+    color: #39B54B; font-weight: 700; text-decoration: none;
+  }
+  .edit-link:hover { text-decoration: underline; }
+
+  .menu-wrap { position: relative; display: inline-block; }
+  .kebab {
+    border: 1px solid #e6e6e6; background: #fff; color: #39B54B;
+    width: 28px; height: 28px; line-height: 26px; text-align: center;
+    border-radius: 6px; cursor: pointer; font-weight: 900; padding: 0;
+  }
+  .kebab:focus { outline: 2px solid rgba(57,181,75,.35); outline-offset: 2px; }
+
+  .flyout {
+    position: absolute; right: 0; top: calc(100% + 6px);
+    min-width: 200px; background: #fff; border: 1px solid #e6e6e6;
+    border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,.10);
+    padding: 6px; display: none; z-index: 50;
+  }
+  .menu-wrap.open .flyout { display: block; }
+
+  .flyout a {
+    display: block; padding: 8px 10px; border-radius: 6px; color: #111;
+    text-decoration: none; font-weight: 600;
+  }
+  .flyout a:hover { background: #f5f5f5; }
+  .flyout .danger { color: #b71c1c; }
+  .flyout .sep { height: 1px; background: #eee; margin: 6px 4px; }
+</style>
+
+   <div class="action">
+      <h1>INVOICES</h1>
+      <div class="search_bar">
+        <input type="text" placeholder="Search Clients" />
+      </div>
+
+      <a href="{% url 'sales:add-invoice' %}" style="text-decoration: none;">
+         <button class="button">
+          <span class="button_text">ADD NEW</span>
+          <span class="button_icon">
+            <i class='bx bx-folder-plus'></i>
+          </span>
+        </button>
+        </a>
+        <div>
+       <form action="{% url 'sowaf:import-customers' %}" method="POST" enctype="multipart/form-data" style="display: flex;">
+         {% csrf_token %}
+        <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display: none;" id="excelInput" onchange="this.form.submit()" />
+        <label for="excelInput" class="button" style="cursor: pointer;">
+         <span class="button_text">IMPORT</span>
+        <span class="button_icon">
+        <i class='bx bx-import'></i>
+        </span>
+       </label>
+         </form>
+       </div>
+      <a href="{% url 'sowaf:add-customer' %}" style="text-decoration: none;">
+         <button class="button">
+          <span class="button_text">EXPORT</span>
+          <span class="button_icon">
+            <i class='bx bx-export'></i>
+          </span>
+        </button>
+      </a>
+          <span>
+            <i class='bx bx-printer'></i>
+            <i class='bx bx-customize'></i>
+            <i class='bx bx-cog' ></i>
+          </span>
+    </div>
+    <div class="main_body">
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th>Invoice no.</th>
+            <th>Customer Name</th>
+            <th>Created date</th>
+            <th>Due date</th>
+            <th>Email</th>
+            <th>Billing address</th>
+            <th>Status</th>
+            <th>  Actions ▾</th>    
+          </tr>
+        </thead>
+<tbody>
+  {% for inv in invoices %}
+    <tr>
+      <td>#{{ inv.id|stringformat:"04d" }}</td>
+      <td>{{ inv.customer.customer_name }}</td>
+      <td>{{ inv.date_created|date:"d/m/Y" }}</td>
+      <td>{{ inv.due_date|date:"d/m/Y" }}</td>
+      <td>{{ inv.email|default:"—" }}</td>
+      <td>{{ inv.billing_address|default:"—" }}</td>
+
+      <td class="text-dark" style="color: green;">
+        {% with s=inv.status %}
+          {% if "Overdue" in s %}
+            <span class="badge badge-overdue">{{ s }}</span>
+          {% elif "Due today" in s %}
+            <span class="badge badge-warning">{{ s }}</span>
+          {% elif "Partially paid" in s %}
+            <span class="badge badge-partial">{{ s }}</span>
+          {% elif "Deposited" in s or "Paid" in s %}
+            <span class="badge badge-paid">{{ s }}</span>
+          {% else %}
+            <span class="badge badge-neutral">{{ s }}</span>
+          {% endif %}
+        {% endwith %}
+      </td>
+
+     <td class="action-cell">
+  <div class="row-actions">
+    <a class="edit-link" href="{% url 'sales:edit-invoice' inv.id %}">Edit</a>
+
+    <div class="menu-wrap">
+      <button class="kebab" aria-haspopup="true" aria-expanded="false" aria-label="More actions">
+        ▾
+      </button>
+      <div class="flyout" role="menu">
+        <a role="menuitem" href="{% url 'sales:invoice-detail' inv.id %}">View</a>
+        <a role="menuitem" href="{% url 'sales:invoice-print' inv.id %}">Print / PDF</a>
+        <a role="menuitem" href="{% url 'sales:receive-payment' %}?invoice={{ inv.id }}">Receive payment</a>
+      </div>
+    </div>
+  </div>
+</td>
+
+
+    </tr>
+  {% empty %}
+    <tr><td colspan="8">No invoices available.</td></tr>
+  {% endfor %}
+</tbody>
+
+      </table>
+      <a href="{% url 'sowaf:import_customers_template' %}" style="text-decoration: none; float:right;">
+        <button class="button">
+          <span class="button_text">Template</span>
+        </button>
+      </a>
+    </div>
+ <script>
+  // Open/close the per-row action menu
+  document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.kebab');
+    // Close any other open menus
+    document.querySelectorAll('.menu-wrap.open').forEach(w => {
+      if (!w.contains(e.target)) {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab');
+        if (b) b.setAttribute('aria-expanded', 'false');
+      }
+    });
+    // Toggle this one
+    if (btn) {
+      const wrap = btn.closest('.menu-wrap');
+      const open = wrap.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+      e.stopPropagation();
+    }
+  });
+
+  // Esc closes all
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.menu-wrap.open').forEach(w => {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab');
+        if (b) b.setAttribute('aria-expanded', 'false');
+      });
+    }
+  });
+</script>
+
+{% include 'includes/footer.html' %}

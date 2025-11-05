@@ -1,0 +1,47 @@
+{% load static %}
+{% include 'includes/header.html' %}
+  <div class="container">
+    <div class="logo">
+      <img src="{% static 'sowaf/images/yo-logo.png' %}" alt="YoAccountant">
+    </div>
+    {% if messages %}
+      {% for message in messages %}
+        {% if messages.tags == 'error' %}
+        <p style="color:green; text-align:center;">{{message}}</p>
+        {% else %}
+        <p style="color:green; text-align:center;">{{message}}</p>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+ 
+    <!-- Login Form -->
+    <form id="login-form" action="{% url 'sowaAuth:login' %}" method="POST">
+    {% csrf_token %} 
+      <div class="input-group">
+        <i class='bx bx-user'></i>
+        <input type="text" placeholder="Username, Email or Phone number" name="username" required>
+      </div>
+      <div class="input-group">
+        <i class='bx bx-lock-alt'></i>
+        <input type="password" placeholder="Password" name="password" required>
+      </div>
+   <div>
+    <div style="display: flex;">
+      <div class="checkbox col-1">
+        <input type="checkbox"> Remember me
+      </div>
+      <div class="checkbox col-2" style="margin-left:5%;">
+         <h4> Already have an account? <a href="{% url 'sowaAuth:register' %}" style="color:green; text-align:center; font-size:14px; margin-left: 2px; text-decoration:none;">Register here!</a></h4>
+      </div>
+    </div>
+      <button type="submit" class="btn">LOGIN</button>
+     <div class="footer-link">
+  <a href="{% url 'password_reset' %}">Forgot your password?</a>
+</div>
+
+    </form>
+
+{% include 'includes/footer.html' %}
+    
+
+ 

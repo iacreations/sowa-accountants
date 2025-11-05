@@ -1,0 +1,110 @@
+{% load humanize %}
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <title>Trial Balance</title>
+   <style>
+    :root{
+      --brand:#39B54B;        /* YoAccountant green */
+      --ink:#0f5132;
+      --muted:#6b7280;
+      --line:#e7e7e7;
+      --head:#f7fff8;
+      --chip:#e8f5e9;
+      --bg:#f6f8f7;
+    }
+    body{margin:24px;background:var(--bg);font-family:Poppins,system-ui,Segoe UI,Arial}
+    .wrap{max-width:1100px;margin:auto}
+    h1{color:var(--brand);margin:0 0 8px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 8px 22px rgba(0,0,0,.06)}
+
+    .subbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .muted{color:var(--muted)}
+    .range{display:flex;gap:8px;align-items:center}
+    .range input[type="date"]{
+      border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff;
+    }
+    .btn{
+      background:var(--brand);color:#fff;border:0;border-radius:8px;padding:8px 12px;
+      font-weight:800;cursor:pointer;text-decoration:none
+    }
+    .btn.light{
+      background:#f0fdf4;color:#0f5132;border:1px solid #cceedd
+    }
+
+    table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+    thead th{
+      background:linear-gradient(0deg,#e6f7ea,#f5fff8);
+      color:var(--ink);font-weight:800;letter-spacing:.2px;padding:10px 12px;border-bottom:1px solid var(--line);text-align:left
+    }
+    tbody td{padding:10px 12px;border-bottom:1px solid #f1f1f1;background:#fff}
+    tbody tr:nth-child(even) td{background:#fafdfb}
+    .num{text-align:right;white-space:nowrap}
+    tfoot td{padding:12px 12px;font-weight:900;background:#f8fff9;border-top:1px solid var(--line)}
+    .chip{display:inline-block;background:var(--chip);color:#1e4620;padding:2px 8px;border-radius:999px;font-weight:800;font-size:12px}
+  </style>
+</head>
+<body>
+  <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back to Reports </a>
+  <div class="wrap my-5">
+    <div class="subbar">
+      <div>
+        <h1>Trial Balance</h1>
+        <div class="muted">
+          Period:
+          {{ dfrom|date:"M j, Y"|default:"None" }} – {{ dto|date:"M j, Y"|default:"None" }}
+        </div>
+      </div>
+
+      <!-- Date range form -->
+      <form method="get" class="range">
+        <label class="muted" for="from">From</label>
+        <input id="from" type="date" name="from" value="{{ dfrom|date:'Y-m-d' }}">
+        <label class="muted" for="to">To</label>
+        <input id="to" type="date" name="to" value="{{ dto|date:'Y-m-d' }}">
+        <button class="btn" type="submit">Run</button>
+        {% if dfrom or dto %}
+          <a class="btn light" href="{% url 'accounts:report-trial-balance' %}">Clear</a>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th class="num">Debit</th>
+            <th class="num">Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.account }}</td>
+            <td class="num">{{ row.debit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.credit|floatformat:2|intcomma }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="3" class="muted" style="padding:14px">No postings found for this period.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td class="num">Total</td>
+            <td class="num">{{ total_debit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ total_credit|floatformat:2|intcomma }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,237 @@
+{% load humanize %}
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Invoice #{{ inv.id|stringformat:"04d" }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+  :root {
+    --brand: #39B54B;
+    --ink: #111;
+    --muted: #666;
+    --line: #e7e7e7;
+    --chip-bg: #e8f5e9;
+    --warn-bg: #fff3e0;
+    --warn-ink:#a75a00;
+  }
+
+  html, body { margin:0; padding:0; font-family: "Poppins", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: var(--ink); }
+  .sheet {
+    width: 210mm; min-height: 297mm;
+    margin: 0 auto; padding: 16mm 14mm;
+    background: #fff;
+  }
+  .toolbar { display:flex; gap:8px; justify-content:flex-end; padding:12px 14px; background:#fff; position:sticky; top:0; border-bottom:1px solid var(--line);}
+  .toolbar .btn { background: var(--brand); color:#fff; border:none; border-radius:8px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  .toolbar a.btn { text-decoration:none; display:inline-block; }
+
+  header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom: 10mm; }
+  .brand { display:flex; gap:12px; align-items:center; }
+  .brand .logo { width:48px; height:48px; border-radius:12px; background: var(--chip-bg); display:flex; align-items:center; justify-content:center; font-weight:800; color:var(--brand); }
+  .brand .who { line-height:1.2; }
+  .brand .who h1 { margin:0; font-size:20px; color: var(--brand); }
+  .brand .who .meta { color: var(--muted); font-size: 12px; }
+
+  .inv-meta { text-align:right; }
+  .inv-title { margin:0; font-size:24px; color: var(--brand); font-weight:800; letter-spacing: .3px; }
+  .inv-sub { color:var(--muted); margin-top:6px; font-size: 12px; }
+
+  .badge {
+    display:inline-block; background: var(--chip-bg); color:#2e7d32; padding:4px 10px; border-radius: 999px; font-weight:700; margin-top:8px;
+  }
+
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin: 8mm 0; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .card h3 { margin:0 0 8px 0; font-size: 13px; letter-spacing:.2px; color: var(--brand); }
+  .card .text { font-size: 13px; color: var(--ink); }
+  .muted { color: var(--muted); }
+
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:8px; border-bottom:1px solid var(--line); font-size: 13px; vertical-align: top;}
+  thead th { background:#f9f9f9; text-align:left; }
+
+  .right { text-align:right; }
+  .totals {
+    margin-top: 4mm; display:grid; grid-template-columns: 1fr 260px; gap: 12px; align-items:start;
+  }
+  .totals .sum-box { border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .sum-row { display:flex; justify-content:space-between; gap:12px; padding:4px 0; }
+  .sum-row.total { font-weight:800; color: var(--brand); border-top:1px dashed var(--line); margin-top:6px; padding-top:8px; }
+
+  .thanks { margin-top: 10mm; padding-top: 6mm; border-top: 1px dashed var(--line); color: var(--muted); font-size: 12px;}
+  .warn { background: var(--warn-bg); color: var(--warn-ink); border:1px solid #ffe0b2; padding:8px 10px; border-radius:8px; display:inline-block; }
+
+  /* Print rules */
+  @media print {
+    .toolbar { display:none !important; }
+    .sheet { box-shadow:none; margin:0; padding:12mm 10mm; }
+    a { color: inherit; text-decoration:none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Screen toolbar -->
+<div class="toolbar no-print">
+  <a href="{% url 'sales:invoice-detail' inv.id %}" class="btn" style="background:#f0f0f0; color:#111;">Back</a>
+  <button class="btn" onclick="window.print()">Print</button>
+</div>
+
+<div class="sheet">
+  <header>
+    <div class="brand">
+      {% if org.logo_url %}
+        <img src="{{ org.logo_url }}" class="logo" alt="logo">
+      {% else %}
+        <div class="logo">SF</div>
+      {% endif %}
+      <div class="who">
+        <h1>{{ org.name }}</h1>
+        <div class="meta">
+          {{ org.address }} • {{ org.phone }} • {{ org.email }}{% if org.website %} • {{ org.website }}{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="inv-meta">
+      <div class="inv-title">INVOICE</div>
+      <div class="inv-sub">
+        <div>Invoice: <strong>#{{ inv.id|stringformat:"04d" }}</strong></div>
+        <div>Created: <strong>{{ inv.date_created|date:"d/m/Y" }}</strong></div>
+        {% if inv.due_date %}
+          <div>Due: <strong>{{ inv.due_date|date:"d/m/Y" }}</strong></div>
+        {% endif %}
+      </div>
+      <div class="badge">{{ status_text }}</div>
+    </div>
+  </header>
+
+  <section class="grid-2">
+    <div class="card">
+      <h3>Bill To</h3>
+      <div class="text">
+        <div><strong>{{ inv.customer.customer_name }}</strong></div>
+        {% if inv.billing_address %}<div class="muted">{{ inv.billing_address }}</div>{% endif %}
+        {% if inv.email %}<div>{{ inv.email }}</div>{% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Details</h3>
+      <div class="text">
+        {% if inv.sales_rep %}<div>Sales Rep: <strong>{{ inv.sales_rep }}</strong></div>{% endif %}
+        {% if inv.class_field %}<div>Class: <strong>{{ inv.class_field.class_name }}</strong></div>{% endif %}
+        {% if inv.tags %}<div>Tags: <strong>{{ inv.tags }}</strong></div>{% endif %}
+        {% if inv.po_num %}<div>PO: <strong>{{ inv.po_num }}</strong></div>{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:26%;">Product/Service</th>
+          <th>Description</th>
+          <th class="right" style="width:8%;">Qty</th>
+          <th class="right" style="width:12%;">Rate</th>
+          <th class="right" style="width:12%;">Amount</th>
+          <th class="right" style="width:12%;">VAT</th>
+          <th class="right" style="width:14%;">Discount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td>{{ it.product.name }}</td>
+          <td>{{ it.description|default:"—" }}</td>
+          <td class="right">{{ it.qty|floatformat:2 }}</td>
+          <td class="right">{{ it.unit_price|floatformat:2|intcomma }}</td>
+          <td class="right">{{ it.amount|floatformat:2|intcomma }}</td>
+          <td class="right">{{ it.vat|floatformat:2|intcomma }}</td>
+          <td class="right">{{ it.discount_amount|floatformat:2|intcomma }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="muted">No line items.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="totals">
+    <div>
+      {% if balance > 0 %}
+        <div class="warn">Balance due: <strong>{{ balance|floatformat:2|intcomma }}</strong></div>
+      {% else %}
+        <div class="badge">Paid in full</div>
+      {% endif %}
+
+      {% if inv.memo %}
+        <div class="card" style="margin-top:8px;">
+          <h3>Memo</h3>
+          <div class="text">{{ inv.memo }}</div>
+        </div>
+      {% endif %}
+
+      {% if inv.customs_notes %}
+        <div class="card" style="margin-top:8px;">
+          <h3>Customer Notes</h3>
+          <div class="text">{{ inv.customs_notes }}</div>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="sum-box">
+      <div class="sum-row"><div>Subtotal</div><div><strong>{{ inv.subtotal|floatformat:2|intcomma }}</strong></div></div>
+      <div class="sum-row"><div>Discount</div><div><strong>- {{ inv.total_discount|floatformat:2|intcomma }}</strong></div></div>
+      <div class="sum-row"><div>VAT</div><div><strong>{{ inv.total_vat|floatformat:2|intcomma }}</strong></div></div>
+      <div class="sum-row"><div>Shipping</div><div><strong>{{ inv.shipping_fee|floatformat:2|intcomma }}</strong></div></div>
+      <div class="sum-row total"><div>Total</div><div><strong>{{ total_due|floatformat:2|intcomma }}</strong></div></div>
+      <div class="sum-row"><div>Paid</div><div><strong>- {{ total_paid|floatformat:2|intcomma }}</strong></div></div>
+      <div class="sum-row" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px;">
+        <div>Balance Due</div><div><strong>{{ balance|floatformat:2|intcomma }}</strong></div>
+      </div>
+    </div>
+  </section>
+
+  {% if payment_rows %}
+  <section style="margin-top: 8mm;">
+    <div class="card">
+      <h3>Payment History</h3>
+      <table style="width:100%; border-collapse:collapse; margin-top:6px;">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Reference</th>
+            <th>Method</th>
+            <th>Deposit To</th>
+            <th class="right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in payment_rows %}
+          <tr>
+            <td>{{ p.date|date:"d/m/Y" }}</td>
+            <td>{{ p.ref|default:"—" }}</td>
+            <td>{{ p.method|default:"—" }}</td>
+            <td>{{ p.deposit_to|default:"—" }}</td>
+            <td class="right">{{ p.amount|floatformat:2|intcomma }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="thanks">
+    <div>Thank you for your business!</div>
+    <div class="muted">Please contact {{ org.email }} for any questions regarding this invoice.</div>
+  </section>
+</div>
+
+</body>
+</html>

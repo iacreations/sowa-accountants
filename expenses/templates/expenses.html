@@ -1,0 +1,541 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2a8b3b;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#e5e7eb;
+    --bg:#f8fafc;
+    --card:#ffffff;
+  }
+
+  /* Page shell */
+  .page-wrap{
+    margin-left: 20%;
+    background: var(--bg);
+    box-sizing: border-box;
+    width: 79%;
+    height: 100vh;
+  }
+
+  /* Toolbar */
+  .toolbar{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    margin-bottom:14px; padding: 8%;
+  }
+  .title-wrap{ display:flex; align-items:center; gap:10px; margin-right:auto; }
+  .title{
+    font-size:28px; font-weight:800; color:var(--ink); letter-spacing:.2px;
+  }
+  .subtitle{
+    font-size:12px; color:var(--muted);
+    padding:4px 8px; border:1px dashed var(--line); border-radius:999px;
+    background:#fff;
+  }
+
+  /* Search */
+  .search{
+    position:relative;
+  }
+  .search input{
+    width:280px; max-width:48vw;
+    background:#fff; border:1px solid var(--line); border-radius:10px;
+    padding:10px 36px 10px 36px; outline:none;
+    transition:.15s border-color ease;
+  }
+  .search input:focus{ border-color: var(--brand); }
+  .search .icon{
+    position:absolute; left:10px; top:50%; transform:translateY(-50%);
+    font-size:18px; color:var(--muted);
+  }
+
+  /* Primary buttons */
+  .btn{ background:var(--brand); color:#fff; border:none; border-radius:10px;
+        padding:10px 14px; font-weight:600; cursor:pointer;
+        display:inline-flex; align-items:center; gap:8px; box-shadow:0 1px 0 rgba(0,0,0,.05);}
+  .btn:hover{ background:var(--brand-600); }
+  .btn.secondary{
+    background:#fff; color:var(--ink); border:1px solid var(--line);
+  }
+  .btn.secondary:hover{ border-color:#d1d5db; }
+
+  /* Card container for table */
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:16px;
+    box-shadow: 0 10px 25px rgba(0,0,0,.04);
+    overflow:hidden;
+  }
+
+  /* Table wrapper (responsive) */
+  .table-wrap{ overflow:auto; }
+  .content-table{
+    width:100%; border-collapse:separate; border-spacing:0; min-width:980px; margin-bottom: 10%;
+  }
+  .content-table thead th{
+    position:sticky; top:0; z-index:2;
+    background:#f3f4f6;
+    color:#111827; font-weight:700; text-transform:uppercase; font-size:12px;
+    letter-spacing:.04em;
+    border-bottom:1px solid var(--line);
+    padding:12px 12px;
+  }
+  .content-table tbody td{
+    padding:12px 12px; font-size:14px; color:#0b1324; border-bottom:1px solid #f1f5f9;
+  }
+  .content-table tbody tr:nth-child(odd){ background:#fff; }
+  .content-table tbody tr:nth-child(even){ background:#fafafa; }
+  .content-table tbody tr:hover{ background:#f0fdf4; } /* subtle green hover */
+  .content-table td:nth-child(1){ width:48px; text-align:center; color:#6b7280; }
+  .content-table td strong{ font-weight:800; }
+
+  /* Badges */
+  .badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid;
+  }
+  .badge.approved{ color:#065f46; background:#ecfdf5; border-color:#a7f3d0; }
+  .badge.pending { color:#92400e; background:#fffbeb; border-color:#fde68a; }
+  .badge.rejected{ color:#7f1d1d; background:#fef2f2; border-color:#fecaca; }
+  .badge.na{ color:#374151; background:#f3f4f6; border-color:#e5e7eb; }
+
+  /* Dropdown (Action) */
+  .dropdown{ position:relative; }
+  .dropdown-btn{
+    border:1px solid var(--line); background:#fff; color:#111827;
+    padding:6px 8px; border-radius:10px; cursor:pointer; width:36px; height:36px;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  .dropdown-btn:hover{ background:#f9fafb; }
+  .dropdown-menu{
+    display:none; position:absolute; right:0; top:110%;
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 16px 30px rgba(2,6,23,.10); min-width:180px; overflow:hidden; z-index:10;
+  }
+  .dropdown-menu a, .dropdown-menu button{
+    display:block; padding:10px 12px; width:100%; text-align:left; background:transparent;
+    border:none; cursor:pointer; font-size:14px; color:#111827;
+  }
+  .dropdown-menu a:hover, .dropdown-menu button:hover{ background:#f9fafb; }
+
+  /* Small helpers */
+  .money{ white-space:nowrap; }
+  .muted{ color:var(--muted); }
+  .pill{
+    display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
+    background:#ffffff; border:1px solid var(--line); font-size:12px; color:#111827;
+  }
+/* style for the actions */
+.action-cell{white-space:nowrap;position:relative} /* create stacking context for z-index */
+    .row-actions{display:flex;align-items:center;gap:12px}
+    .row-actions a{color:#39B54B;text-decoration:none;font-weight:800}
+    .row-actions a:hover{text-decoration:underline}
+    
+    .menu-wrap{position:relative;display:inline-block;z-index:2}
+    .kebab{
+      background:#f0fdf4;border:1px solid #cceedd;border-radius:10px;
+      padding:6px 10px;cursor:pointer;font-weight:700
+    }
+    .flyout{
+      position:absolute; right:0; top:110%;
+      background:#fff;border:1px solid #e6e6e6;border-radius:10px;
+      box-shadow:0 12px 26px rgba(0,0,0,.12);
+      min-width:160px; overflow:hidden; display:none; z-index:9999;
+    }
+    .menu-wrap.open .flyout{ display:block; }
+    .flyout a{display:block;padding:10px 14px;text-decoration:none;color:#111}
+    .flyout a:hover{background:#f6fef8}
+
+/* modal */
+#customizeModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); justify-content:center; align-items:center; z-index:999; }
+.modal-card { background:#fff; padding:20px; border-radius:12px; width:420px; max-width:90%; box-shadow:0 8px 24px rgba(0,0,0,.2); }
+.modal-card h4 { margin:0 0 12px; color:#39B54B; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+.btn { padding:8px 14px; border:none; border-radius:6px; cursor:pointer; }
+.btn-outline { background:#fff; border:1px solid #ddd; }
+.btn-primary { background:#39B54B; color:#fff; }
+
+.child-row .indent {
+ margin-left: 20px;
+  padding-left: 5px;
+  border-left: 4px dashed #39B54B; /* guide line */
+  font-style: italic;
+  color: #39B54B; /* softer text */
+
+}
+ /* NEW TRANSACTION dropdown */
+  .tx-new { position: relative; display:inline-block; }
+  .tx-btn {
+    background: var(--brand); color:#fff; border:none; border-radius:10px;
+    padding:10px 14px; font-weight:700; cursor:pointer;
+    display:inline-flex; align-items:center; gap:8px; box-shadow:0 1px 0 rgba(0,0,0,.05);
+  }
+  .tx-btn:hover { background: var(--brand-600); }
+  .tx-btn i { font-size:18px; }
+
+  .tx-menu {
+    position:absolute; right:0; top:110%;
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 16px 32px rgba(2,6,23,.12);
+    min-width:220px; padding:6px 0; display:none; z-index:1000; overflow:hidden;
+  }
+  .tx-item {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px; text-decoration:none; color:#111827; font-size:14px;
+  }
+  .tx-item:hover { background:#f9fafb; }
+  .tx-item i { font-size:18px; color:#6b7280; }
+
+  /* tiny separator row (optional) */
+  .tx-sep { height:1px; margin:6px 0; background:#f1f5f9; }
+
+
+  /* Tighten columns on large screens */
+  @media (min-width:1280px){
+    .content-table td, .content-table th{ padding:12px 16px; }
+  }
+</style>
+
+<div class="page-wrap">
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="title-wrap">
+      <div class="title" style="color: #39B54B;"> All Expenses</div>
+      <div class="subtitle">List view</div>
+    </div>
+
+    <div class="search">
+      <i class='bx bx-search icon'></i>
+      <input type="text" placeholder="Search payee, ref, category…" />
+    </div>
+
+    <button class="btn secondary"><i class='bx bx-export'></i> Export</button>
+    <button class="btn secondary"><i class='bx bx-printer'></i> Print</button>
+    <button type="button" id="customizeBtn" class="button ms-auto">
+          ⚙ Customize </button>
+    <div class="tx-new">
+  <button class="tx-btn" id="txNewBtn" aria-haspopup="true" aria-expanded="false">
+    <i class='bx bx-plus'></i> New Transaction <i class='bx bx-chevron-down'></i>
+  </button>
+
+  <div class="tx-menu" id="txNewMenu" role="menu" aria-labelledby="txNewBtn">
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:time-activity' %}">
+      <i class='bx bx-time-five'></i> Time activity
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:add-bill' %}">
+      <i class='bx bx-file'></i> Bill
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:add-cheque' %}">
+      <i class='bx bx-money-withdraw'></i> Cheque
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:add-expenses' %}">
+      <i class='bx bx-receipt'></i> Expense
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:purchase_order' %}">
+      <i class='bx bx-basket'></i> Purchase order
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:supplier-credit' %}">
+      <i class='bx bx-credit-card-front'></i> Supplier credit
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:pay-down-credit' %}">
+      <i class='bx bx-down-arrow-circle'></i> Pay down credit
+    </a>
+
+    <div class="tx-sep"></div>
+
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:import-bills' %}">
+      <i class='bx bx-import'></i> Import bills
+    </a>
+    <a class="tx-item" role="menuitem" href="{% url 'expenses:credit-card' %}">
+      <i class='bx bx-card'></i> Credit card credit
+    </a>
+  </div>
+</div>
+
+  </div>
+
+  <!-- Filters / chips (non-functional yet) -->
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+    <div class="pill"><i class='bx bx-slider'></i> All transactions</div>
+    <div class="pill"><i class='bx bx-calendar'></i> Last 12 months</div>
+    <div class="pill"><i class='bx bx-filter'></i> Filters</div>
+  </div>
+
+  <!-- Table Card -->
+  <div class="card">
+    <div class="table-wrap">
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th data-col="payment_date">Date</th>
+            <th data-col="payment_account">Type</th>
+            <th data-col="ref_no">No.</th>
+            <th data-col="payee_name">Payee</th>
+            <th data-col="cat_category">Category</th>
+            <th data-col="account_name">Total before sales tax</th>
+            <th data-col="account_name">Sales tax</th>
+            <th data-col="account_name">Total</th>
+            <th data-col="account_name">Bill approval</th>
+            <th style="text-align:right;" data-col="actions">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in expenses %}
+          <tr>
+            <td>{{ e.payment_date|date:"d/m/Y" }}</td>
+            <td>{{ e.type_display }}</td>
+            <td class="muted">{{ e.number_display }}</td>
+            <td>{{ e.payee_display }}</td>
+            <td>{{ e.category_display }}</td>
+            <td class="money">Ush{{ e.total_before_tax|floatformat:0|intcomma }}</td>
+            <td class="money">Ush{{ e.sales_tax_amount|floatformat:0|intcomma }}</td>
+            <td class="money"><strong>Ush{{ e.total_display|floatformat:0|intcomma }}</strong></td>
+            <td>
+              {% if e.approval_status|lower == "approved" %}
+                <span class="badge approved"><i class='bx bx-check-circle'></i> Approved</span>
+              {% elif e.approval_status|lower == "pending" %}
+                <span class="badge pending"><i class='bx bx-time-five'></i> Pending</span>
+              {% elif e.approval_status|lower == "rejected" %}
+                <span class="badge rejected"><i class='bx bx-x-circle'></i> Rejected</span>
+              {% else %}
+                <span class="badge na"><i class='bx bx-minus-circle'></i> N/A</span>
+              {% endif %}
+            </td>
+            
+            <td class="action-cell">
+              <div class="row-actions">
+                <a href="{% url 'expenses:expense-edit' e.id %}">Edit</a>
+                <div class="menu-wrap">
+                  <button class="kebab" aria-haspopup="true" aria-expanded="false">▾</button>
+                  <div class="flyout" role="menu">
+                    <a role="menuitem" href="{% url 'expenses:expense-detail' e.id %}">View</a>
+                    <a role="menuitem" href="">Print</a>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="11" style="text-align:center; padding:28px; color:#6b7280;">
+              No expenses yet. <a href="{% url 'expenses:add-expenses' %}" class="btn" style="margin-left:8px; text-decoration:none;">Create your first expense</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+       <!-- Customize Modal -->
+  <div id="customizeModal">
+    <div class="modal-card">
+      <h4>Customize Columns</h4>
+      <div style="line-height: 1.9;">
+        <label><input type="checkbox" class="col-toggle" data-col="payment_date"    checked>Date</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="payment_account" checked>Type</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="ref_no"       checked>No.</label><br>
+        <label><input data-col="memo" class="col-toggle" type="checkbox">Memo</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="item_class[]"    checked> Class</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="item_customer[]"     checked> Customer</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="item_product[]"     checked> Product</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="actions"         checked> Actions</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="cat_class[]"         checked> Category</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="location"         checked> Location</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="payment_method"         checked> Payment Method</label><br>
+      </div>
+      <div class="modal-actions">
+        <button id="closeModal" class="btn btn-outline">Close</button>
+        <button id="selectAll" class="btn btn-primary">Select all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Safely inject prefs JSON -->
+  {{ column_prefs|json_script:"col-prefs" }}
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Show/hide per-row action menus
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.dropdown-btn');
+    const menus = document.querySelectorAll('.dropdown-menu');
+
+    if (!btn){
+      menus.forEach(m => m.style.display = 'none');
+      return;
+    }
+    const menu = btn.parentElement.querySelector('.dropdown-menu');
+    const open = menu.style.display === 'block';
+    menus.forEach(m => m.style.display = 'none');
+    menu.style.display = open ? 'none' : 'block';
+  });
+
+  function copyExpense(id){ alert('Copy expense ' + id); }
+  function voidExpense(id){ alert('Void expense ' + id); }
+  // the actions dropdown
+  // Click-to-toggle dropdown, click-away to close
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.kebab');
+    // close all open
+    document.querySelectorAll('.menu-wrap.open').forEach(w => {
+      if (!w.contains(e.target)) {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab'); if (b) b.setAttribute('aria-expanded','false');
+      }
+    });
+    if (btn) {
+      const wrap = btn.closest('.menu-wrap');
+      const open = wrap.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+      e.stopPropagation();
+    }
+  });
+  document.addEventListener('keydown', (e)=>{
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.menu-wrap.open').forEach(w => {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab'); if (b) b.setAttribute('aria-expanded','false');
+      });
+    }
+  });
+  // the customization
+  document.addEventListener("DOMContentLoaded", () => {
+  // ===== Elements
+  const modal     = document.getElementById("customizeModal");
+  const openBtn   = document.getElementById("customizeBtn");
+  const closeBtn  = document.getElementById("closeModal");
+  const selectAll = document.getElementById("selectAll");
+
+  // ===== Load prefs safely
+  let savedPrefs = {};
+  try {
+    savedPrefs = JSON.parse(document.getElementById("col-prefs").textContent) || {};
+  } catch (e) {
+    savedPrefs = {};
+  }
+
+  // ===== Helpers
+  function toggleColumn(colName, show) {
+    const header = document.querySelector(`th[data-col='${colName}']`);
+    if (!header) return;
+    const colIndex = header.cellIndex;
+    document.querySelectorAll(`thead th:nth-child(${colIndex+1}), tbody td:nth-child(${colIndex+1})`)
+      .forEach(cell => { cell.style.display = show ? "" : "none"; });
+  }
+
+  function applyAllPrefs() {
+    // set checkbox state and apply column visibility
+    document.querySelectorAll(".col-toggle").forEach(cb => {
+      const col = cb.dataset.col;
+      const value = (savedPrefs[col] !== undefined) ? savedPrefs[col] : true;
+      cb.checked = !!value;
+      toggleColumn(col, cb.checked);
+    });
+  }
+
+  function savePrefs() {
+    fetch("{% url 'accounts:save_column_prefs' %}", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": "{{ csrf_token }}",
+      },
+      body: JSON.stringify({ preferences: savedPrefs }),
+    }).catch(()=>{ /* ignore network hiccups silently */ });
+  }
+
+  // ===== Init
+  applyAllPrefs();
+
+  // ===== Events
+  openBtn.addEventListener("click", () => { modal.style.display = "flex"; });
+  closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+
+  // close on overlay click
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.style.display = "none";
+  });
+  // close on Escape
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") modal.style.display = "none";
+  });
+
+  // checkbox changes
+  document.querySelectorAll(".col-toggle").forEach(cb => {
+    cb.addEventListener("change", function() {
+      const col = this.dataset.col;
+      savedPrefs[col] = this.checked;
+      toggleColumn(col, this.checked);
+      savePrefs();
+    });
+  });
+
+  // select all
+  selectAll.addEventListener("click", () => {
+    document.querySelectorAll(".col-toggle").forEach(cb => {
+      cb.checked = true;
+      savedPrefs[cb.dataset.col] = true;
+      toggleColumn(cb.dataset.col, true);
+    });
+    savePrefs();
+  });
+});
+ // New Transaction dropdown toggle (accessible + click-away)
+  (function(){
+    const btn  = document.getElementById('txNewBtn');
+    const menu = document.getElementById('txNewMenu');
+
+    function closeMenu(){
+      menu.style.display = 'none';
+      btn.setAttribute('aria-expanded','false');
+    }
+    function openMenu(){
+      menu.style.display = 'block';
+      btn.setAttribute('aria-expanded','true');
+    }
+
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const isOpen = menu.style.display === 'block';
+      document.querySelectorAll('.tx-menu').forEach(m => m.style.display='none');
+      if (!isOpen) openMenu(); else closeMenu();
+    });
+
+    // close on outside click
+    document.addEventListener('click', (e)=>{
+      if (!menu.contains(e.target) && e.target !== btn) closeMenu();
+    });
+
+    // close on Esc; navigate with ArrowDown/Up (basic)
+    document.addEventListener('keydown', (e)=>{
+      if (e.key === 'Escape') closeMenu();
+      if ((e.key === 'ArrowDown' || e.key === 'Enter') && document.activeElement === btn){
+        openMenu();
+        const first = menu.querySelector('.tx-item');
+        if (first) first.focus();
+      }
+    });
+
+    // keep focus cycling inside the menu with Arrow keys
+    menu.addEventListener('keydown', (e)=>{
+      const items = Array.from(menu.querySelectorAll('.tx-item'));
+      if (!items.length) return;
+      const idx = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown'){
+        e.preventDefault();
+        const next = items[(idx + 1) % items.length]; next.focus();
+      } else if (e.key === 'ArrowUp'){
+        e.preventDefault();
+        const prev = items[(idx - 1 + items.length) % items.length]; prev.focus();
+      } else if (e.key === 'Escape'){
+        closeMenu(); btn.focus();
+      }
+    });
+  })();
+</script>
+
+{% include 'includes/footer.html' %}

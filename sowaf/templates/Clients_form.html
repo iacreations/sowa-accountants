@@ -1,0 +1,370 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>{% if client %}Edit Client{% else %}Add New Client{% endif %}</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+    <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Poppins", sans-serif; }
+    body { background: #f4f6f8; padding: 30px; }
+    .form-container {
+      background: #fff; padding: 25px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 1100px; margin-top: 5%; margin-left: 29%;
+    }
+    h2 { text-align: center; color: #39B54B; margin-bottom: 30px; }
+
+    .section { margin-bottom: 20px; }
+    .collapsible-header {
+      cursor: pointer; background: #f1f1f1; padding: 10px;
+      border-radius: 4px; margin-bottom: 5px; font-weight: 600;
+      color: #39B54B; border: 1px solid #ddd;
+    }
+    .collapsible-content {
+      display: none; flex-wrap: wrap; gap: 20px; margin-bottom: 20px;
+    }
+    .form-row {
+      display: flex; flex-wrap: wrap; gap: 20px;
+    }
+    .field {
+      flex: 1 1 30%; display: flex; flex-direction: column;
+    }
+    label { font-weight: 600; margin-bottom: 5px; }
+    input, select, textarea {
+      padding: 8px; border: 1px solid #ccc; border-radius: 4px;
+    }
+
+    textarea { resize: vertical; }
+
+    .footer {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 30px; padding-top: 15px; border-top: 1px solid #e0e0e0;
+    }
+    .btn {
+      padding: 10px 20px; border: none; border-radius: 4px;
+      font-weight: bold; cursor: pointer;
+    }
+    .btn-cancel { background: #f5f5f5; }
+    .btn-green { background: #39B54B; color: #fff; }
+    .btn-green:hover { background: #2e8b3f; }
+
+    .dropdown {
+      position: relative; display: inline-block;
+    }
+    .dropdown-menu {
+      display: none; position: absolute; right: 0;
+      background: #fff; border: 1px solid #ccc;
+      border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      z-index: 100; width: 160px;
+    }
+    .dropdown-menu button {
+      width: 100%; padding: 10px 16px;
+      background: none; border: none;
+      text-align: left; cursor: pointer; white-space: nowrap;
+    }
+    .dropdown:hover .dropdown-menu {
+      display: block;
+    }
+     @media only screen and (max-width: 600px) {
+  .search_bar{
+    display: none;
+  }
+  .logo_item{
+  padding: 5px;
+  margin: 3%;
+  }
+    
+  #iconDropdown {
+    display: block;
+    background-color: rgb(7, 142, 36);
+    border-radius: 20px;
+  }
+  #iconDropdown #btn{
+    float: left;
+    color: rgb(7, 142, 36);
+    
+  }
+  #dropdownMenu{
+    background-color: rgb(7, 142, 36);
+    color: white;
+    float: left;
+  }
+  #action{
+    width: 50%;
+  }
+#container{
+  margin-top: 25%;
+  margin-left: 0%;
+}
+#logo{
+  width: 100%;
+}
+#attachments{
+  width: 100%;
+}
+#notes{
+    width: 100%;
+}
+}
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+
+#container{
+  margin-left: 20%;
+}
+}
+  </style>
+</head>
+<body>
+      <!-- navbar -->
+    <nav class="navbar w3-row-padding">
+      <div class="logo_item">
+        <i class="bx bx-menu" id="sidebarOpen"></i>
+        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt=""></i>YoAccountant
+      </div>
+
+      <div class="search_bar">
+        <input type="text" placeholder="Search" />
+      </div>
+
+ <!-- icons on drop down in small screens -->
+
+
+  <div class="dropdown" id="iconDropdown">
+    <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+      <i class='bx bx-menu'></i>
+    </button>
+    <div class="dropdown-menu" id="dropdownMenu">
+      <i class="bi bi-grid"></i>
+      <i class='bx bx-sun' id="darkLight"></i>
+      <i class='bx bx-cog'></i>
+      <i class='bx bx-bell'></i>
+      <i class='bx bx-user-circle'></i>
+      <i class='bx bxs-down-arrow'></i>
+    </div>
+  </div>
+
+  <div class="navbar_content" id="icons">
+    <i class="bi bi-grid"></i>
+    <i class='bx bx-sun' id="darkLight"></i>
+    <i class='bx bx-cog'></i>
+    <i class='bx bx-bell'></i>
+    <i class='bx bx-user-circle'></i>
+    <i class='bx bxs-down-arrow'></i>
+  </div>
+    </nav>
+  {% include 'includes/sidebar.html' %}
+
+   <div class="form-container" id="container">
+    <h2>{% if client %}Edit Client{% else %}Add New Client{% endif %}</h2>
+
+    <form method="post"
+          action="{% if client %}{% url 'sowaf:edit-client' client.id %}{% else %}{% url 'sowaf:add-client' %}{% endif %}"
+          enctype="multipart/form-data">
+      {% csrf_token %}
+
+      <!-- Company Info -->
+      <div class="section">
+        <div class="collapsible-header">Company Information</div>
+        <div class="collapsible-content form-row">
+          <div class="field">
+            <label>Company Logo</label>
+            {% if client and client.logo %}
+              <p>Existing logo</p>
+              <img src="{{ client.logo.url }}" alt="Logo" width="100" />
+            {% endif %}
+            <input type="file" name="logo" accept="image/*" style="font-size: 1em; width: 100%;">
+          </div>
+
+          <div class="field">
+            <label>Company Name <span style="color:red">*</span></label>
+            <input type="text" name="company" value="{{ client.company|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Phone <span style="color:red">*</span></label>
+            <input type="tel" name="phone" value="{{ client.phone|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Email <span style="color:red">*</span></label>
+            <input type="email" name="company_email" value="{{ client.company_email|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Address <span style="color:red">*</span></label>
+            <input type="text" name="address" value="{{ client.address|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Country <span style="color:red">*</span></label>
+            <input type="text" name="country" value="{{ client.country|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Business Registration No.</label>
+            <input type="text" name="reg_number" value="{{ client.reg_number|default_if_none:'' }}">
+          </div>
+
+          <div class="field">
+            <label>Start Date of Business Operation</label>
+            <input id="date_created" type="date" name="start_date" value="{{ client.start_date|date:'Y-m-d' }}">
+          </div>
+        </div>
+      </div>
+
+      <!-- Contact Person -->
+      <div class="section">
+        <div class="collapsible-header">Contact Person</div>
+        <div class="collapsible-content form-row">
+          <div class="field">
+            <label>Contact Name <span style="color:red">*</span></label>
+            <input type="text" name="contact_name" value="{{ client.contact_name|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Position <span style="color:red">*</span></label>
+            <input type="text" name="position" value="{{ client.position|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Contact Phone <span style="color:red">*</span></label>
+            <input type="tel" name="contact" value="{{ client.contact|default_if_none:'' }}" required>
+          </div>
+
+          <div class="field">
+            <label>Contact Email <span style="color:red">*</span></label>
+            <input type="email" name="contact_email" value="{{ client.contact_email|default_if_none:'' }}" required>
+          </div>
+        </div>
+      </div>
+
+      <!-- Financial Details -->
+      <div class="section">
+        <div class="collapsible-header">Financial Details</div>
+        <div class="collapsible-content form-row">
+          <div class="field">
+            <label>VAT / Tax ID</label>
+            <input type="text" name="tin" value="{{ client.tin|default_if_none:'' }}">
+          </div>
+
+          <div class="field">
+            <label>Credit Limit</label>
+            <input type="text" name="credit_limit" value="{{ client.credit_limit|default_if_none:'' }}">
+          </div>
+
+          <div class="field">
+            <label>Payment Terms</label>
+            <input type="text" name="payment_terms" value="{{ client.payment_terms|default_if_none:'' }}">
+          </div>
+
+          <div class="field">
+            <label>Preferred Currency <span style="color:red">*</span></label>
+            <select name="currency" required>
+              {% if client and client.currency and client.currency not in "UGX,USD" %}
+                <option value="{{ client.currency }}" selected hidden>{{ client.currency }}</option>
+              {% endif %}
+              <option value="currency">Select Currency</option>
+              <option value="UGX" {% if client.currency == "UGX" %}selected{% endif %}>UGX</option>
+              <option value="USD" {% if client.currency == "USD" %}selected{% endif %}>USD</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Other Details -->
+      <div class="section">
+        <div class="collapsible-header">Other Details</div>
+        <div class="collapsible-content form-row">
+          <div class="field">
+            <label>Industry / Sector <span style="color:red">*</span></label>
+            <select name="industry" required>
+              {% if client and client.industry and client.industry not in "Consumer products,Energy and natural resources,Financial services,Healthcare,Industrial products,Not for profit,Individual private clients,Public sector,Real estate and construction,Services,Technology, media and telecommunications,Travel, tourism and leisure,Others" %}
+                <option value="{{ client.industry }}" selected hidden>{{ client.industry }}</option>
+              {% endif %}
+              <option value="industry">Select Industry</option>
+              <option value="Consumer products" {% if client.industry == "Consumer products" %}selected{% endif %}>Consumer products</option>
+              <option value="Energy and natural resources" {% if client.industry == "Energy and natural resources" %}selected{% endif %}>Energy and natural resources</option>
+              <option value="Financial services" {% if client.industry == "Financial services" %}selected{% endif %}>Financial services</option>
+              <option value="Healthcare" {% if client.industry == "Healthcare" %}selected{% endif %}>Healthcare</option>
+              <option value="Industrial products" {% if client.industry == "Industrial products" %}selected{% endif %}>Industrial products</option>
+              <option value="Not for profit" {% if client.industry == "Not for profit" %}selected{% endif %}>Not for profit</option>
+              <option value="Individual private clients" {% if client.industry == "Individual private clients" %}selected{% endif %}>Individual private clients</option>
+              <option value="Public sector" {% if client.industry == "Public sector" %}selected{% endif %}>Public sector</option>
+              <option value="Real estate and construction" {% if client.industry == "Real estate and construction" %}selected{% endif %}>Real estate and construction</option>
+              <option value="Services" {% if client.industry == "Services" %}selected{% endif %}>Services</option>
+              <option value="Technology, media and telecommunications" {% if client.industry == "Technology, media and telecommunications" %}selected{% endif %}>Technology, media and telecommunications</option>
+              <option value="Travel, tourism and leisure" {% if client.industry == "Travel, tourism and leisure" %}selected{% endif %}>Travel, tourism and leisure</option>
+              <option value="Others" {% if client.industry == "Others" %}selected{% endif %}>Others</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Status <span style="color:red">*</span></label>
+            <select name="status" required>
+              {% if client and client.status and client.status not in "Active,Inactive" %}
+                <option value="{{ client.status }}" selected hidden>{{ client.status }}</option>
+              {% endif %}
+              <option value="status">Select Status</option>
+              <option value="Active" {% if client.status == "Active" %}selected{% endif %}>Active</option>
+              <option value="Inactive" {% if client.status == "Inactive" %}selected{% endif %}>Inactive</option>
+            </select>
+          </div>
+
+          <div class="field" style="flex: 1 1 100%;">
+            <label>Notes</label>
+            <textarea rows="3" name="notes">{{ client.notes|default_if_none:'' }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <a href="{% url 'sowaf:clients' %}" class="btn btn-green" style="text-decoration:none;">Cancel</a>
+        <div class="dropdown">
+          <button type="button" class="btn btn-green">Save ▼</button>
+          <div class="dropdown-menu">
+            <button type="submit" name="save_action" value="save">Save</button>
+            <button type="submit" name="save_action" value="save&new">Save & New</button>
+            <button type="submit" name="save_action" value="save&close">Save & Close</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+   <script src=" {% static 'sowaf/styles/script.js' %} "></script>
+   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Collapsible sections
+    document.querySelectorAll(".collapsible-header").forEach(header => {
+      header.addEventListener("click", () => {
+        const content = header.nextElementSibling;
+        content.style.display = content.style.display === "flex" ? "none" : "flex";
+      });
+      header.nextElementSibling.style.display = "none"; // collapsed by default
+    });
+
+    // Close dropdown when clicking outside
+    window.addEventListener("click", e => {
+      if (!e.target.closest(".dropdown")) {
+        document.querySelectorAll(".dropdown-menu").forEach(menu => {
+          menu.style.display = "none";
+        });
+      }
+    });
+
+    // Toggle dropdown manually (for mobile support)
+    document.querySelectorAll(".dropdown > .btn").forEach(button => {
+      button.addEventListener("click", e => {
+        e.preventDefault();
+        const menu = button.nextElementSibling;
+        menu.style.display = menu.style.display === "block" ? "none" : "block";
+      });
+    });
+  </script>
+</body>
+</html>

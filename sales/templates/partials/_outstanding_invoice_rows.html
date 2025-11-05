@@ -1,0 +1,24 @@
+{% if invoices %}
+  {% for inv in invoices %}
+    <tr>
+      <td>{{ inv.id }}</td>
+      <td>{{ inv.date_created|default:"—" }}</td>
+      <td>{{ inv.due_date|default:"—" }}</td>
+      <td>{{ inv.total_due }}</td>
+      <td>{{ inv.balance }}</td>
+      <td>
+        <input type="number"
+               step="0.01"
+               name="amount_paid_{{ inv.id }}"
+               max="{{ inv.balance }}"
+               placeholder="0.00">
+      </td>
+    </tr>
+  {% endfor %}
+{% else %}
+  <tr>
+    <td colspan="6" style="text-align:center; color:#888;">
+      No outstanding invoices for this customer.
+    </td>
+  </tr>
+{% endif %}

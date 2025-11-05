@@ -1,0 +1,233 @@
+{% load humanize %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --ink:#111;
+    --muted:#6b7280;
+    --line:#e7e7e7;
+    --head:#f7fff8;
+    --chip:#e8f5e9;
+    --warn:#fff7e6;
+  }
+
+  .page-wrap{max-width:1200px;margin:24px auto;padding:0 16px;}
+  .titlebar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .titlebar h2{margin:0;color:var(--brand);letter-spacing:.2px}
+
+  .toolbar{display:flex;gap:8px}
+  .btn{
+    background:var(--brand);color:#fff;border:0;border-radius:8px;
+    padding:8px 12px;font-weight:700;cursor:pointer;text-decoration:none;
+  }
+  .btn.secondary{background:#f0fdf4;color:#0f5132;border:1px solid #cceedd}
+
+  .card{
+    background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:12px;box-shadow:0 8px 22px rgba(0,0,0,.05);
+  }
+
+  /* main table */
+  .tbl{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border-radius:12px;border:1px solid var(--line)}
+  .tbl thead th{
+    background:linear-gradient(0deg, #e6f7ea, #f5fff8);
+    color:#14532d;font-weight:800;text-transform:uppercase;letter-spacing:.3px;
+    font-size:12px;border-bottom:1px solid var(--line);padding:10px 12px;text-align:left
+  }
+  .tbl td{padding:10px 12px;border-bottom:1px solid var(--line);background:#fff}
+
+  .tbl tr.group-head td{
+    background:var(--head);
+    font-weight:700;
+  }
+
+  .num{ text-align:right; white-space:nowrap; }
+  .muted{color:var(--muted)}
+  .chip{
+    display:inline-block;background:var(--chip);color:#1e4620;
+    padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px
+  }
+  .ref{
+    background:#f8fafc;border:1px dashed #dbe4ea;border-radius:6px;
+    padding:2px 8px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace
+  }
+
+  /* section headers inside detail */
+  .section{background:#f9fafb;font-weight:800;color:#0f5132}
+  .totals{background:#f8fff9;font-weight:800}
+
+  /* nested detail table */
+  .detail{width:100%;border-collapse:separate;border-spacing:0;margin:0}
+  .detail th,.detail td{padding:8px 10px;border-bottom:1px solid var(--line)}
+  .detail th{text-transform:uppercase;letter-spacing:.3px;font-size:12px;background:#f7faf9;color:#14532d}
+
+  /* zebra for detail rows */
+  .detail tbody tr:nth-child(even) td{background:#fcfdfc}
+
+  /* dropdown */
+
+  .action-cell { white-space: nowrap; text-align: left; }
+  .row-actions {
+    display: inline-flex; align-items: center; gap: 6px; position: relative;
+  }
+
+  .edit-link {
+    color: #39B54B; font-weight: 700; text-decoration: none;
+  }
+  .edit-link:hover { text-decoration: underline; }
+
+  .menu-wrap { position: relative; display: inline-block; }
+  .kebab {
+    border: 1px solid #e6e6e6; background: #fff; color: #39B54B;
+    width: 28px; height: 28px; line-height: 26px; text-align: center;
+    border-radius: 6px; cursor: pointer; font-weight: 900; padding: 0;
+  }
+  .kebab:focus { outline: 2px solid rgba(57,181,75,.35); outline-offset: 2px; }
+
+  .flyout {
+    position: absolute; right: 0; top: calc(100% + 6px);
+    min-width: 200px; background: #fff; border: 1px solid #e6e6e6;
+    border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,.10);
+    padding: 6px; display: none; z-index: 50;
+  }
+  .menu-wrap.open .flyout { display: block; }
+
+  .flyout a {
+    display: block; padding: 8px 10px; border-radius: 6px; color: #111;
+    text-decoration: none; font-weight: 600;
+  }
+  .flyout a:hover { background: #f5f5f5; }
+  .flyout .danger { color: #b71c1c; }
+  .flyout .sep { height: 1px; background: #eee; margin: 6px 4px; }
+  /* responsive */
+  @media (max-width: 900px){
+    .titlebar{flex-direction:column;align-items:flex-start;gap:8px}
+    .tbl, .detail{font-size:14px}
+  }
+</style>
+
+<div class="page-wrap">
+<a class="btn" href="{% url 'sales:sales' %}" style="font-weight: 900;"> < Back to sales</a>
+    <h1 style="text-align:center; margin-top: 5%; color: #39B54B;">Payments</h1>
+  <div class="card">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="width:11rem;">Payment Date</th>
+          <th>Customer</th>
+          <th>Deposit To</th>
+          <th>Reference</th>
+          <th>Payment Method</th>
+          <th class="num">Applied Total</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for group in rows %}
+        {% with p=group.payment %}
+        <!-- payment summary row -->
+        <tr class="group-head">
+          <td>{{ p.payment_date|date:"M j, Y" }}</td>
+          <td><strong>{{ p.customer.customer_name }}</strong></td>
+          <td><span class="chip">{{ p.deposit_to.account_name }}</span></td>
+          <td>{% if p.reference_no %}<span class="ref">Ref{{ p.reference_no }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td><span class="chip">{{ p.payment_method|title|default:"—" }}</span></td>
+          <td class="num">{{ group.applied_total|floatformat:2|intcomma }}</td>
+<td class="action-cell">
+  <div class="row-actions">
+    <a class="edit-link" href="{% url 'sales:payment-edit' p.id %}">Edit</a>
+
+    <div class="menu-wrap">
+      <button class="kebab" aria-haspopup="true" aria-expanded="false" aria-label="More actions">
+        ▾
+      </button>
+      <div class="flyout" role="menu">
+        <a role="menuitem" href="{% url 'sales:payment-detail' p.id %}">View</a> 
+        <a role="menuitem" href="{% url 'sales:payment-print' p.id %}">Print</a>
+
+      </div>
+    </div>
+  </div>
+</td>
+</tr>
+        {% endwith %}
+
+        {% if group.lines %}
+        <!-- detail header -->
+        <tr class="section"><td colspan="6">Applied Invoices</td></tr>
+        <tr>
+          <td colspan="6" style="padding:0;">
+            <table class="detail">
+              <thead>
+                <tr>
+                  <th>Invoice #</th>
+                  <th>Date Created</th>
+                  <th class="num">Total Due</th>
+                  <th class="num">Amount Applied</th>
+                  <th class="num">Remaining (this payment)</th>
+                  <th class="num">Outstanding Now</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for line in group.lines %}
+                <tr>
+                  <td>INV - {{ line.invoice.id|stringformat:"04d" }}</td>
+                  <td>{{ line.invoice.date_created|date:"M. j, Y"|default:"—" }}</td>
+                  <td class="num">{{ line.total_due|floatformat:2|intcomma }}</td>
+                  <td class="num">{{ line.amount_applied|floatformat:2|intcomma }}</td>
+                  <td class="num">{{ line.remaining_this_payment|floatformat:2|intcomma }}</td>
+                  <td class="num">{{ line.outstanding_now|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endfor %}
+                <tr class="totals">
+                  <td colspan="3" class="num">Totals for payment:</td>
+                  <td class="num">{{ group.applied_total|floatformat:2|intcomma }}</td>
+                  <td class="num">{{ group.remaining_total_this_payment|floatformat:2|intcomma }}</td>
+                  <td class="num">{{ group.outstanding_total_now|floatformat:2|intcomma }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+        {% else %}
+          <tr><td colspan="6" class="muted">No invoice lines on this payment.</td></tr>
+        {% endif %}
+      {% empty %}
+        <tr><td colspan="6">No payments found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+  // Open/close the per-row action menu
+  document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.kebab');
+    // Close any other open menus
+    document.querySelectorAll('.menu-wrap.open').forEach(w => {
+      if (!w.contains(e.target)) {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab');
+        if (b) b.setAttribute('aria-expanded', 'false');
+      }
+    });
+    // Toggle this one
+    if (btn) {
+      const wrap = btn.closest('.menu-wrap');
+      const open = wrap.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+      e.stopPropagation();
+    }
+  });
+
+  // Esc closes all
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.menu-wrap.open').forEach(w => {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab');
+        if (b) b.setAttribute('aria-expanded', 'false');
+      });
+    }
+  });
+</script>

@@ -1,0 +1,148 @@
+{% load humanize %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sales Receipts</title>
+  <style>
+    :root{--brand:#39B54B;--ink:#0f5132;--line:#e7e7e7;--muted:#6b7280;--head:#f7fff8}
+    body{font-family:Poppins,system-ui,Segoe UI,Arial;background:#f4f6f8;margin:28px}
+    .wrap{max-width:1100px;margin:auto}
+    .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    h1{color:var(--brand);margin:0}
+    a.btn{background:var(--brand);color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:800}
+
+    /* shell gives rounded/border; table can overflow freely (so flyout isn't clipped) */
+    .table-shell{
+      background:#fff;border:1px solid var(--line);border-radius:12px;overflow:visible;
+      box-shadow:0 8px 22px rgba(0,0,0,.05)
+    }
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    thead th{
+      background:linear-gradient(0deg,#e6f7ea,#f5fff8);
+      color:var(--ink);font-weight:800;letter-spacing:.2px;
+      padding:14px 18px;border-bottom:1px solid var(--line);text-align:left
+    }
+    tbody td{padding:14px 18px;border-bottom:1px solid #f1f1f1;vertical-align:middle;background:#fff}
+    tbody tr{height:56px}
+    tbody tr:nth-child(even) td{background:#fafdfb}
+    tbody tr:hover td{background:#f7fcf9}
+
+    .num{text-align:right;white-space:nowrap}
+    .status{display:inline-block;background:#e8f5e9;color:#185a2e;padding:6px 10px;border-radius:999px;font-weight:700;font-size:12px}
+
+    .action-cell{white-space:nowrap;position:relative} /* create stacking context for z-index */
+    .row-actions{display:flex;align-items:center;gap:12px}
+    .row-actions a{color:#39B54B;text-decoration:none;font-weight:800}
+    .row-actions a:hover{text-decoration:underline}
+
+    .menu-wrap{position:relative;display:inline-block;z-index:2}
+    .kebab{
+      background:#f0fdf4;border:1px solid #cceedd;border-radius:10px;
+      padding:6px 10px;cursor:pointer;font-weight:700
+    }
+    .flyout{
+      position:absolute; right:0; top:110%;
+      background:#fff;border:1px solid #e6e6e6;border-radius:10px;
+      box-shadow:0 12px 26px rgba(0,0,0,.12);
+      min-width:160px; overflow:hidden; display:none; z-index:9999;
+    }
+    .menu-wrap.open .flyout{ display:block; }
+    .flyout a{display:block;padding:10px 14px;text-decoration:none;color:#111}
+    .flyout a:hover{background:#f6fef8}
+
+    @media (max-width: 900px){
+      body{margin:16px}
+      thead th, tbody td{padding:12px 14px}
+      tbody tr{height:52px}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+     <a class="btn" href="{% url 'sales:sales' %}"> < Back to sales</a>
+    <h1>Sales Receipts</h1>
+    <a class="btn" href="{% url 'sales:add-receipt' %}">New Receipt</a>
+  </div>
+
+  <div class="table-shell">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Receipt No.</th>
+          <th>Customer</th>
+          <th>Deposit To</th>
+          <th>Method</th>
+          <th class="num">Total</th>
+          <th class="num">Paid</th>
+          <th class="num">Balance</th>
+          <th>Status</th>
+          <th class="action-cell">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          {% with r=row.r %}
+          <tr>
+            <td>{{ r.receipt_date|date:"d/m/Y" }}</td>
+            <td>#{{ r.id|stringformat:"04d" }}</td>
+            <td>{{ r.customer.customer_name }}</td>
+            <td>{{ r.deposit_to.account_name }}</td>
+            <td>{{ r.payment_method|title }}</td>
+            <td class="num">{{ row.total|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.paid|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.balance|floatformat:2|intcomma }}</td>
+            <td><span class="status">{{ row.status }}</span></td>
+            <td class="action-cell">
+              <div class="row-actions">
+                <a href="{% url 'sales:receipt-edit' r.id %}">Edit</a>
+                <div class="menu-wrap">
+                  <button class="kebab" aria-haspopup="true" aria-expanded="false">▾</button>
+                  <div class="flyout" role="menu">
+                    <a role="menuitem" href="{% url 'sales:receipt-detail' r.id %}">View</a>
+                    <a role="menuitem" href="{% url 'sales:receipt-print' r.id %}">Print</a>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% endwith %}
+        {% empty %}
+          <tr><td colspan="10" style="color:#6b7280;padding:18px;">No receipts found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  // Click-to-toggle dropdown, click-away to close
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.kebab');
+    // close all open
+    document.querySelectorAll('.menu-wrap.open').forEach(w => {
+      if (!w.contains(e.target)) {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab'); if (b) b.setAttribute('aria-expanded','false');
+      }
+    });
+    if (btn) {
+      const wrap = btn.closest('.menu-wrap');
+      const open = wrap.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+      e.stopPropagation();
+    }
+  });
+  document.addEventListener('keydown', (e)=>{
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.menu-wrap.open').forEach(w => {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab'); if (b) b.setAttribute('aria-expanded','false');
+      });
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+{% load static %}
+
+{% include 'includes/navbar.html' %}
+<style>
+    h1{
+    color: rgb(7, 142, 36);
+  }
+    @media only screen and (max-width: 600px) {
+  #action{
+    background-color: #fff;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding:10%;
+    justify-content: center;
+  }
+  #action button{
+    display: flex;
+  }
+     #search{
+    display: flex;
+    width: 50%;
+    margin-top: 0px;
+  }
+  h1{
+    color: rgb(7, 142, 36);
+    font-size: 20px;
+  }
+  .button{
+    width: 100px;
+  }
+  #main{
+    padding: 15%;
+    margin-left: -20%;
+    margin-top: 65%;
+  }
+  #template{
+    position: fixed;
+    margin-top:-3%;
+    margin-left:70%;
+  }
+}
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+#main{
+  margin-top: 15%;
+}
+}
+</style>
+{% include 'includes/sidebar.html' %}
+    <div class="action" id="action">
+      <h1>CLIENTS</h1>
+      <div class="search_bar" id="search">
+        <input type="text" placeholder="Search Clients" />
+      </div>
+
+      <a href="{% url 'sowaf:add-client' %}" style="text-decoration: none;">
+         <button class="button">
+          <span class="button_text">ADD NEW</span>
+          <span class="button_icon">
+            <i class='bx bx-folder-plus'></i>
+          </span>
+        </button>
+        </a>
+        <div>
+       <form action="{% url 'sowaf:import-clients' %}" method="POST" enctype="multipart/form-data" style="display: flex;">
+         {% csrf_token %}
+    
+        <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display: none;" id="excelInput" onchange="this.form.submit()" />
+        <label for="excelInput" class="button" style="cursor: pointer;">
+         <span class="button_text">IMPORT</span>
+        <span class="button_icon">
+        <i class='bx bx-import'></i>
+        </span>
+       </label>
+         </form>
+       </div>
+      <a href="{% url 'sowaf:add-customer' %}" style="text-decoration: none;">
+         <button class="button">
+          <span class="button_text">EXPORT</span>
+          <span class="button_icon">
+            <i class='bx bx-folder-plus'></i>
+          </span>
+        </button>
+      </a>
+        <button class="button" onclick="openColumnCustomizer()">
+         <span class="button_text">CUSTOMIZE</span>
+         <span class="button_icon">
+         <i class='bx bxs-customize'></i>
+          </span>
+        </button>
+    </div>
+    <div class="main_body" id="main">
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th>LOGO</th>
+            <th>ID</th>
+            <th>COMPANY NAME</th>
+            <th>PHONE</th>
+            <th>EMAIL</th>
+            <th>CREDIT LIMIT</th>
+            <th>STATUS</th>
+            <th>OPERATIONS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for client in clients %}
+          <tr>
+            <td>
+                  {%if client.logo %}
+              <img src=" {{ client.logo.url }}" alt="picture" style="width: 40px; height: 40px; border-radius: 50%;">
+              {% else %}
+              <i class='bx bx-user-circle'></i>
+              {% endif %}
+              </td>
+            </i>
+          </td>
+            <td>{{client.id|stringformat:"03d"}}</td>
+            <td>{{client.company}}</td>
+            <td>{{client.phone}}</td>
+            <td>{{client.company_email}}</td>
+            <td>{{client.credit_limit}}</td>
+            <td>{{client.status}}</td>
+            <td>
+            <a href="{% url 'sowaf:edit-client' client.id %}" title="Edit" style="color:green;">
+              <i class='bx bxs-edit'></i> 
+              </a>
+            </td>
+          </tr>
+        {% empty %}    
+        <tr>
+      <td colspan="6">No Client recorded yet.</td>
+    </tr>
+         {% endfor %}
+        </tbody>
+      </table>
+      <a href="{% url 'sowaf:import_clients_template' %}" style="text-decoration: none; float:right;" id="template">
+        <button class="button">
+          <span class="button_text">Template</span>
+        </button>
+      </a>
+    </div>
+
+<script>
+  function openColumnCustomizer() {
+    document.getElementById('columnCustomizerModal').style.display = 'block';
+  }
+
+  function closeColumnCustomizer() {
+    document.getElementById('columnCustomizerModal').style.display = 'none';
+  }
+
+  // Optional: close modal when clicking outside
+  window.onclick = function(event) {
+    const modal = document.getElementById('columnCustomizerModal');
+    if (event.target == modal) {
+      closeColumnCustomizer();
+    }
+  }
+</script>
+ {% include 'includes/footer.html' %}

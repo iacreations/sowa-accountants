@@ -1,0 +1,373 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chart of Accounts Form</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: "Poppins", sans-serif;
+      margin: 0;
+      padding: 0;
+      font-size: 14px;
+    }
+    body {
+      background: #f4f6f8;
+      padding: 30px;
+    }
+    .container {
+      max-width: 900px;
+      margin: auto;
+      background: #fff;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h2.title {
+      text-align: center;
+      color: #39B54B;
+      margin-bottom: 25px;
+    }
+    .section-wrapper {
+      background: #f9f9f9;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 25px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 20px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+    }
+    label {
+      font-weight: 500;
+      margin-bottom: 5px;
+    }
+    input, select, textarea {
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 30px;
+      border-top: 1px solid #e0e0e0;
+      padding-top: 20px;
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .btn-cancel { background: #f5f5f5; }
+    .btn-green { background: #39B54B; color: #fff; }
+    .btn-light-green {
+      background: #d2f4dc;
+      color: #2a8b3f;
+    }
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      z-index: 10;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .dropdown:hover .dropdown-menu {
+      display: block;
+    }
+    .dropdown-menu button {
+      width: 100%;
+      padding: 10px 16px;
+      background: none;
+      border: none;
+      text-align: left;
+      cursor: pointer;
+    }
+    input{
+      border: solid 1px green;
+    }
+    select{
+      border: solid 1px green;
+    }
+    #account{
+      border: solid 1px green;
+    }
+    textarea{
+      border: solid 1px green;
+    }
+  </style>
+</head>
+
+  <div class="container">
+ <form method='post' action="{% url 'accounts:add-account' %}" enctype= 'multipart/form-data'>
+    {% csrf_token %}
+    <h2 class="title">Chart of Accounts</h2>
+
+    <div class="section-wrapper">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Account Name *</label>
+          <input type="text" name="account_name" id="account" required />
+        </div>
+        <div class="form-group">
+          <label>Account Number</label>
+          <input type="text" name="account_number" id="account" />
+        </div>
+        <div class="form-group">
+  <label>Account Type *</label>
+  <select name="account_type" id="account_type" required>
+    <option value="">Select account type</option>
+    <option>Accounts Receivable (A/R)</option>
+    <option>Current Assets</option>
+    <option>Cash and Cash Equivalents</option>
+    <option>Fixed Assets</option>
+    <option>Non-Current Assets</option>
+    <option>Accounts Payable (A/P)</option>
+    <option>Credit Card</option>
+    <option>Current Liabilities</option>
+    <option>Non-current Liabilities</option>
+    <option>Owner's Equity</option>
+    <option>Income</option>
+    <option>Other Income</option>
+    <option>Cost of Sales</option>
+    <option>Expenses</option>
+    <option>Other Expenses</option>
+  </select>
+</div>
+      <!-- detail type  -->
+  <div class="form-group">
+  <label>Detail Type *</label>
+  <select name="detail_type" id="detail_type" required>
+    <option value=""></option>
+  </select>
+</div>
+
+  <div class="form-group my-5">
+  <label for="subAccountCheckbox">Make this a sub-account.
+    <input type="checkbox" id="subAccountCheckbox" name="is_subaccount" onchange="toggleSellFields()">
+  </label>
+  </div>
+       <div id="parent_account_field" style="display: none;">
+        <label for="parent">Parent Account</label> <div></div>
+        <select name="parent" id="parent">
+            <option value="">choose parent account</option>
+            {% for parent in parents %}
+                <option value="{{ parent.id }}">{{ parent.account_name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+      <div class="form-grid my-5">
+        <div class="form-group">
+          <label>Opening Balance</label>
+          <input type="number" name="opening_balance" />
+        </div>
+      </div>
+        <div class="form-group">
+          <label>As of</label>
+          <input type="date" name="as_of"/>
+        </div>
+    </div>
+
+    <!-- More Info Section -->
+    <div class="section-wrapper">
+      <h3 style="margin-bottom: 15px; color: #39B54B;">More Info on Opening Balances</h3>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea name="description" rows="3"></textarea>
+      </div>
+    </div>
+
+    <!-- Footer Buttons -->
+    <div class="footer">
+      <a href="{% url 'accounts:accounts' %}" class="text-decoration-none button btn-sm" id="btn">Cancel</a>
+      <div class="print">
+        <button class="btn" style="background-color: #77f089;;">Print / Preview</button>
+      </div>
+      <div class="dropdown">
+          <button type="button" class="btn button btn-green">Save ▼</button>
+          <div class="dropdown-menu">
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+          </div>
+        </div>
+    </div>
+    </div>
+    </form>
+  </div>
+  <script src=" {% static 'sowaf/styles/script.js' %} "></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const checkbox = document.getElementById("subAccountCheckbox");
+        const parentField = document.getElementById("parent_account_field");
+
+        checkbox.addEventListener("change", function () {
+            if (this.checked) {
+                parentField.style.display = "block"; // Show field
+            } else {
+                parentField.style.display = "none"; // Hide field
+            }
+        });
+    });
+
+    document.addEventListener("DOMContentLoaded", function () {
+    const accountTypeDropdown = document.getElementById("account_type");
+    const detailTypeDropdown = document.getElementById("detail_type");
+
+    // Mapping of Account Type → Detail Types
+    const detailOptions = {
+        "Accounts Receivable (A/R)": [
+            "Trade Debtors",
+            "Other Receivables"
+        ],
+        "Current Assets": [
+            "Allowance for bad debts", "Assets available for sale", "Development Costs", "Employee Cash advances", "Inventory", "Investments-Other", "Loans To Officers", "Loans To Others", "Loans To Shareholders", "Other current assets", "Prepaid Expenses","Retainage", "Undeposited funds"
+
+        ],
+        "Cash and Cash Equivalents": [
+            "Bank", " Cash and Cash Equivalents", "Cash on Hand", "Client Trust Account", "Money Market", "Rents Held in Trust", "Savings", 
+        ],
+        "Fixed Assets": [
+            "Accumulated depletion", "Accumulated depreciation on property, plant and equipment", "Buildings", "Depletable Assets", "Furniture and Fixtures", "Land", "Leasehold Improvement", "Machinery and equipment", "Other fixed assets", "Vehicles"
+        ],
+        "Non-Current Assets": [
+            "Long-term Investments","Intangible Assets","Accumulated amortisation of non-current assets","Assets held for sale","Deferred tax","Good will","Lease Buyout","Licences","Organisational Costs","Other non-current assets","Security Deposits"
+        ],
+        "Accounts Payable (A/P)": [
+        "Accounts Payable (A/P)",    
+        "Trade Creditors",
+        "Other Payables"
+        ],
+        "Credit Card": [
+            "Credit Card",
+            "Visa",
+            "MasterCard",
+            "Corporate Card",
+            "Amex"
+        ],
+        "Current Liabilities": [
+            "Accrued liabilities", "Client Trust Accounts-Liabilities", "Current Tax Liability", "Current portion of obligations under finance leases", "Dividends Payable", "Income tax payable", "Insurance payable", "Line of Credit", "Loan Payable", "Other current liabilities", "Payroll Clearing", "Payroll liabilities", "Prepaid Expenses Payable", "Rents in trust-liability", "Sales and service tax payable"
+        ],
+        "Non-current liabilities":[
+          "Accrued holiday payable", "Accrued non-current liabilities", "Liabilities related to assets for sale", "Long-term debt", "Notes payable", "other non-current liabilities", "Shareholder Notes Payable"
+        ],
+        "Owner's Equity": [
+            "Accumulated adjustment", "Dividend disbursed", "Equity in earnings of subsidiaries", "Opening balance Equity", "Ordinary shares", "Other comprehensive income", "Owner’s Equity", "Paid-in capital or Surplus", "Partner Contributions", "Partner Distributions", "Partner’s Equity", "Preferred shares", "Retained Earnings", "Share capital", "Treasury shares"
+        ],
+        "Income": [
+            "Discounts/Refunds Given", "Non-Profit income", "Other Primary Income", "Revenue-general", "Sales-retail", "Sales-wholesale", "Sales of Product income", "Service/Fee income", "Unapplied Cash Payment Income"
+        ],
+        "Other Income": [
+            "Dividend Income", "Interest earned", "Loss on disposal of assets", "Other Investment Income", "Other Miscellaneous Income", "Other Operating Income", "Tax-Exempt Interest", "Unrealized loss on securities, net tax"
+        ],
+        "Cost of Sales": [
+            "Cost of labour-COS",
+            "Equipment rental-COS",
+            "Freight and delivery-COS",
+            "Other cost of sales-COS",
+            "Supplies and materials-COS"
+        ],
+        "Expenses": [
+            "Advertisement/Promotional", "Amortisation expense", "Auto", "Bad debts", "Bank charges", "Charitable contributions", "Commission and fees", "Cost of Labor", "Dues and Subscriptions", "Equipment rental", "Finance costs", "Income tax expenses", "Insurance", "Interest Paid", "Legal and Professional fees", "Loss on discontinued operations, net of tax", "Management compensation", "Meals and entertainment", "Office/General Administrative Expenses", "Other Miscellaneous Service Cost", "Other selling expenses", "Payroll expenses", "Rent or lease of Buildings", "Repair and maintenance", "Shipping and delivery expense", "Supplies and materials", "Taxes paid", "Travel expenses- general admin expenses", "Travel expenses- selling expense", "Unapplied Cash Bill Payment expense", "Utilities"
+        ],
+        "Other Expenses": [
+            "Amortisation",
+            "Depreciation",
+            "Exchange Gain or Loss",
+            "Other Expense",
+            "Penalties and Settlements"
+        ]
+    };
+
+    // Function to update Detail Type dropdown
+    function updateDetailTypes(accountType) {
+        detailTypeDropdown.innerHTML = "<option value=''>Choose detail type</option>";
+
+        if (detailOptions[accountType]) {
+            detailOptions[accountType].forEach(function (detail) {
+                const option = document.createElement("option");
+                option.value = detail;
+                option.textContent = detail;
+                detailTypeDropdown.appendChild(option);
+            });
+        }
+    }
+
+    // Trigger update when Account Type changes
+    accountTypeDropdown.addEventListener("change", function () {
+        updateDetailTypes(this.value);
+    });
+    // auto-run on page load if editing
+    if (accountTypeDropdown.value) {
+        updateDetailTypes(accountTypeDropdown.value);
+    }
+});
+
+document.addEventListener("DOMContentLoaded", function () {
+    const accountTypeDropdown = document.getElementById("account_type");
+    const openingBalanceField = document.querySelector("input[name='opening_balance']").closest(".form-group");
+    const asOfField = document.querySelector("input[name='as_of']").closest(".form-group");
+
+    // Account types where Opening Balance & As Of should appear
+    const allowedTypes = [
+        "Accounts Receivable (A/R)",
+        "Current Assets",
+        "Cash and Cash Equivalents",
+        "Fixed Assets",
+        "Non-Current Assets",
+        "Accounts Payable (A/P)",
+        "Credit Card",
+        "Current Liabilities",
+        "Non-current Liabilities",
+        "Owner's Equity"
+    ];
+
+    function toggleBalanceFields() {
+        const selectedType = accountTypeDropdown.value;
+
+        if (allowedTypes.includes(selectedType)) {
+            openingBalanceField.style.display = "block";
+            asOfField.style.display = "block";
+        } else {
+            openingBalanceField.style.display = "none";
+            asOfField.style.display = "none";
+        }
+    }
+
+    // Listen for changes
+    accountTypeDropdown.addEventListener("change", toggleBalanceFields);
+
+    // Run on page load in case of edit form
+    toggleBalanceFields();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,464 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% if edit_mode %}Edit Receipt{% else %}New Receipt{% endif %}</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+  <style>
+    :root{
+      --brand:#39B54B; --brand-ink:#14532d;
+      --line:#e6e6e6; --muted:#6b7280;
+      --chip:#e8f5e9; --panel:#ffffff; --bg:#f4f6f8;
+    }
+    *{box-sizing:border-box}
+    body{background:var(--bg);font-family:"Poppins",sans-serif;padding:30px}
+    .container-rcpt{background:var(--panel);padding:24px;border-radius:14px;max-width:1100px;margin:auto;box-shadow:0 8px 22px rgba(0,0,0,.05);border:1px solid var(--line)}
+    h2.title{color:var(--brand);text-align:center;margin-bottom:18px;font-weight:800}
+    .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .badge-mono{background:#f8fafc;border:1px dashed #cdd6df;color:#0f172a;border-radius:8px;padding:4px 10px;font-weight:700}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-bottom:20px}
+    label{font-weight:600;margin-bottom:6px;color:#111827}
+    input,select,textarea{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;width:100%}
+    table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+    thead th{background:linear-gradient(0deg,#e6f7ea,#f5fff8);color:var(--brand-ink);font-weight:800;letter-spacing:.2px;padding:10px 12px;border-bottom:1px solid var(--line)}
+    tbody td{padding:8px 10px;border-bottom:1px solid var(--line);background:#fff;vertical-align:middle}
+    .num{text-align:right}
+    .actions-row{display:flex;justify-content:space-between;gap:10px;margin:14px 0 22px}
+    .btn-lite{background:#d8f5e0;color:#185a2e;font-weight:700;border:0;border-radius:8px;padding:8px 14px}
+    .btn-lite:hover{filter:brightness(.98)}
+    .btn-primary{background:var(--brand);color:#fff;font-weight:800;border:0;border-radius:10px;padding:10px 18px}
+    .footer{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:16px;margin-top:18px;gap:10px;flex-wrap:wrap}
+    .pill{display:inline-block;background:var(--chip);color:#1e4620;padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px}
+    .muted{color:var(--muted)}
+    .money{font-weight:800;color:#0f5132}
+    .right-col{min-width:280px;max-width:360px;margin-left:auto}
+    .pair{display:flex;justify-content:space-between;gap:16px;margin-bottom:8px}
+    .pair input{max-width:180px}
+    .del-btn{background:transparent;border:0;color:#ef4444;font-size:18px}
+    .add-btn{background:#eaffef;border:1px solid #b5ecc4;color:#166534;padding:6px 10px;border-radius:8px;font-weight:700}
+    .dropdown{position:relative}
+    .dropdown > .btn-primary::after{content:" ▼";font-weight:600}
+    .dropdown-menu{position:absolute;right:0;top:110%;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 22px rgba(0,0,0,.08);display:none;min-width:180px;overflow:hidden}
+    .dropdown:hover .dropdown-menu{display:block}
+    .dropdown-menu button{display:block;width:100%;text-align:left;background:#fff;border:0;padding:10px 14px}
+    .dropdown-menu button:hover{background:#f6fef8}
+    #receipt{
+      margin-top: 5%;
+      margin-left: 20%;
+    }
+  </style>
+</head>
+<body>
+  <!-- navbar -->
+    <nav class="navbar w3-row-padding">
+      <div class="logo_item">
+        <i class="bx bx-menu" id="sidebarOpen"></i>
+        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt=""></i>YoAccountant
+      </div>
+
+      <div class="search_bar">
+        <input type="text" placeholder="Search" />
+      </div>
+
+ <!-- icons on drop down in small screens -->
+
+
+  <div class="dropdown" id="iconDropdown">
+    <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+      <i class='bx bx-menu'></i>
+    </button>
+    <div class="dropdown-menu" id="dropdownMenu">
+      <i class="bi bi-grid"></i>
+      <i class='bx bx-sun' id="darkLight"></i>
+      <i class='bx bx-cog'></i>
+      <i class='bx bx-bell'></i>
+      <i class='bx bx-user-circle'></i>
+      <i class='bx bxs-down-arrow'></i>
+    </div>
+  </div>
+
+  <div class="navbar_content" id="icons">
+    <i class="bi bi-grid"></i>
+    <i class='bx bx-sun' id="darkLight"></i>
+    <i class='bx bx-cog'></i>
+    <i class='bx bx-bell'></i>
+    <i class='bx bx-user-circle'></i>
+    <i class='bx bxs-down-arrow'></i>
+  </div>
+    </nav>
+<!-- end -->
+ {% include 'includes/sidebar.html' %}
+<div class="container-rcpt" id="receipt">
+  <div class="bar">
+    <span class="badge-mono">
+      {% if edit_mode %}Editing Receipt #{{ receipt.id }}{% else %}New Receipt{% endif %}
+    </span>
+  </div>
+
+  <h2 class="title">Receipt</h2>
+
+  <form method="post" action="{% if edit_mode %}{% url 'sales:receipt-edit' receipt.id %}{% else %}{% url 'sales:add-receipt' %}{% endif %}">
+    {% csrf_token %}
+
+    {% if form_error %}
+      <div class="alert alert-danger mb-3">{{ form_error }}</div>
+    {% endif %}
+
+    <!-- Header -->
+    <div class="grid">
+      <!-- Reference / Transaction ID -->
+      <div class="form-group">
+        <label>Reference No.</label>
+        <!-- CHANGED: always readonly and prefills existing ref in edit -->
+        <input type="text" name="reference_no"
+               value="{% if edit_mode %}{{ receipt.reference_no }}{% else %}{{ reference_no|default_if_none:'' }}{% endif %}"
+               maxlength="8" readonly
+               style="color:#39B54B; font-weight:800;">
+      </div>
+
+      <!-- Customer -->
+      <div>
+        <label>Customer *</label>
+        <select name="customer" id="customer-select" required>
+          <option value="">Select customer</option>
+          {% for c in customers %}
+            <option value="{{ c.id }}"
+              {% if edit_mode and receipt.customer_id == c.id %}selected{% endif %}>
+              {{ c.customer_name }}
+            </option>
+          {% endfor %}
+          <option value="add_new">➕ Add New</option>
+        </select>
+      </div>
+
+      <!-- Sales Date -->
+      <div>
+        <label>Sales Date *</label>
+        <!-- CHANGED: bind to receipt.receipt_date (model field) -->
+        <input type="date" name="receipt_date"
+               value="{% if edit_mode and receipt.receipt_date %}{{ receipt.receipt_date|date:'Y-m-d' }}{% endif %}"
+               required>
+      </div>
+
+      <!-- Sales Rep -->
+      <div>
+        <label>Sales Rep</label>
+        <input name="sales_rep" value="{% if edit_mode %}{{ receipt.sales_rep }}{% endif %}">
+      </div>
+
+      <!-- Payment Method -->
+      <div>
+        <label>Payment Method</label>
+        <select name="payment_method">
+          {% with pm=receipt.payment_method|default_if_none:'' %}
+          <option value="cash"         {% if pm == 'cash' %}selected{% endif %}>Cash</option>
+          <option value="bank_transfer"{% if pm == 'bank_transfer' %}selected{% endif %}>Bank Transfer</option>
+          <option value="mobile_money" {% if pm == 'mobile_money' %}selected{% endif %}>Mobile Money</option>
+          <option value="card"         {% if pm == 'card' %}selected{% endif %}>Card</option>
+          {% endwith %}
+        </select>
+      </div>
+
+      <!-- Deposit To -->
+      <div>
+        <label>Deposit To *</label>
+        <select name="deposit_to" required>
+          <option value="">Select account</option>
+          {% for acc in accounts %}
+            <option value="{{ acc.id }}"
+              {% if edit_mode and receipt.deposit_to_id == acc.id %}selected{% endif %}>
+              {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
+              — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- PO / External Ref -->
+      <div>
+        <label>PO / External Ref</label>
+        <input name="external_ref" value="{% if edit_mode %}{{ receipt.external_ref }}{% endif %}">
+      </div>
+
+      <!-- Discount % (overall) -->
+      <div>
+        <label>Discount %</label>
+        <input type="number" min="0" max="100" step="0.01" id="discountPercent" name="discount_percent"
+               value="{% if edit_mode %}{{ receipt.discount_percent|default_if_none:'0' }}{% else %}0{% endif %}">
+      </div>
+
+      <!-- Shipping -->
+      <div>
+        <label>Shipping & Handling</label>
+        <input type="number" step="0.01" id="shipping" name="shipping_fee"
+               value="{% if edit_mode %}{{ receipt.shipping_fee }}{% else %}0{% endif %}">
+      </div>
+
+      <!-- Bill To -->
+      <div style="grid-column:1/-1">
+        <label>Bill To</label>
+        <textarea rows="3" name="bill_to">{% if edit_mode %}{{ receipt.bill_to }}{% endif %}</textarea>
+      </div>
+    </div>
+
+    <!-- Items -->
+    <div class="section-title">Item Details</div>
+    <table id="item-table">
+      <thead>
+        <tr>
+          <th style="width:48px;">#</th>
+          <th style="min-width:220px;">Product/Service</th>
+          <th>Description</th>
+          <th style="width:90px;">Qty</th>
+          <th style="width:130px;">Unit Price</th>
+          <th style="width:140px;" class="num">Line Total</th>
+          <th style="width:60px;">&nbsp;</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if edit_mode and items %}
+          {% for it in items %}
+            <tr>
+              <td class="row-idx">{{ forloop.counter }}</td>
+              <td>
+                <select class="product-select" name="product[]">
+                  <option value="">-- Select --</option>
+                  {% for p in products %}
+                    <option value="{{ p.id }}"
+                      data-rate="{{ p.sales_price|default:0 }}"
+                      data-description="{{ p.sales_description|default:''|escape }}"
+                      {% if it.product_id == p.id %}selected{% endif %}>
+                      {{ p.name }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input name="description[]" value="{{ it.description|default:'' }}"></td>
+              <td><input class="qty" type="number" min="0" step="0.01" name="qty[]" value="{{ it.qty }}"></td>
+              <td><input class="price" type="number" min="0" step="0.01" name="unit_price[]" value="{{ it.unit_price }}"></td>
+              <!-- CHANGED: use it.amount to prefill line total -->
+              <td class="num"><input class="line-total" name="line_total[]" type="number" step="0.01" value="{{ it.amount }}" readonly></td>
+              <td class="num"><button class="del-btn" type="button" onclick="rowDel(this)"><i class='bx bx-trash'></i></button></td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <!-- starter empty row -->
+          <tr>
+            <td class="row-idx">1</td>
+            <td>
+              <select class="product-select" name="product[]">
+                <option value="">-- Select --</option>
+                {% for p in products %}
+                  <option value="{{ p.id }}"
+                          data-rate="{{ p.sales_price|default:0 }}"
+                          data-description="{{ p.sales_description|default:''|escape }}">
+                    {{ p.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td><input name="description[]"></td>
+            <td><input class="qty" type="number" min="0" step="0.01" name="qty[]" value="1"></td>
+            <td><input class="price" type="number" min="0" step="0.01" name="unit_price[]"></td>
+            <td class="num"><input class="line-total" name="line_total[]" type="number" step="0.01" value="0.00" readonly></td>
+            <td class="num"><button class="del-btn" type="button" onclick="rowDel(this)"><i class='bx bx-trash'></i></button></td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <div class="actions-row">
+      <button type="button" class="add-btn" onclick="rowAdd()">+ Add Line</button>
+      <button type="button" class="btn-lite" onclick="tableClear()">Clear All</button>
+    </div>
+
+    <!-- Notes & Totals -->
+    <div class="grid" style="align-items:start">
+      <div>
+        <label>Memo</label>
+        <textarea rows="4" name="memo">{% if edit_mode %}{{ receipt.memo }}{% endif %}</textarea>
+      </div>
+
+      <div class="right-col">
+        <div class="pair">
+          <span class="muted">Subtotal</span>
+          <!-- CHANGED: prefill in edit -->
+          <input id="subtotal" name="subtotal" type="number" step="0.01"
+                 value="{% if edit_mode %}{{ receipt.subtotal }}{% else %}0{% endif %}" readonly>
+        </div>
+        <div class="pair">
+          <span class="muted">Discount Amount</span>
+          <!-- CHANGED: prefill in edit -->
+          <input id="discountAmount" name="discount_amount" type="number" step="0.01"
+                 value="{% if edit_mode %}{{ receipt.total_discount }}{% else %}0{% endif %}" readonly>
+        </div>
+        <div class="pair">
+          <span class="muted">Shipping</span>
+          <!-- CHANGED: prefill in edit (mirror of shipping_fee) -->
+          <input id="shippingView" type="number" step="0.01" name="shipping"
+                 value="{% if edit_mode %}{{ receipt.shipping_fee }}{% else %}0{% endif %}" readonly>
+        </div>
+        <hr>
+        <div class="pair">
+          <span class="money">Total Amount</span>
+          <!-- CHANGED: prefill in edit -->
+          <input id="grandTotal" name="total_amount" type="number" step="0.01" class="money"
+                 value="{% if edit_mode %}{{ receipt.total_amount }}{% else %}0{% endif %}" readonly>
+        </div>
+        <div class="pair">
+          <span class="muted">Amount Paid</span>
+          <input id="amountPaid" name="amount_paid" type="number" step="0.01"
+                 value="{% if edit_mode %}{{ receipt.amount_paid|default:0 }}{% else %}0{% endif %}">
+        </div>
+        <div class="pair">
+          <span class="money">Balance</span>
+          <!-- CHANGED: prefill in edit (will also update via JS) -->
+          <input id="balanceDue" name="balance" type="number" step="0.01" class="money"
+                 value="{% if edit_mode %}{{ receipt.balance|default:0 }}{% else %}0{% endif %}" readonly>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="{% url 'sales:sales' %}" class="btn-lite text-decoration-none">Cancel</a>
+
+      <div class="dropdown">
+        <button type="submit" class="btn-primary">{% if edit_mode %}Update{% else %}Save{% endif %}</button>
+        <div class="dropdown-menu">
+          <button type="submit" name="save_action" value="save">Save</button>
+          <button type="submit" name="save_action" value="save&new">Save & New</button>
+          <button type="submit" name="save_action" value="save&close">Save & Close</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+  // open Add Customer in new tab if chosen
+  (function(){
+    const addCustomerUrl = "{% url 'sowaf:add-customer' %}";
+    const sel = document.getElementById('customer-select');
+    if (sel){
+      sel.addEventListener('change', function(){
+        if (this.value === 'add_new'){
+          window.open(addCustomerUrl, '_blank', 'noopener');
+          this.value = '';
+        }
+      });
+    }
+  })();
+
+  // Row helpers
+  function rowDel(btn){
+    const tbody = document.querySelector('#item-table tbody');
+    const row = btn.closest('tr');
+    if (tbody.rows.length > 1){
+      row.remove();
+      reindexRows();
+      recalcAll();
+    }
+  }
+  function rowAdd(){
+    const tbody = document.querySelector('#item-table tbody');
+    const tmpl = tbody.rows[tbody.rows.length-1];
+    const clone = tmpl.cloneNode(true);
+    clone.querySelector('.product-select').selectedIndex = 0;
+    clone.querySelector('[name="description[]"]').value = '';
+    clone.querySelector('.qty').value = '1';
+    clone.querySelector('.price').value = '';
+    clone.querySelector('.line-total').value = '0.00';
+    tbody.appendChild(clone);
+    reindexRows();
+  }
+  function tableClear(){
+    const tbody = document.querySelector('#item-table tbody');
+    while (tbody.rows.length > 1){ tbody.deleteRow(1); }
+    const r0 = tbody.rows[0];
+    r0.querySelector('.product-select').selectedIndex = 0;
+    r0.querySelector('[name="description[]"]').value = '';
+    r0.querySelector('.qty').value = '1';
+    r0.querySelector('.price').value = '';
+    r0.querySelector('.line-total').value = '0.00';
+    recalcAll();
+  }
+  function reindexRows(){
+    document.querySelectorAll('#item-table tbody .row-idx').forEach((cell, i)=>{
+      cell.textContent = (i+1).toString();
+    });
+  }
+
+  // Change handlers
+  document.addEventListener('change', function(e){
+    if (e.target.classList.contains('product-select')){
+      const opt = e.target.selectedOptions[0];
+      const tr = e.target.closest('tr');
+      if (opt){
+        const desc = opt.getAttribute('data-description') || '';
+        const rate = opt.getAttribute('data-rate') || '0';
+        tr.querySelector('[name="description[]"]').value = desc;
+        tr.querySelector('.price').value = rate;
+      }
+      rowRecalc(tr);
+      recalcAll();
+    }
+    if (e.target.classList.contains('qty') || e.target.classList.contains('price')){
+      const tr = e.target.closest('tr');
+      rowRecalc(tr);
+      recalcAll();
+    }
+    if (e.target.id === 'discountPercent' || e.target.id === 'shipping'){
+      recalcAll();
+    }
+    if (e.target.id === 'amountPaid'){
+      recalcBalanceOnly();
+    }
+  });
+
+  function rowRecalc(tr){
+    const q = parseFloat(tr.querySelector('.qty').value) || 0;
+    const p = parseFloat(tr.querySelector('.price').value) || 0;
+    tr.querySelector('.line-total').value = (q*p).toFixed(2);
+  }
+
+  function recalcAll(){
+    let subtotal = 0;
+    document.querySelectorAll('#item-table tbody .line-total').forEach(inp=>{
+      subtotal += parseFloat(inp.value) || 0;
+    });
+    const discPct = parseFloat(document.getElementById('discountPercent').value) || 0;
+    const shipping = parseFloat(document.getElementById('shipping').value) || 0;
+
+    const discountAmt = subtotal * (discPct/100);
+    const total = subtotal - discountAmt + shipping;
+
+    document.getElementById('subtotal').value = subtotal.toFixed(2);
+    document.getElementById('discountAmount').value = discountAmt.toFixed(2);
+    document.getElementById('shippingView').value = shipping.toFixed(2);
+    document.getElementById('grandTotal').value = total.toFixed(2);
+
+    recalcBalanceOnly();
+  }
+
+  function recalcBalanceOnly(){
+    const total = parseFloat(document.getElementById('grandTotal').value) || 0;
+    const paid  = parseFloat(document.getElementById('amountPaid').value) || 0;
+    const bal = total - paid;
+    document.getElementById('balanceDue').value = bal.toFixed(2);
+  }
+
+  // initial calc on load (keeps your look; simply ensures totals match rows)
+  document.addEventListener('DOMContentLoaded', ()=>{
+    document.querySelectorAll('#item-table tbody tr').forEach(tr=>rowRecalc(tr));
+    recalcAll();
+  });
+</script>
+
+</body>
+</html>
+ {% include 'includes/footer.html' %}

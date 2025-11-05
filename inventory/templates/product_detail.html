@@ -1,0 +1,169 @@
+{% load static humanize %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ product.name }} • Product Detail</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+
+  <style>
+    :root{
+      --brand:#39B54B; --ink:#0b3d22;
+      --bg:#f4f6f8; --panel:#fff; --line:#e8e8e8;
+      --muted:#667085; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --chip:#e8f5e9;
+    }
+    *{box-sizing:border-box}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px}
+    .wrap{max-width:1080px;margin:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;gap:16px;padding:18px 20px;border-bottom:1px solid var(--line)}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .chip{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;color:#0f172a}
+    .grid{display:grid;grid-template-columns:2fr 1fr;gap:18px;padding:18px}
+    @media (max-width: 900px){ .grid{grid-template-columns:1fr} }
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+    .card{
+      border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff;
+      box-shadow:0 8px 18px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:6px;
+    }
+    .card h5{margin:0;font-size:12px;letter-spacing:.2px;text-transform:uppercase;color:#334155}
+    .card .val{font-size:22px;font-weight:900}
+    .card.ok{background:linear-gradient(180deg,#eafff0,#ffffff)}
+    .card.warn{background:linear-gradient(180deg,#fff7e5,#ffffff)}
+    .card.bad{background:linear-gradient(180deg,#ffe8e8,#ffffff)}
+    .sec{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}
+    .sec h4{margin:0 0 10px 0; font-size:14px; color:#111827; font-weight:800}
+    .kv{display:grid;grid-template-columns:160px 1fr;gap:8px;font-size:14px}
+    .kv .k{color:#64748b}
+    .actions{display:flex;flex-wrap:wrap;gap:8px}
+    .btn{
+      background:var(--brand);color:#fff;border:0;border-radius:10px;
+      padding:9px 14px;font-weight:800;text-decoration:none;display:inline-flex;align-items:center;gap:8px
+    }
+    .btn.alt{background:#d8f5e0;color:#14532d}
+    table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+    thead th{background:#f8fafc;color:#0f172a;padding:10px;text-align:left;font-weight:800}
+    tbody td{padding:10px;border-top:1px solid var(--line)}
+  </style>
+</head>
+<body>
+  {% include 'includes/navbar.html' %}
+  {% include 'includes/sidebar.html' %}
+
+  <div class="wrap" style="margin-top: 5%; float: right;">
+    <div class="head">
+      <span class="title">{{ product.name }}</span>
+      {% if product.sku %}<span class="chip">SKU: {{ product.sku }}</span>{% endif %}
+      {% if product.type %}<span class="chip">Product Type: {{ product.type }}</span>{% endif %}
+      {% if product.taxable %}<span class="chip">Taxable</span>{% endif %}
+    </div>
+
+    <div class="grid">
+      <div>
+        <!-- Status cards -->
+        <div class="cards" style="margin-bottom:12px;">
+          {% if out_of_stock %}
+            <div class="card bad">
+              <h5>Stock Status</h5>
+              <div class="val" style="color:var(--bad)">Out of Stock</div>
+              <small class="muted">All units have been sold.</small>
+            </div>
+          {% else %}
+            <div class="card ok">
+              <h5>Remaining in Stock</h5>
+              <div class="val" style="color:var(--ok)">{{ remaining|floatformat:2 }}</div>
+              <small class="muted">Available to sell</small>
+            </div>
+            {% if is_low_stock %}
+              <div class="card warn">
+                <h5>Low Stock</h5>
+                <div class="val" style="color:var(--warn)">{{ remaining|floatformat:2 }}</div>
+                <small class="muted">Consider reordering</small>
+              </div>
+            {% endif %}
+          {% endif %}
+
+          <div class="card">
+            <h5>Sold To Date</h5>
+            <div class="val">{{ sold_qty|floatformat:2 }}</div>
+          </div>
+
+          <div class="card">
+            <h5>On Hand (Initial)</h5>
+            <div class="val">{{ on_hand|floatformat:2 }}</div>
+          </div>
+        </div>
+
+        <!-- Description / Sales -->
+        <div class="sec" style="margin-bottom:12px;">
+          <h4>Sales Info</h4>
+          <div class="kv">
+            <div class="k">Sales Price</div><div>{{ product.sales_price|floatformat:2|intcomma }}</div>
+            <div class="k">Income Account</div><div>{{ product.income_account.account_name|default:"—" }}</div>
+            <div class="k">Sales Description</div><div>{{ product.sales_description|default:"—" }}</div>
+          </div>
+        </div>
+
+        <!-- Purchase -->
+        <div class="sec" style="margin-bottom:12px;">
+          <h4>Purchase Info</h4>
+          <div class="kv">
+            <div class="k">Supplier</div><div>{{ product.supplier.company_name|default:"—" }}</div>
+            <div class="k">Purchase Price</div><div>{{ product.purchase_price|floatformat:2|intcomma }}</div>
+            <div class="k">Purchase Date</div><div>{% if product.purchase_date %}{{ product.purchase_date|date:"M d, Y" }}{% else %}—{% endif %}</div>
+            <div class="k">Expense Account</div><div>{{ product.expense_account.account_name|default:"—" }}</div>
+            <div class="k">Purchase Description</div><div>{{ product.purchase_description|default:"—" }}</div>
+          </div>
+        </div>
+
+        {% if product.is_bundle %}
+          <div class="sec" style="margin-bottom:12px;">
+            <h4>Bundle Contents</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th style="width:120px;">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for bi in bundle_rows %}
+                  <tr>
+                    <td>{{ bi.product.name }}</td>
+                    <td>{{ bi.quantity }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="2">No bundle items yet.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+
+      <div>
+        <div class="sec" style="margin-bottom:12px;">
+          <h4>Meta</h4>
+          <div class="kv">
+            <div class="k">Category</div><div>{{ product.category.category_type|default:"—" }}</div>
+            <div class="k">Class</div><div>{{ product.class_field.class_name|default:"—" }}</div>
+            <div class="k">Created</div><div>{% if product.created_at %}{{ product.created_at|date:"M d, Y" }}{% else %}—{% endif %}</div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <h4>Quick Actions</h4>
+          <div class="actions">
+            <a class="btn" href="{% url 'inventory:product-edit' product.id %}"><i class='bx bxs-edit'></i> Edit</a>
+            <a class="btn alt" href="{% url 'sales:add-invoice' %}?product_id={{ product.id }}"><i class='bx bx-file'></i> Create Invoice</a>
+            <a class="btn alt" href="{% url 'sales:add-receipt' %}?product_id={{ product.id }}"><i class='bx bx-receipt'></i> Create Receipt</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% include 'includes/footer.html' %}
+</body>
+</html>

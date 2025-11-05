@@ -1,0 +1,180 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B; --brand-600:#2a8b3b; --ink:#0f172a; --muted:#64748b;
+    --line:#e5e7eb; --bg:#f8fafc; --card:#ffffff;
+  }
+
+  /* Layout: fill the space to the right of the sidebar */
+  .wrap{
+    margin-left:26%; width:108%;
+    background:var(--bg); padding:18px 18px 28px;
+    margin-top: 6%;
+  }
+
+  /* Top bar */
+  .toolbar{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;
+  }
+  .title{
+    font-size:26px; font-weight:900; color:var(--ink); letter-spacing:.2px; margin-right:auto;
+  }
+  .search{
+    position:relative;
+  }
+  .search input{
+    width:320px; max-width:60vw; background:#fff; border:1px solid var(--line); border-radius:10px;
+    padding:10px 34px; outline:none;
+  }
+  .search i{ position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#9aa3af; }
+
+  /* Card container */
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    box-shadow:0 10px 24px rgba(0,0,0,.04); overflow:hidden;
+  }
+
+  /* TABLE (desktop / wide) */
+  .table-wrap{ overflow:auto; }
+  table{
+    width:100%; border-collapse:separate; border-spacing:0;
+    min-width:980px; /* keep nice spacing on wide screens */
+  }
+  thead th{
+    background:#f3f4f6; color:#111827; font-weight:700; text-transform:uppercase; font-size:12px;
+    letter-spacing:.04em; padding:12px; border-bottom:1px solid var(--line); white-space:nowrap;
+  }
+  tbody td{ padding:12px; border-bottom:1px solid #f1f5f9; color:#0b1324; }
+  tbody tr:nth-child(even){ background:#fafafa; }
+  tbody tr:hover{ background:#f0fdf4; }
+  .money{ white-space:nowrap; font-weight:800; }
+  .actions a{ color:var(--brand); font-weight:800; text-decoration:none; margin-right:12px; }
+  .actions a:hover{ text-decoration:underline; }
+
+  /* ROW TAG (small badge look for No.) */
+  .tag{
+    display:inline-block; background:#ecfdf5; border:1px solid #bbf7d0; color:#065f46;
+    font-size:11px; border-radius:999px; padding:2px 8px; font-weight:700;
+  }
+
+  /* CARD LIST (mobile) */
+  .cards{ display:none; }
+  .e-card{
+    border-top:1px solid var(--line);
+    padding:12px 14px;
+    display:grid; grid-template-columns: 1fr auto; gap:8px;
+  }
+  .e-title{ font-weight:800; color:#0f172a; }
+  .e-sub{ color:var(--muted); font-size:13px; }
+  .e-amt{ font-weight:900; color:#0f172a; }
+  .e-actions a{ color:var(--brand); font-weight:800; text-decoration:none; margin-left:12px; }
+
+  /* RESPONSIVE: switch to stacked cards under 992px */
+  @media (max-width: 992px){
+    .wrap{ margin-left:0; width:100%; padding:14px; }
+    .table-wrap{ display:none; }
+    .cards{ display:block; background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.04); overflow:hidden; }
+  }
+</style>
+
+<div class="wrap" style="width: 82%; margin-top: 5%; margin-left: 18%;">
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="title" style="color: #39B54B;">Expenses</div>
+    <div class="search">
+      <i class='bx bx-search'></i>
+      <input type="text" placeholder="Search payee / ref / category…" oninput="filterRows(this.value)">
+    </div>
+  </div>
+
+  <div class="card">
+
+    <!-- Desktop / wide table -->
+    <div class="table-wrap">
+      <table id="exp-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>No.</th>
+            <th>Payee</th>
+            <th>Category</th>
+            <th>Total</th>
+            <th>Payment Account</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in expenses %}
+          <tr>
+            <td data-k="date">{{ e.payment_date|date:"d/m/Y" }}</td>
+            <td data-k="no"><span class="tag">{{ e.number_display }}</span></td>
+            <td data-k="payee">{{ e.payee_display }}</td>
+            <td data-k="cat">{{ e.category_display }}</td>
+            <td class="money" data-k="amt">Ush{{ e.total_display|floatformat:0|intcomma }}</td>
+            <td data-k="acct">{{ e.payment_account.account_name }}</td>
+            <td class="actions">
+              <a href="{% url 'expenses:expense-detail' e.id %}">View</a>
+              <a href="{% url 'expenses:expense-edit' e.id %}">Edit</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" style="text-align:center; padding:22px; color:#6b7280;">No expenses yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Mobile card list -->
+    <div class="cards" id="exp-cards">
+      {% for e in expenses %}
+      <div class="e-card" data-row>
+        <div>
+          <div class="e-title">{{ e.payee_display }}</div>
+          <div class="e-sub">{{ e.payment_date|date:"d/m/Y" }} • <span class="tag">{{ e.number_display }}</span> • {{ e.category_display }}</div>
+          <div class="e-sub">Account: {{ e.payment_account.account_name }}</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="e-amt">Ush{{ e.total_display|floatformat:0|intcomma }}</div>
+          <div class="e-actions" style="margin-top:6px;">
+            <a href="{% url 'expenses:expense-detail' e.id %}">View</a>
+            <a href="{% url 'expenses:expense-edit' e.id %}">Edit</a>
+          </div>
+        </div>
+      </div>
+      {% empty %}
+      <div style="padding:18px; color:#6b7280; text-align:center;">No expenses yet.</div>
+      {% endfor %}
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // simple client-side search (matches a few fields)
+  function filterRows(q){
+    q = (q || '').toLowerCase().trim();
+
+    // table rows
+    document.querySelectorAll('#exp-table tbody tr').forEach(tr=>{
+      const t = [
+        tr.querySelector('[data-k="date"]')?.textContent,
+        tr.querySelector('[data-k="no"]')?.textContent,
+        tr.querySelector('[data-k="payee"]')?.textContent,
+        tr.querySelector('[data-k="cat"]')?.textContent,
+        tr.querySelector('[data-k="acct"]')?.textContent,
+        tr.querySelector('[data-k="amt"]')?.textContent,
+      ].join(' ').toLowerCase();
+      tr.style.display = t.includes(q) ? '' : 'none';
+    });
+
+    // card rows (mobile)
+    document.querySelectorAll('#exp-cards [data-row]').forEach(card=>{
+      card.style.display = card.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+</script>
+
+{% include 'includes/footer.html' %}

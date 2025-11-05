@@ -1,0 +1,99 @@
+{% load static %}
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+  <title>Sales Receipt #{{ receipt.id }}</title>
+  <style>
+    :root{--brand:#39B54B;--line:#e7e7e7}
+    body{font-family:Poppins,system-ui,Segoe UI,Arial;margin:24px;background:#f6f8f7}
+    .wrap{max-width:1000px;margin:auto}
+    h2{color:var(--brand);margin:0 0 12px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 8px 22px rgba(0,0,0,.06)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .muted{color:#6b7280}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{border:1px solid #edf0ee;padding:8px}
+    th{background:#f7fff8;text-align:left}
+    .num{text-align:right;white-space:nowrap}
+    .tot{font-weight:800;background:#f8fff9}
+    a.btn{display:inline-block;background:var(--brand);color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;margin-right:8px}
+    #receipt{
+      margin-top: 8%;
+      margin-left: 20%;
+    }
+  </style>
+  {% include 'includes/sidebar.html' %}
+<div class="wrap" id="receipt">
+  <a href="{% url 'sales:receipt-edit' receipt.id %}" class="btn button" style="background:#39B54B; float: right;">Edit</a>
+    <a href="{% url 'sales:receipt-print' r.id %}" class="button" style="text-decoration:none;">
+  <span class="button_text">Print / PDF</span>
+  <h2 style="text-align: center;">Sales Receipt #{{ receipt.id }}</h2>
+  <div class="card">
+    <div class="grid">
+      <div><strong>Customer:</strong> {{ receipt.customer.customer_name }}</div>
+      <div><strong>Date:</strong> {{ receipt.receipt_date|date:"M j, Y" }}</div>
+      <div><strong>Deposit To:</strong> {{ receipt.deposit_to.account_name }}</div>
+      <div><strong>Method:</strong> {{ receipt.payment_method|title }}</div>
+      <div><strong>Reference:</strong> {{ receipt.reference_no|default:"—" }}</div>
+      <div><strong>Tags:</strong> {{ receipt.tags|default:"—" }}</div>
+    </div>
+
+    {% if receipt.memo %}
+      <p class="muted" style="margin-top:10px;"><em>{{ receipt.memo }}</em></p>
+    {% endif %}
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Product/Service</th>
+          <th>Description</th>
+          <th class="num">Qty</th>
+          <th class="num">Rate</th>
+          <th class="num">Line Total</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for ln in lines %}
+        <tr>
+          <td>{{ forloop.counter }}</td>
+          <td>{{ ln.product.name|default:"—" }}</td>
+          <td>{{ ln.description|default:"" }}</td>
+          <td class="num">{{ ln.qty|floatformat:2 }}</td>
+          <td class="num">{{ ln.unit_price|floatformat:2|intcomma }}</td>
+          <td class="num">{{ ln.amount|floatformat:2|intcomma }}</td>
+        </tr>
+      {% endfor %}
+        <tr class="tot">
+          <td colspan="5" class="num">Subtotal</td>
+          <td class="num">{{ receipt.subtotal|floatformat:2|intcomma }}</td>
+        </tr>
+        <tr class="tot">
+          <td colspan="5" class="num">Discount</td>
+          <td class="num">-{{ receipt.total_discount|floatformat:2|intcomma }}</td>
+        </tr>
+        <tr class="tot">
+          <td colspan="5" class="num">VAT</td>
+          <td class="num">{{ receipt.total_vat|floatformat:2|intcomma }}</td>
+        </tr>
+        <tr class="tot">
+          <td colspan="5" class="num">Shipping</td>
+          <td class="num">{{ receipt.shipping_fee|floatformat:2|intcomma }}</td>
+        </tr>
+        <tr class="tot">
+          <td colspan="5" class="num">Total</td>
+          <td class="num">{{ receipt.total_amount|floatformat:2|intcomma }}</td>
+        </tr>
+        <tr class="tot">
+         <td colspan="5" class="num">Amount Paid</td>
+          <td class="num">{{ receipt.amount_paid|floatformat:2|intcomma }}</td>
+        </tr>
+        <tr class="tot">
+         <td colspan="5" class="num">Balance Due</td>
+        <td class="num">{{ receipt.balance|floatformat:2|intcomma }}</td>
+        </tr>
+     </tbody>
+    </table>
+  </div>
+</div>
+
+ {% include 'includes/footer.html' %}

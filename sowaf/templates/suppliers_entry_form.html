@@ -1,0 +1,339 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Supplier Details</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Poppins", sans-serif; }
+    body { background: #f4f6f8; padding: 30px; }
+    .container { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 1100px; margin-left: 30%; margin-top: 5%;}
+    h2 { text-align: center; color: #39B54B; margin-bottom: 30px; }
+    .header, .details { display: flex; justify-content: space-between; flex-wrap: wrap; margin-bottom: 20px; gap: 20px; }
+    .header .field, .details .field { flex: 1 1 30%; display: flex; flex-direction: column; }
+    label { font-weight: 600; margin-bottom: 5px; }
+    input, select, textarea {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .collapsible-header {
+      cursor: pointer;
+      background: #f1f1f1;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 5px;
+      font-weight: 600;
+      color: #39B54B;
+      border: 1px solid #ddd;
+    }
+    .collapsible-content {
+      display: none;
+      margin-bottom: 20px;
+    }
+    .attachments {
+      margin-top: 20px;
+      padding: 20px;
+      border: 2px dashed #ccc;
+      text-align: center;
+      color: #777;
+      cursor: pointer;
+      position: relative;
+      border-radius: 4px;
+      background: #fafafa;
+    }
+    .attachments input[type="file"] {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      opacity: 0; cursor: pointer;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 30px;
+      padding-top: 15px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .btn-cancel { background: #f5f5f5; }
+    .btn-green { background: #39B54B; color: #fff; }
+    .btn-green:hover { background: #2e8b3f; }
+
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      z-index: 100;
+      width: 160px;
+    }
+    .dropdown-menu button {
+      width: 100%;
+      padding: 10px 16px;
+      background: none;
+      border: none;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dropdown:hover .dropdown-menu {
+      display: block;
+    }
+    input{
+      font-size: 1em;
+    }
+    @media only screen and (max-width: 600px) {
+  .search_bar{
+    display: none;
+  }
+  .logo_item{
+  padding: 5px;
+  margin: 3%;
+  }
+    
+  #iconDropdown {
+    display: block;
+    background-color: rgb(7, 142, 36);
+    border-radius: 20px;
+  }
+  #iconDropdown #btn{
+    float: left;
+    color: rgb(7, 142, 36);
+    
+  }
+  #dropdownMenu{
+    background-color: rgb(7, 142, 36);
+    color: white;
+    float: left;
+  }
+  #action{
+    width: 50%;
+  }
+#container{
+  margin-top: 25%;
+  margin-left: 0%;
+}
+#logo{
+  width: 100%;
+}
+#attachments{
+  width: 100%;
+}
+#notes{
+    width: 100%;
+}
+}
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+
+#container{
+  margin-left: 20%;
+}
+}
+  </style>
+</head>
+<body>
+      <!-- navbar -->
+    <nav class="navbar w3-row-padding">
+      <div class="logo_item">
+        <i class="bx bx-menu" id="sidebarOpen"></i>
+        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt=""></i>YoAccountant
+      </div>
+
+      <div class="search_bar">
+        <input type="text" placeholder="Search" />
+      </div>
+
+ <!-- icons on drop down in small screens -->
+
+
+  <div class="dropdown" id="iconDropdown">
+    <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+      <i class='bx bx-menu'></i>
+    </button>
+    <div class="dropdown-menu" id="dropdownMenu">
+      <i class="bi bi-grid"></i>
+      <i class='bx bx-sun' id="darkLight"></i>
+      <i class='bx bx-cog'></i>
+      <i class='bx bx-bell'></i>
+      <i class='bx bx-user-circle'></i>
+      <i class='bx bxs-down-arrow'></i>
+    </div>
+  </div>
+
+  <div class="navbar_content" id="icons">
+    <i class="bi bi-grid"></i>
+    <i class='bx bx-sun' id="darkLight"></i>
+    <i class='bx bx-cog'></i>
+    <i class='bx bx-bell'></i>
+    <i class='bx bx-user-circle'></i>
+    <i class='bx bxs-down-arrow'></i>
+  </div>
+    </nav>
+
+  {% include 'includes/sidebar.html' %}
+
+  
+  <div class="container" id="container">
+    <h2>Supplier Details</h2>
+<form method='post' action="{% if supplier %}{% url 'sowaf:edit-supplier' supplier.id %}{% else %}{% url 'sowaf:add-supplier' %}{% endif %}" enctype= 'multipart/form-data'>
+  <div class="section">
+        <div class="collapsible-header">Customer Logo</div>
+        <div class="collapsible-content form-row">
+          <div class="field">
+            <label >Upload Logo</label>
+            {% if supplier.logo %}
+             <p>Existing logo</p>
+               <img src="{{ supplier.logo.url }}" alt="logo" width="100" />
+              {% endif %}
+            <input type="file" accept="image/png" name='logo' id="logo" />
+            <small style="color: #777;">PNG file only</small>
+          </div>
+        </div>
+      </div>
+  {% csrf_token %}
+    <!-- Supplier Information -->
+    <div class="section">
+      <div class="collapsible-header">Supplier Information</div>
+      <div class="collapsible-content">
+        <div class="header">
+          <div class="field"><label for="company_name">Company Name *</label><input type="text" name="company_name" value="{{ supplier.company_name|default_if_none:'' }}" required></div>
+          <div class="field">
+            <label for="supplier_type" style="font-size: 1em;">Supplier Type</label>
+            <select name="supplier_type" style="font-size: 1em; width: 100%;" >
+              <option class="" value="Goods" {% if supplier.supplier_type == "Goods" %}selected{% endif %}>Goods</option>
+              <option class="" value="Services" {% if supplier.supplier_type == "Services" %}selected{% endif %}>Services</option>
+              <option class="" value="Both" {% if supplier.supplier_type == "Both" %}selected{% endif %}>Both</option>
+            </select>
+            </div>
+          <div class="field">
+            <label for="status">Status</label>
+            <select name="status" style="font-size: 1em; width: 100%;">
+              <option class="Active" {% if supplier.status == "Active" %}selected{% endif %}>Active</option>
+              <option class="Inactive" {% if supplier.status == "Inactive" %}selected{% endif %}>Inactive</option>
+            </select>
+          </div>
+          <div class="field"><label for="contact_person">Contact Person</label><input type="text" name="contact_person" value="{{ supplier.contact_person|default_if_none:'' }}"></div>
+          <div class="field"><label for="contact_position">Contact Position</label><input type="text" name="contact_position" value="{{ supplier.contact_position|default_if_none:'' }}"></div>
+          <div class="field"><label for="contact">Phone Number *</label><input type="tel" name="contact" value="{{ supplier.contact|default_if_none:'' }}" required></div>
+          <div class="field"><label for="email">Email Address *</label><input type="email" name="email" value="{{ supplier.email|default_if_none:'' }}" required></div>
+          <div class="field"><label for="open_balance">Open balance *</label><input type="text" name="open_balance" value="{{ supplier.open_balance|default_if_none:'' }}" required></div>
+          <div class="field"><label for="website">Website</label><input type="text" name="website" value="{{ supplier.website|default_if_none:'' }}"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Address Details -->
+    <div class="section">
+      <div class="collapsible-header">Address Details</div>
+      <div class="collapsible-content">
+        <div class="header">
+          <div class="field"><label for="address1">Address Line 1</label><input type="text" name="address1" value="{{ supplier.address1|default_if_none:'' }}"></div>
+          <div class="field"><label for="address2">Address Line 2</label><input type="text" name="address2" value="{{ supplier.address2|default_if_none:'' }}"></div>
+          <div class="field"><label for="city">City / Town</label><input type="text" name="city" value="{{ supplier.city|default_if_none:'' }}"></div>
+          <div class="field"><label for="state">State / Province</label><input type="text" name="state" value="{{ supplier.state|default_if_none:'' }}"></div>
+          <div class="field"><label for="zip_code">ZIP / Postal Code</label><input type="text" name="zip_code" value="{{ supplier.zip_code|default_if_none:'' }}"></div>
+          <div class="field"><label for="country">Country</label><input type="text" name="country" value="{{ supplier.country|default_if_none:'' }}"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Banking & Payment Info -->
+    <div class="section">
+      <div class="collapsible-header">Banking & Payment Info</div>
+      <div class="collapsible-content">
+        <div class="header">
+          <div class="field"><label for="bank">Bank Name</label><input type="text" name="bank" value="{{ supplier.bank|default_if_none:'' }}"></div>
+          <div class="field"><label for="bank_account">Bank Account Number</label><input type="text" name="bank_account" value="{{ supplier.bank_account|default_if_none:'' }}"></div>
+          <div class="field"><label for="bank_branch">Bank Branch / Routing No</label><input type="text" name="bank_branch" value="{{ supplier.bank_branch|default_if_none:'' }}"></div>
+          <div class="field"><label for="payment_terms">Payment Terms *</label><input type="text" name="payment_terms" value="{{ supplier.payment_terms|default_if_none:'' }}" required></div>
+          <div class="field"><label for="currency">Preferred Currency *</label><input type="text" name="currency" value="{{ supplier.currency|default_if_none:'' }}" required></div>
+          <div class="field">
+            <label for="payment_method">Payment Method *</label>
+            <select name="payment_method" style="font-size: 1em; width: 100%;" value="{{ supplier.payment_method|default_if_none:'' }}">
+            <option class="option" value="Bank" {% if supplier.payment_method == "Bank" %}selected{% endif %}>Bank Transfer</option>
+            <option class="option" value="Cheque" {% if supplier.payment_method == "Cheque" %}selected{% endif %}>Cheque</option>
+            <option class="option" value="Cash" {% if supplier.payment_method == "Cash" %}selected{% endif %}>Cash</option>
+          </select>
+        </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tax & Compliance Details -->
+    <div class="section">
+      <div class="collapsible-header">Tax & Compliance Details</div>
+      <div class="collapsible-content">
+        <div class="header">
+          <div class="field"><label for="tin">VAT / Tax ID *</label><input type="text" name="tin" value="{{ supplier.tin|default_if_none:'' }}" required></div>
+          <div class="field"><label for="reg_number">Registration / License No</label><input type="text" name="reg_number" value="{{ supplier.reg_number|default_if_none:'' }}"></div>
+          <div class="field"><label for="tax_rate">Tax Withholding Rate (%)</label><input type="number" name="tax_rate" value="{{ supplier.tax_rate|default_if_none:'' }}"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Attachments -->
+    <div class="attachments">
+            {% if supplier.attachments %}
+            <p>Existing file: 
+            <a href="{{ supplier.attachments.url }}" target="_blank" style="color: #007bff;">
+              {{ supplier.attachments.name|cut:'attachments/' }}
+             </a>
+              </p>
+            {% endif %}
+      <input type="file" multiple name="attachments">
+      <i class='bx bx-upload' style="font-size: 24px;"></i>
+      <p>Click or drag files here to upload documents (e.g. agreements)</p>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <a href="{% url 'sowaf:suppliers' %}" class="btn btn-green" style="text-decoration:none;">Cancel</a>
+      <div>
+        
+      </div>
+      <div class="dropdown">
+        <a class="btn btn-green" style="font-weight: 700;">Save ▼</a>
+        <div class="dropdown-menu">
+          <button name="save_action" style="font-size: 1em;" value="save">Save</button>
+          <button name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
+          <button name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+        </div>
+      </div>
+    </div>
+</form>
+  </div>
+   <script src=" {% static 'sowaf/styles/script.js' %} "></script>
+   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Make sections collapsible
+    document.querySelectorAll(".collapsible-header").forEach(header => {
+      header.addEventListener("click", () => {
+        const content = header.nextElementSibling;
+        content.style.display = content.style.display === "none" ? "flex" : "none";
+      });
+      header.nextElementSibling.style.display = "none";
+    });
+  </script>
+</body>
+</html>

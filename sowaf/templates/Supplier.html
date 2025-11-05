@@ -1,0 +1,152 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+      h1{
+    color: rgb(7, 142, 36);
+  }
+    @media only screen and (max-width: 600px) {
+  #action{
+
+    background-color: #fff;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding:10%;
+    justify-content: center;
+  }
+  #action button{
+    display: flex;
+  }
+     #search{
+    display: flex;
+    width: 50%;
+    margin-top: 0px;
+  }
+  h1{
+    color: rgb(7, 142, 36);
+    font-size: 20px;
+  }
+  .button{
+    width: 100px;
+  }
+  #main{
+    padding: 15%;
+    margin-left: -20%;
+    margin-top: 65%;
+  }
+  #template{
+    position: fixed;
+    margin-top:-3%;
+    margin-left:70%;
+  }
+}
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+#main{
+  margin-top: 18%;
+}
+html, body {
+  overflow: hidden;  /* no scrollbars at all */
+}
+}
+</style>
+{% include 'includes/sidebar.html' %}
+    <div class="action" id="action">
+      <H1>SUPPLIERS</H1>
+      <div class="search_bar" id="search">
+        <input type="text" placeholder="Search Suppliers" />
+      </div>
+      <a href="{% url 'sowaf:add-supplier' %}" style="text-decoration: none;" class="my-4">
+         <button class="button">
+          <span class="button_text">ADD NEW</span>
+          <span class="button_icon">
+            <i class='bx bx-folder-plus'></i>
+          </span>
+        </button>
+        </a>
+
+        <div>
+       <form action="{% url 'sowaf:import-suppliers' %}" method="POST" enctype="multipart/form-data" style="display: flex;">
+         {% csrf_token %}
+        <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display: none;" id="excelInput" onchange="this.form.submit()" />
+        <label for="excelInput" class="button" style="cursor: pointer;">
+         <span class="button_text">IMPORT</span>
+        <span class="button_icon">
+        <i class='bx bx-import'></i>
+        </span>
+       </label>
+         </form>
+       </div>
+        <button class="button">
+          <span class="button_text">EXPORT</span>
+          <span class="button_icon">
+            <i class='bx bx-export' ></i>
+          </span>
+        </button>
+        <button class="button">
+          <span id="customize" class="button_text">CUSTOMIZE</span>
+          <span id="customize" class="button_icon">
+            <i class='bx bxs-customize' ></i>
+          </span>
+        </button>
+        <span>
+          <i class='bx bx-printer' ></i>
+          <i class='bx bx-cog' ></i>
+        </span>
+
+    </div>
+    <div class="main_body" id="main">
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th>LOGO</th>
+            <th>SUPPLIER</th>
+            <th>COMPANY NAME</th>
+            <th>PHONE</th>
+            <th>EMAIL</th>
+            <th>OPEN BALANCE</th>
+            <th>OPERATIONS</th>
+            <th>ACTION <i class='bx bxs-down-arrow' ></i></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for supplier in suppliers %}
+          <tr>
+            <td>
+          {%if supplier.logo %}
+              <img src=" {{ supplier.logo.url }}" alt="picture" style="width: 40px; height: 40px; border-radius: 50%;">
+              {% else %}
+              <i class='bx bx-user-circle'></i>
+              {% endif %}
+            </td>
+            <td>{{supplier.contact_person}}</td>
+            <td>{{supplier.company_name}}</td>
+            <td>{{supplier.contact}}</td>
+            <td>{{supplier.email}}</td>
+            <td>{{supplier.open_balance}}</td>
+            <td>
+            <a href="{% url 'sowaf:edit-supplier' supplier.id %}" title="Edit" style="color:green;">
+              <i class='bx bxs-edit'></i> 
+                </a>
+                <a href="{% url 'sowaf:delete-supplier' supplier.id %}" title="Delete" onclick="return confirm('Are you sure you want to delete this customer?');">
+               <i class='bx bxs-trash' style="color:green; margin-left: 10px;">
+
+    </i>
+  </a>
+</td>
+            <td>Retire/inactive</td>
+          </tr>
+          {% empty %}
+                       <tr>
+      <td colspan="6">No supplier available.</td>
+    </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+       <a href="{% url 'sowaf:import_suppliers_template' %}" style="text-decoration: none; float:right;" id="template">
+        <button class="button">
+          <span class="button_text">Template</span>
+        </button>
+      </a>
+    </div>
+ {% include 'includes/footer.html' %}

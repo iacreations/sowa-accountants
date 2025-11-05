@@ -1,0 +1,424 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+  <style>
+    body { background:#f5fbf8; }
+
+/* Container that holds the little tiles */
+.dashboard-grid{
+  display:grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap:14px;
+}
+
+/* Card */
+.kpi-card{
+  grid-column: span 6;                /* 2 per row on desktop */
+  background:#fff;
+  border:1px solid #e9edf3;
+  border-radius:14px;
+  box-shadow:0 6px 18px rgba(0,0,0,.06);
+  padding:14px 16px;
+  min-height:170px;
+  color: #39B54B;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+}
+
+/* Make some cards wider (e.g. Sales line) */
+.kpi-card.wide{ grid-column: span 12; }
+
+/* Header (title + sub) */
+.kpi-head{
+  display:flex; align-items:baseline; justify-content:space-between;
+  gap:10px; margin-bottom:8px;
+}
+.kpi-title{
+  font-weight:700; letter-spacing:.2px;
+  color: #39B54B;
+}
+.kpi-sub{
+  font-size:12px; color:#6b7a90;
+}
+
+/* Tiny green pill accent */
+.kpi-pill{
+  background:#e8fbef; color:#1a9d46; 
+  border:1px solid #c7f1d6; 
+  padding:2px 8px; border-radius:999px; 
+  font-size:11px; font-weight:700;
+}
+
+/* Canvas area: keeps charts tight */
+.kpi-body{ position:relative; height:130px; }
+.kpi-body canvas{ width:100% !important; height:100% !important; }
+
+/* Mobile */
+@media (max-width: 900px){
+  .kpi-card, .kpi-card.wide{ grid-column: span 12; }
+}
+    @media only screen and (max-width: 600px) {
+  #action{
+    height: 50px;
+    width: 20px;
+    background-color: green;
+    margin-left: 10%;
+    display: flex;
+    flex-wrap: 1px;
+    justify-content: space-between;
+    margin-top: 5%;
+  }
+   #search{
+    display: flex;
+    width: 40%;
+    margin-top: 0px;
+  }
+  h1{
+    color: white;
+  }
+  .tabs{
+    margin-top: 10%;
+  }
+  .button{
+    width: 30%;
+    height: 5vh;
+  }
+
+  #main_body {
+width: 100%;
+margin: 0;
+padding-top: 35%;
+height: 100vh;
+
+}
+  #items{
+display: block;
+margin: -3%;
+padding: 3%;
+}
+#things{
+   margin: 3%;
+   width: 100%;
+   
+}
+#Overview{
+display: block;
+margin-right: 5%;
+padding: 3%;
+}
+.overviews{
+   margin: 3%;
+   width: 100%;
+}
+}
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+/* html, body { overflow: hidden; }  */
+#main_body{
+  margin-top: 13%;
+box-sizing: border-box; 
+}
+.overviews{
+  width:100%;
+  background:#fff;
+  border:1px solid #e7e7e7;
+  border-radius:14px;
+  padding:14px;                 /* <— was missing */
+  box-shadow:0 8px 22px rgba(0,0,0,.05);
+  margin-bottom:14px;
+}
+}
+
+/* --- Get things done: QB-style tiles (keep our green) --- */
+.shortcuts-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(180px,1fr));
+  gap:18px;
+}
+
+.shortcut-card{
+  background:#0d943e;                 /* our green */
+  color:#fff;
+  border-radius:16px;
+  padding:22px 18px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  text-decoration:none;
+  box-shadow:0 10px 24px rgba(20,184,78,.18);
+  transition:transform .18s ease, box-shadow .18s ease;
+  min-height:140px;
+  position:relative;
+}
+
+.shortcut-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 14px 28px rgba(20,184,78,.26);
+}
+
+.shortcut-icon{
+  width:66px;height:66px;
+  border-radius:50%;
+  display:grid;place-items:center;
+  background:rgba(255,255,255,.14);   /* soft inner circle */
+  outline:3px solid rgba(255,255,255,.18);
+  margin-bottom:10px;
+}
+
+.shortcut-icon i{
+  font-size:28px; line-height:1;
+  color:#fff;
+}
+
+.shortcut-label{
+  font-weight:600;
+  letter-spacing:.2px;
+}
+
+/* small helper for two-line labels on narrow tiles */
+.shortcut-label small{
+  display:block; opacity:.9; font-weight:500;
+}
+
+/* Responsive */
+@media (max-width: 1200px){
+  .shortcuts-grid{ grid-template-columns:repeat(3,minmax(160px,1fr)); }
+}
+@media (max-width: 820px){
+  .shortcuts-grid{ grid-template-columns:repeat(2,minmax(150px,1fr)); }
+}
+@media (max-width: 520px){
+  .shortcuts-grid{ grid-template-columns:1fr; }
+}
+
+</style>
+{% include 'includes/sidebar.html' %}
+    <div class="action" id="action">
+      <h1>HOME</h1>
+      <div class="search_bar" id="search">
+        <input type="text" placeholder="Search Home" />
+      </div>
+        <button class="button">
+          <span id="customize" class="button_text">CUSTOMIZE</span>
+          <span id="customize" class="button_icon">
+            <i class='bx bxs-customize' ></i>
+          </span>
+        </button>
+    </div>
+    <div class="main_body" id="main_body">
+      <div class="tabs" style="overflow: hidden;">
+        <input type="radio" class="tabs_radio" name="tabs-example" id="tab1" checked>
+        <label for="tab1" class="tabs_label">Get things done</label>
+<div class="tab-content">
+  <div id="Overview">
+    <div id="Overview">
+  <div class="shortcuts-grid">
+
+    <a class="shortcut-card" href="{% url 'sales:add-receipt' %}">
+      <span class="shortcut-icon"><i class='bx bx-receipt'></i></span>
+      <span class="shortcut-label">Add receipt</span>
+    </a>
+
+    <a class="shortcut-card" href="{% url 'sowaf:add-supplier' %}">
+      <span class="shortcut-icon"><i class='bx bxs-truck'></i></span>
+      <span class="shortcut-label">Add supplier</span>
+    </a>
+
+    <a class="shortcut-card" href="{% url 'expenses:add-expenses' %}">
+      <span class="shortcut-icon"><i class='bx bx-money-withdraw'></i></span>
+      <span class="shortcut-label">Add expense</span>
+    </a>
+
+    <a class="shortcut-card" href="{% url 'expenses:add-bill' %}">
+      <span class="shortcut-icon"><i class='bx bx-credit-card'></i></span>
+      <span class="shortcut-label">Add bill</span>
+    </a>
+
+    <a class="shortcut-card" href="#">
+      <span class="shortcut-icon"><i class='bx bx-credit-card-front'></i></span>
+      <span class="shortcut-label">Pay bill</span>
+    </a>
+
+    <a class="shortcut-card" href="{% url 'sowaf:add-customer' %}">
+      <span class="shortcut-icon"><i class='bx bx-user-voice'></i></span>
+      <span class="shortcut-label">Add customer</span>
+    </a>
+
+    <a class="shortcut-card" href="{% url 'sales:add-invoice' %}">
+      <span class="shortcut-icon"><i class='bx bx-file'></i></span>
+      <span class="shortcut-label">Add invoice</span>
+    </a>
+
+    <a class="shortcut-card" href="#">
+      <span class="shortcut-icon"><i class='bx bx-timer'></i></span>
+      <span class="shortcut-label">Track time</span>
+    </a>
+  </div>
+</div>
+  </div>
+</div>
+<input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
+<label for="tab2" class="tabs_label">Business Overview</label>
+<div class="tab-content">
+  <div class="dashboard-grid">
+
+    <!-- Bank balances (donut) -->
+    <section class="kpi-card">
+      <div class="kpi-head">
+        <div class="kpi-title">Bank Account Balance</div>
+        
+      </div>
+      <div class="kpi-sub">{{ range_text }}</div>
+      <div class="kpi-body"><canvas id="bankChart"></canvas></div>
+    </section>
+
+    <!-- Expenses (donut) -->
+    <section class="kpi-card">
+      <div class="kpi-head">
+        <div class="kpi-title">Expenses</div>
+        <div class="kpi-sub">{{ range_text }}</div>
+      </div>
+      <div class="kpi-body"><canvas id="expChart"></canvas></div>
+    </section>
+
+    <!-- Invoices (stacked bar) -->
+    <section class="kpi-card">
+      <div class="kpi-head">
+        <div class="kpi-title">Invoices</div>
+        <div class="kpi-sub">
+          {{ inv_counts.paid }} paid • {{ inv_counts.unpaid }} unpaid • {{ inv_counts.over }} overdue
+        </div>
+      </div>
+      <div class="kpi-body"><canvas id="invChart"></canvas></div>
+    </section>
+
+    <!-- Outstanding bills (placeholder) -->
+    <section class="kpi-card">
+      <div class="kpi-head">
+        <div class="kpi-title">Outstanding Bills</div>
+        <div class="kpi-sub">Coming soon</div>
+      </div>
+      <div class="kpi-body"><canvas id="billsChart"></canvas></div>
+    </section>
+
+    <!-- Profit & Loss (bars) -->
+    <section class="kpi-card">
+      <div class="kpi-head">
+        <div class="kpi-title">Profit &amp; Loss</div>
+        <div class="kpi-sub">{{ range_text }}</div>
+      </div>
+      <div class="kpi-body"><canvas id="plChart"></canvas></div>
+    </section>
+
+    
+    <!-- Sales (line) - wide -->
+    <section class="kpi-card wide">
+      <div class="kpi-head">
+        <div class="kpi-title">Sales (Last 30 days)</div>
+        <div class="kpi-sub">{{ range_text }}</div>
+      </div>
+      <div class="kpi-body"><canvas id="salesChart"></canvas></div>
+    </section>
+
+  </div>
+</div>
+
+<!-- JSON blobs (ids MUST match below) -->
+{{ chart_labels|json_script:"labelsJson" }}
+{{ sales_series|json_script:"salesJson" }}
+{{ exp_labels|json_script:"expLabelsJson" }}
+{{ exp_values|json_script:"expValuesJson" }}
+{{ bank_labels|json_script:"bankLabelsJson" }}
+{{ bank_values|json_script:"bankValuesJson" }}
+{{ inv_amounts|json_script:"invAmountsJson" }}
+{{ pl_summary|json_script:"plJson" }}
+
+<!-- Load Chart.js BEFORE the chart code -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+Chart.defaults.font.family = "'Poppins','Segoe UI',system-ui,-apple-system,Arial";
+Chart.defaults.plugins.legend.position = 'bottom';
+Chart.defaults.responsive = true;
+Chart.defaults.maintainAspectRatio = false;    // lets the card control the height
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+
+  // read JSON safely (fallbacks avoid null/NaN)
+  const safeParse = (id, fb) => {
+    const el = document.getElementById(id);
+    if (!el) return fb;
+    try { const v = JSON.parse(el.textContent); return (v ?? fb); } catch { return fb; }
+  };
+
+  const L  = safeParse("labelsJson", []);
+  const S  = safeParse("salesJson", []).map(n => Number(n)||0);
+  const EL = safeParse("expLabelsJson", []);
+  const EV = safeParse("expValuesJson", []).map(n => Number(n)||0);
+  const BL = safeParse("bankLabelsJson", []);
+  const BV = safeParse("bankValuesJson", []).map(n => Number(n)||0);
+  const IA = safeParse("invAmountsJson", {paid:0,unpaid:0,overdue:0});
+  const PL = safeParse("plJson", {income:0,expense:0,profit:0});
+
+  Chart.defaults.font.family = "'Poppins','Segoe UI',system-ui,-apple-system,Arial";
+  Chart.defaults.plugins.legend.position = 'bottom';
+
+  const make = (id, cfg) => {
+    const c = document.getElementById(id);
+    if (!c) return;
+    new Chart(c, cfg);
+  };
+
+  // Bank donut
+  make("bankChart", {
+    type: 'doughnut',
+    data: { labels: BL, datasets: [{ data: BV }] },
+    options: { cutout: '60%' }
+  });
+
+  // Sales line
+  make("salesChart", {
+    type: 'line',
+    data: { labels: L, datasets: [{ label: 'Sales', data: S, tension: .35, fill: false }] },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } } }
+  });
+
+  // Expenses donut
+  make("expChart", {
+    type: 'doughnut',
+    data: { labels: EL, datasets: [{ data: EV }] },
+    options: { cutout: '55%' }
+  });
+
+  // Invoices stacked bars
+  make("invChart", {
+    type: 'bar',
+    data: {
+      labels: ['Invoices'],
+      datasets: [
+        { label: 'Paid',    data: [Number(IA.paid)||0] },
+        { label: 'Unpaid',  data: [Number(IA.unpaid)||0] },
+        { label: 'Overdue', data: [Number(IA.overdue)||0] },
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true, ticks:{ callback:v=>v.toLocaleString() } } }
+    }
+  });
+
+  // P&L bars
+  make("plChart", {
+    type: 'bar',
+    data: {
+      labels: ['Income','Expenses','Net Profit'],
+      datasets: [{ data: [Number(PL.income)||0, Number(PL.expense)||0, Number(PL.profit)||0] }]
+    },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } } }
+  });
+
+});
+</script>
+ {% include 'includes/footer.html' %}

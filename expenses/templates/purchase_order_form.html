@@ -1,0 +1,201 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Purchase Order Form</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+      <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+    <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+    body { background: #f4f6f8; padding: 30px; }
+    .container { background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 90%; margin: auto; }
+    h2.title { text-align: center; color: #39B54B; margin-bottom: 25px; font-size: 28px; font-weight: 700; }
+    .section-wrapper { background: #f9f9f9; padding: 20px; border-radius: 10px; margin-bottom: 25px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+    .form-group { display: flex; flex-direction: column; }
+    .form-group label { font-weight: 500; margin-bottom: 6px; }
+    .form-group input, .form-group select, .form-group textarea { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; }
+    .collapsible { cursor: pointer; padding: 10px; background-color: #f1f1f1; border: none; border-radius: 6px; font-weight: 600; margin-bottom: 10px; width: 100%; text-align: left; }
+    .content { display: none; }
+    .content.active { display: block; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; min-width: 900px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background-color: #fafafa; }
+    .actions { display: flex; justify-content: space-between; margin-bottom: 15px; }
+    .btn-light-green { background-color: #d2f4dc; color: #2a8b3f; padding: 6px 14px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; }
+    .btn-light-green:hover { background-color: #c3eecf; }
+    .delete-btn { color: #d11a2a; background: none; border: none; font-size: 18px; cursor: pointer; }
+    .attachments { padding: 20px; border: 2px dashed #ccc; text-align: center; color: #777; border-radius: 6px; cursor: pointer; position: relative; margin-bottom: 30px; }
+    .attachments input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-top: 30px; border-top: 1px solid #e0e0e0; padding-top: 20px; gap: 10px; }
+    .btn { padding: 10px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; }
+    .btn-cancel { background: #f5f5f5; color: #333; }
+    .dropdown { position: relative; display: inline-block; }
+    .dropdown .btn-green { background: #39B54B; color: #fff; }
+    .dropdown-menu { display: none; position: absolute; right: 0; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 100; width: 160px; }
+    .dropdown-menu button { width: 100%; padding: 10px 16px; background: none; border: none; text-align: left; cursor: pointer; white-space: nowrap; }
+    .dropdown:hover .dropdown-menu { display: block; }
+    .total { text-align: right; font-weight: bold; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 class="title">Purchase Order Form</h2>
+
+    <!-- Header Info -->
+    <div class="section-wrapper">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Vendor</label>
+          <select>
+            <option>Select vendor</option><option>ABC Ltd</option><option>XYZ Traders</option></select></div>
+        <div class="form-group"><label>Mailing Address</label><input type="text" /></div>
+        <div class="form-group"><label>PO Date</label><input type="date" /></div>
+        <div class="form-group"><label>Ship To</label><input type="text" /></div>
+        <div class="form-group"><label>Deliver By</label><input type="date" /></div>
+        <div class="form-group"><label>Location</label><select><option>Select location</option></select></div>
+      </div>
+    </div>
+
+    <!-- Item Details -->
+    <div class="section-wrapper">
+      <button class="collapsible">Item Details</button>
+      <div class="content" id="item-content">
+        <table id="item-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product / Service</th>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Rate</th>
+              <th>Amount</th>
+              <th>Customer / Project</th>
+              <th>Class</th>
+              <th>Operations</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="actions">
+          <button class="btn-light-green" onclick="addItemRow()">Add Line</button>
+          <button class="btn-light-green" onclick="clearTable('item-table')">Clear All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Memo -->
+    <div class="form-group" style="margin-bottom: 30px;">
+      <label>Memo</label>
+      <textarea rows="3" style="width:100%"></textarea>
+    </div>
+
+    <!-- Attachments -->
+    <div class="attachments">
+      {% if customer.attachments %}
+       <p>Existing file: <a href="" target="_blank">Download</a></p>
+      {% endif %}
+      <input type="file" multiple />
+      <i class='bx bx-upload' style="font-size: 30px;"></i>
+      <p>Drag/Drop files here or click to upload (Max size: 20MB)</p>
+    </div>
+
+    <!-- Total -->
+    <div class="total">Total: Ush <span id="totalAmount">0.00</span></div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <div>
+        <a href="{% url 'sowaf:expenses' %}"><button class="btn btn-cancel">Cancel</button></a>
+        <button class="btn btn-light-green" onclick="window.print()">Print</button>
+        <button class="btn btn-light-green" onclick="sendEmail()">Email</button>
+      </div>
+      <div class="dropdown">
+          <button type="button" class="btn btn-green">Save ▼</button>
+          <div class="dropdown-menu">
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+          </div>
+        </div>
+    </div>
+  </div>
+<script src=" {% static 'sowaf/styles/script.js' %} "></script>
+  <script>
+    document.querySelectorAll(".collapsible").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const content = btn.nextElementSibling;
+        content.classList.toggle("active");
+      });
+    });
+
+    function addItemRow() {
+      const table = document.querySelector("#item-table tbody");
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td></td>
+        <td>
+          <select>
+            <option>Office Supplies</option>
+            <option>Stationery</option>
+            <option>Furniture</option>
+            <option>IT Equipment</option>
+          </select>
+        </td>
+        <td><input type="text" /></td>
+        <td><input type="number" class="qty" onchange="calculateTotal()" /></td>
+        <td><input type="number" class="rate" onchange="calculateTotal()" /></td>
+        <td><input type="number" class="amount" readonly /></td>
+        <td><input type="text" /></td>
+        <td><input type="text" /></td>
+        <td><button class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+      `;
+      table.appendChild(row);
+      updateRowNumbers(table);
+    }
+
+    function clearTable(id) {
+      document.querySelector(`#${id} tbody`).innerHTML = "";
+      calculateTotal();
+    }
+
+    function deleteRow(btn) {
+      const row = btn.closest("tr");
+      const table = row.closest("tbody");
+      row.remove();
+      updateRowNumbers(table);
+      calculateTotal();
+    }
+
+    function updateRowNumbers(tbody) {
+      const rows = tbody.querySelectorAll("tr");
+      rows.forEach((row, index) => {
+        row.cells[0].textContent = index + 1;
+      });
+    }
+
+    function calculateTotal() {
+      let total = 0;
+      document.querySelectorAll("#item-table tbody tr").forEach(row => {
+        const qty = parseFloat(row.querySelector(".qty")?.value) || 0;
+        const rate = parseFloat(row.querySelector(".rate")?.value) || 0;
+        const amount = qty * rate;
+        const amountField = row.querySelector(".amount");
+        if (amountField) amountField.value = amount.toFixed(2);
+        total += amount;
+      });
+      document.getElementById("totalAmount").textContent = total.toFixed(2);
+    }
+
+    function sendEmail() {
+      const subject = encodeURIComponent("Purchase Order from Your Company");
+      const body = encodeURIComponent("Hi,%0D%0A%0D%0APlease find attached the purchase order.%0D%0A%0D%0ARegards,%0D%0AYour Company");
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    }
+  </script>
+</body>
+</html>

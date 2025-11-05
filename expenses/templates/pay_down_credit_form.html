@@ -1,0 +1,195 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pay Down Credit Card</title>
+  <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+      <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+    <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f8f8f8;
+      margin: 0;
+      padding: 30px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    h2 {
+      margin-bottom: 5px;
+      color: #333;
+    }
+
+    p {
+      margin-bottom: 20px;
+      color: #555;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 15px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 20px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    .memo-section {
+      margin-top: 20px;
+    }
+
+    .memo-toggle {
+      cursor: pointer;
+      font-weight: 600;
+      color: #39B54B;
+      margin-bottom: 10px;
+    }
+
+    .memo-content {
+      display: none;
+    }
+
+    .actions {
+      margin-top: 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .btn-cancel {
+      background-color: #666;
+      color: white;
+    }
+
+    .btn-save {
+      background-color: #39B54B;
+      color: white;
+      margin-right: 10px;
+    }
+
+    .btn-save-close {
+      background-color: #2e9e3f;
+      color: white;
+    }
+
+    .btn:hover {
+      opacity: 0.95;
+    }
+
+    input[type="file"] {
+      border: none;
+      padding-left: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h2>Pay down credit card</h2>
+    <p>Record payments made to your balance</p>
+
+    <form>
+      <div class="form-group">
+        <label for="creditCard">Which credit card did you pay?</label>
+        <select id="creditCard">
+          <option value="">Select credit card</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="payee">Payee (optional)</label>
+        <select id="payee">
+          <option value="">Choose a payee</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="amount">How much did you pay?</label>
+          <input type="number" id="amount" placeholder="Enter the amount">
+        </div>
+        <div class="form-group">
+          <label for="date">Date of payment</label>
+          <input type="date" id="date" value="2025-03-28">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="bankAccount">What did you use to make this payment?</label>
+        <select id="bankAccount">
+          <option value="">Select bank account</option>
+        </select>
+      </div>
+
+      <div class="memo-section">
+        <div class="memo-toggle" onclick="toggleMemo()">&#9654; Memo and attachments</div>
+        <div class="memo-content" id="memoContent">
+          <textarea rows="4" placeholder="Enter memo..."></textarea>
+          <br><br>
+          <input type="file" multiple>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a href="{% url 'sowaf:expenses' %}" class="btn btn-cancel">
+         Cancel
+        </a>
+       <div class="dropdown">
+          <button type="button" class="btn btn-green">Save ▼</button>
+          <div class="dropdown-menu">
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
+            <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+<script src=" {% static 'sowaf/styles/script.js' %} "></script>
+  <script>
+    function toggleMemo() {
+      const memo = document.getElementById('memoContent');
+      memo.style.display = memo.style.display === 'block' ? 'none' : 'block';
+    }
+  </script>
+
+</body>
+</html>

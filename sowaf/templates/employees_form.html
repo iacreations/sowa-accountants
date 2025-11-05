@@ -1,0 +1,454 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Employee Entry Form</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+    <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    * {
+      margin: 0; padding: 0; box-sizing: border-box;
+      font-family: "Poppins", sans-serif;
+    }
+    body {
+      background: #f4f6f8;
+      padding: 30px;
+    }
+    .container {
+      background: #fff;
+      padding: 25px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      max-width: 1100px;
+      margin: 5%;
+      margin-left: 32%;
+    }
+    h2 {
+      text-align: center;
+      color: #39B54B;
+      margin-bottom: 30px;
+    }
+    .header, .section-content {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    .header .field, .section-content .field {
+      flex: 1 1 30%;
+      display: flex;
+      flex-direction: column;
+    }
+    .header label, .section-content label {
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+    .header input, .header select,
+    .section-content input, .section-content select, .section-content textarea {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .collapsible-header {
+      cursor: pointer;
+      background: #f1f1f1;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 5px;
+      font-weight: 600;
+      color: #39B54B;
+    }
+    .collapsible-content {
+      display: none;
+      margin-bottom: 20px;
+    }
+    /* Profile Picture Field */
+    .profile-upload {
+    border: 1px solid #ccc;
+    padding: 8px;
+    border-radius: 4px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 42px; /* Matches input height */
+    font-size: 14px;
+    background-color: #fff;
+    }
+    .profile-upload input[type="file"] {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .profile-upload i {
+    margin-right: 8px;
+  }
+  .profile-upload p {
+    margin: 0;
+    font-size: 14px;
+    color: #666;
+  }
+
+    /* File Attachments Box */
+    .attachments-doc {
+      margin-top: 20px;
+      padding: 20px;
+      border: 2px dashed #ccc;
+      border-radius: 6px;
+      background: #fafafa;
+      text-align: center;
+      position: relative;
+      cursor: pointer;
+    }
+    .attachments-doc input[type="file"] {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      opacity: 0;
+    }
+    /* Custom Fields */
+    .custom-fields .custom-field {
+      display: flex;
+      align-items: center;
+      margin-top: 10px;
+      gap: 10px;
+    }
+    .custom-fields input[type="text"] {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .custom-fields .delete-btn {
+      background: none;
+      border: none;
+      color: #d11a2a;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    /* Footer */
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 30px;
+      padding-top: 15px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .footer .left, .footer .center, .footer .right {
+      flex: 1;
+      text-align: center;
+    }
+    .footer .left { text-align: left; }
+    .footer .right { text-align: right; }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .btn-light { background: #f5f5f5; }
+    .btn-green { background: #39B54B; color: #fff; }
+    .btn-preview { background: #d4f5d8; }
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .dropdown-menu {
+      width: 160px;
+      min-width: 160px;
+      display: none;
+      position: absolute;
+      right: 0;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      z-index: 100;
+    }
+    .dropdown-menu button {
+      width: 100%;
+      padding: 10px 16px;
+      background: none;
+      border: none;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dropdown:hover .dropdown-menu {
+      display: block;
+    }
+    h3{
+      font-size: 15px;
+    }
+@media only screen and (max-width: 600px) {
+  .search_bar{
+    display: none;
+  }
+  .logo_item{
+  padding: 5px;
+  margin: 3%;
+  }
+    
+  #iconDropdown {
+    display: block;
+    background-color: rgb(7, 142, 36);
+    border-radius: 20px;
+  }
+  #iconDropdown #btn{
+    float: left;
+    color: rgb(7, 142, 36);
+    
+  }
+  #action{
+    width: 50%;
+  }
+#container{
+  margin-top: 25%;
+  margin-left: 2%;
+}
+#logo{
+  width: 100%;
+}
+#attachments{
+  width: 100%;
+}
+#notes{
+    width: 100%;
+}
+}
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+
+#container{
+  margin-left: 20%;
+}
+}
+  </style>
+</head>
+<body>
+      <!-- navbar -->
+    <nav class="navbar w3-row-padding">
+      <div class="logo_item">
+        <i class="bx bx-menu" id="sidebarOpen"></i>
+        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt=""></i>YoAccountant
+      </div>
+
+      <div class="search_bar">
+        <input type="text" placeholder="Search" />
+      </div>
+
+ <!-- icons on drop down in small screens -->
+<div class="dropdown" id="iconDropdown">
+    <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+      <i class='bx bx-menu'></i>
+    </button>
+    <div class="dropdown-menu" id="dropdownMenu">
+      <i class="bi bi-grid"></i>
+      <i class='bx bx-sun' id="darkLight"></i>
+      <i class='bx bx-cog'></i>
+      <i class='bx bx-bell'></i>
+      <i class='bx bx-user-circle'></i>
+      <i class='bx bxs-down-arrow'></i>
+    </div>
+  </div>
+
+  <div class="navbar_content" id="icons">
+    <i class="bi bi-grid"></i>
+    <i class='bx bx-sun' id="darkLight"></i>
+    <i class='bx bx-cog'></i>
+    <i class='bx bx-bell'></i>
+    <i class='bx bx-user-circle'></i>
+    <i class='bx bxs-down-arrow'></i>
+  </div>
+    </nav>
+  {% include 'includes/sidebar.html' %}
+<div class="container" id="container">
+  <h2>Employees</h2>
+ <form method='post' action="{% if employee %}{% url 'sowaf:edit-employee' employee.id %}{% else %}{% url 'sowaf:add-employee' %}{% endif %}" enctype= 'multipart/form-data'>
+  <!-- Employee Details + Profile Picture -->
+  {% csrf_token %}
+  <div class="header">
+    
+    <div class="field"><label>First Name *</label><input name="first_name" value="{{ employee.first_name|default_if_none:'' }}" type="text" required></div>
+    <div class="field"><label>Last Name *</label><input name="last_name" value="{{ employee.last_name|default_if_none:'' }}" type="text" required></div>
+    <div class="field">
+      <label>Gender</label>
+      <select name="gender">
+        <option value="Male" {% if employee.gender == "Male" %}selected{% endif %} >Male</option>
+        <option value="Female" {% if employee.gender == "Female" %}selected{% endif %}>Female</option>
+      </select>
+    </div>
+    <div class="field"><label>Date of Birth</label><input name="dob" value="{{ employee.dob|date:'d/m/Y'|default_if_none:'' }}" type="text" placeholder="dd/mm/yyyy"></div>
+    <div class="field"><label>Nationality</label><input name="nationality" value="{{ employee.nationality|default_if_none:'' }}" type="text"></div>
+    <div class="field"><label>National ID / SSN / NIN *</label><input name="nin_number" value="{{ employee.nin_number|default_if_none:'' }}" type="text" required></div>
+    <div class="field"><label>Tax ID / TIN *</label><input name="tin_number" value="{{ employee.tin_number|default_if_none:'' }}" type="text" required></div>
+    <div class="field">
+      <label>Profile Picture</label>
+       {% if employee.profile_picture %}
+             <p>Existing picture</p>
+               <img src="{{ employee.profile_picture.url }}" alt="profile picture" width="100" />
+              {% endif %}
+      <div class="profile-upload">
+        <input name="profile_picture" type="file" accept="image/png" />
+        <i class='bx bx-upload'></i>
+        <p>Upload</p>
+      </div>
+    </div>
+    
+  </div>
+
+  <!-- Contact Details Section -->
+  <div class="section">
+    <h3 class="collapsible-header">Contact Details</h3>
+    <div class="collapsible-content">
+      <div class="header">
+        <div class="field"><label>Phone Number *</label><input name="phone_number" value="{{ employee.phone_number|default_if_none:'' }}" type="tel" required></div>
+        <div class="field"><label>Email Address *</label><input name="email_address" value="{{ employee.email_address|default_if_none:'' }}" type="email" required></div>
+        <div class="field"><label>Residential Address</label><input name="residential_address" value="{{ employee.residential_address|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Emergency Contact Name</label><input name="emergency_person" value="{{ employee.emergency_person|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Emergency Contact Phone</label><input name="emergency_contact" value="{{ employee.emergency_contact|default_if_none:'' }}" type="tel"></div>
+        <div class="field"><label>Emergency Contact Relationship</label><input name="relationship" value="{{ employee.relationship|default_if_none:'' }}" type="text"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Employment Details -->
+  <div class="section">
+    <h3 class="collapsible-header">Employment Details</h3>
+    <div class="collapsible-content">
+      <div class="header">
+        <div class="field"><label>Job Title *</label><input name="job_title" value="{{ employee.job_title|default_if_none:'' }}" type="text" required></div>
+        <div class="field"><label>Department *</label><input name="department" value="{{ employee.department|default_if_none:'' }}" type="text" required></div>
+        <div class="field">
+          <label>Employment Type *</label>
+          <select name="employment_type">
+            <option value="Full-Time" {% if employee.department == "Full-Time" %}selected{% endif %}>Full-Time</option>
+            <option value="Part-Time" {% if employee.department == "Part-Time" %}selected{% endif %}>Part-Time</option>
+            <option value="Contract" {% if employee.department == "Contract" %}selected{% endif %}>Contract</option>
+            <option value="Intern" {% if employee.department == "Intern" %}selected{% endif %}>Intern</option>
+            <option value="Volunteer" {% if employee.department == "Volunteer" %}selected{% endif %}>Volunteer</option>
+          </select>
+        </div>
+        <div class="field"><label>Status *</label>
+          <select name="status" value="{{ employee.status|default_if_none:'' }}">
+            <option value="Active" {% if employee.status == "Active" %}selected{% endif %} >Active</option>
+            <option value="Suspended" {% if employee.status == "Suspended" %}selected{% endif %} >Suspended</option>
+            <option value="Terminated" {% if employee.status == "Terminated" %}selected{% endif %} >Terminated</option>
+          </select>
+        </div>
+        <div class="field"><label>Date of Hire *</label><input name="hire_date" value="{{ employee.hire_date|date:'d/m/Y'|default_if_none:'' }}" type="text" placeholder="dd/mm/yyyy" required></div>
+        <div class="field"><label>Supervisor</label><input name="supervisor" value="{{ employee.supervisor|default_if_none:'' }}" type="text"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Payroll Information -->
+  <div class="section">
+    <h3 class="collapsible-header">Payroll Information</h3>
+    <div class="collapsible-content">
+      <div class="header">
+        <div class="field"><label>Basic Salary *</label><input name="salary" value="{{ employee.salary|default_if_none:'' }}" type="number" required></div>
+        <div class="field"><label>Pay Frequency *</label><input name="payment_frequency" value="{{ employee.payment_frequency|default_if_none:'' }}" type="text" placeholder="e.g. Monthly" required></div>
+        <div class="field">
+          <label>Payment Method *</label>
+          <select name="payment_method">
+            <option value="Bank Transfer" {% if employee.payment_method == "Bank Transfer" %}selected{% endif %}>Bank Transfer</option>
+            <option value="Cash" {% if employee.payment_method == "Cash" %}selected{% endif %}>Cash</option>
+            <option value="Cheque" {% if employee.payment_method == "Cheque" %}selected{% endif %}>Cheque</option>
+          </select>
+        </div>
+        <div class="field"><label>Bank Name</label><input name="bank_name" value="{{ employee.bank_name|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Bank Account Number</label><input name="bank_account" value="{{ employee.bank_account|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Bank Branch</label><input name="bank_branch" value="{{ employee.bank_branch|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Pension Scheme / NSSF No.</label><input name="nssf_number" value="{{ employee.nssf_number|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Health Insurance Provider</label><input name="insurance_provider" value="{{ employee.insurance_provider|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Taxable Allowances</label><input name="taxable_allowances" value="{{ employee.taxable_allowances|default_if_none:'' }}" type="number"></div>
+        <div class="field"><label>Non Taxable Allowances</label><input name="intaxable_allowances" value="{{ employee.intaxable_allowances|default_if_none:'' }}" type="number"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Other Relevant Info -->
+  <div class="section">
+    <h3 class="collapsible-header">Other Relevant Info</h3>
+    <div class="collapsible-content">
+      <div class="header">
+        <div class="field">
+          <label>Notes</label>
+          <textarea rows="3" name="additional_notes"> {{ employee.additional_notes|default_if_none:'' }} </textarea>
+        </div>
+        <div class="field">
+          <label>Custom Fields</label>
+          <button type="button" onclick="addCustomField()">+ Add Custom Field</button>
+          <div id="customFields" name="additional_notes" class="custom-fields" value="{{ employee.additional_notes|default_if_none:'' }}"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Upload Section for Documents -->
+  <div class="attachments-doc">
+                  {% if employee.doc_attachments %}
+            <p>Existing file: 
+            <a href="{{ employee.doc_attachments.url }}" target="_blank" style="color: #007bff;">
+              {{ employee.doc_attachments.name|cut:'attachments/' }}
+             </a>
+              </p>
+            {% endif %}
+    <input name="doc_attachments"type="file" multiple>
+    <i class='bx bx-upload' style="font-size: 24px;"></i>
+    <p>Click or drag files here to upload documents (CV, ID, Contracts)</p>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer d-flex justify-content-sm-between" >
+    <a href="{% url 'sowaf:employees' %}" style="text-decoration:none;"><button class="btn btn-green button">Cancel</button></a>
+    <div class="left"></div>
+    <div class="right">
+      <div class="dropdown">
+          <button type="button" class="btn btn-green button">Save ▼</button>
+          <div class="dropdown-menu" id="dropdown" style="background-color: rgb(7, 142, 36); color: white;">
+            <button type="submit" style="color: white; font-size: 1em;" name="save_action" value="save">Save</button>
+            <button type="submit" style="color: white; font-size: 1em;" name="save_action" value="save&new">Save & New</button>
+            <button type="submit" style="color: white; font-size: 1em;" name="save_action" value="save&close">Save & Close</button>
+          </div>
+        </div>
+    </div>
+  </div>
+</div>
+  <script src=" {% static 'sowaf/styles/script.js' %} "></script>
+   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  function addCustomField() {
+    const container = document.getElementById("customFields");
+    const div = document.createElement("div");
+    div.className = "custom-field";
+    div.innerHTML = `
+      <input type="text" placeholder="Field Title" />
+      <input type="text" placeholder="Field Value" />
+      <button class="delete-btn" onclick="this.parentElement.remove()"><i class='bx bx-trash'></i></button>
+    `;
+    container.appendChild(div);
+  }
+
+  // Make sections collapsible
+  document.querySelectorAll(".collapsible-header").forEach(header => {
+    header.addEventListener("click", () => {
+      const content = header.nextElementSibling;
+      content.style.display = content.style.display === "none" ? "flex" : "none";
+    });
+    header.nextElementSibling.style.display = "none";
+  });
+</script>
+</body>
+</html>

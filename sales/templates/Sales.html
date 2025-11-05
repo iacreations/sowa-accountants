@@ -1,0 +1,276 @@
+{% load static %}
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+<style>
+  /* new */
+  .num{text-align:right}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:12px;color:#fff}
+  .pill-brown{background:#6b4f3a}
+  .pill-orange{background:#f59e0b}
+  .pill-blue{background:#3b82f6}
+  .status-chip{display:inline-block;background:#e8f5e9;color:#185a2e;padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px}
+
+  .action-cell{white-space:nowrap}
+  .row-actions{display:inline-flex;align-items:center;gap:10px}
+  .edit-link{color:#39B54B;font-weight:800;text-decoration:none}
+  .menu-wrap{position:relative;display:inline-block}
+  /* .kebab{background:#f0fdf4;border:1px solid #cceedd;border-radius:8px;padding:4px 8px;cursor:pointer} */
+  .flyout{display:none;position:absolute;right:0;top:110%;background:#fff;border:1px solid #e6e6e6;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.08);min-width:150px;overflow:hidden;z-index:5}
+  .menu-wrap:focus-within .flyout,.menu-wrap:hover .flyout{display:block}
+  .flyout a{display:block;padding:8px 12px;text-decoration:none;color:#111}
+  .flyout a:hover{background:#f6fef8}
+
+/* stack the banners in a single column */
+.banner-grid{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background:#fff3e0;
+}
+/* optional: make them a little tighter on mobile/desktop alike */
+  .mini-banner{
+    display:flex; flex-direction:column; gap:2px;
+    padding:10px 12px; border-radius:12px; text-decoration:none;
+    color:#fff; border:1px solid rgba(255,255,255,.25);
+    box-shadow:0 8px 18px rgba(0,0,0,.12);
+    width: 100%;
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .mini-banner:hover{ transform:translateY(-2px); box-shadow:0 12px 24px rgba(0,0,0,.16); }
+  .mini-banner .kicker{ font-size:12px; font-weight:800; letter-spacing:.3px; opacity:.95; text-transform:uppercase; }
+  .mini-banner .value{ font-weight:900; font-size:16px; line-height:1.15; }
+  .mini-banner .sub{ font-size:12px; opacity:.95; }
+
+  /* colors */
+  .mini-banner.brown  { background:#fff3e0; border:1px solid #ffe0b2; color:#a75a00;}
+  .mini-banner.orange { background:linear-gradient(180deg,#fcb842 0%,#eca95b 100%); }
+  .mini-banner.blue   { background:linear-gradient(180deg,#6594fc 0%,#5f86f1 100%); }
+/* styling the dropdown of the edit */
+.num{ text-align:right; }
+  .action-cell{ white-space:nowrap; }
+  .row-actions{ display:flex; align-items:center; gap:10px; }
+  .row-actions a{ color:#39B54B; text-decoration:none; font-weight:800; }
+  .menu-wrap{ position:relative; display:inline-block; }
+  .kebab{ background:#f0fdf4; border:1px solid #cceedd; border-radius:8px; padding:4px 8px; cursor:pointer; }
+  .flyout{ display:none; position:absolute; right:0; top:110%; background:#fff; border:1px solid #e6e6e6; border-radius:8px; box-shadow:0 8px 22px rgba(0,0,0,.08); min-width:180px; overflow:hidden; z-index:5; }
+  .flyout a{ display:block; padding:8px 12px; text-decoration:none; color:#111; }
+  .flyout a:hover{ background:#f6fef8; }
+  .menu-wrap:focus-within .flyout, .menu-wrap:hover .flyout{ display:block; }
+  /* responsive */
+  @media (max-width: 900px){ .banner-grid{ grid-template-columns:1fr; } }
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+#body{
+  margin-top: 17%;
+}
+
+}
+</style>
+{% include 'includes/sidebar.html' %}
+<a href="{% url 'sales:payments_list' %}">Payments list</a>
+    <div class="action" id="action">
+      <h1>SALES</h1>
+      <div class="search_bar" id="search">
+        <input type="text" placeholder="Search Home" />
+      </div>
+      <div class="dropdown-wrapper">
+        <button class="button">
+          <span class="button_text">New Transactions</span>
+          <span class="button_icon"><i class='bx bx-chevron-down'></i></span>
+        </button>
+        <div class="dropdown-content">
+          <a href="{% url 'sales:add-invoice' %}">Invoice</a>
+          <a href="{% url 'sales:add-receipt' %}">Receipt</a>
+          <a href="{% url 'sales:receive-payment' %}">Receive payment</a>
+        </div>
+      </div>
+
+      <a href="{% url 'inventory:add-products' %}" style="text-decoration: none;">
+        <button class="button" style="width: fit-content;">
+        <span class="button_text">New Products/Services</span>
+        <span class="button_icon">
+          <i class='bx bx-folder-plus'></i>
+        </span>
+      </button>
+      </a>
+        <button class="button">
+          <span class="button_text">CUSTOMIZE</span>
+          <span class="button_icon">
+            <i class='bx bxs-customize' ></i>
+          </span>
+        </button> 
+
+
+    </div>
+    <div class="main_body" id="body">
+      <div class="tabs" id="tab">
+        <input type="radio" class="tabs_radio" name="tabs-example" id="tab1" checked>
+        <label for="tab1" class="tabs_label">Sales Overview</label>
+          <div class="tab-content" id="sales-overview">
+            <div class="sales-overview">
+              <div id="Overview">          
+                 <div class="banner-grid" style="background:#fff3e0;">
+                  <h5 class="title" style="color: #889e8b;font-weight: 900;">Invoice Analytics</h5>
+                <a class="mini-banner brown"  href="{% url 'sales:invoices' %}?status=overdue">
+                 <span class="kicker">Overdue</span>
+                  <span class="value">{{ inv_analytics.over_amount|floatformat:2|intcomma }}</span>
+                    <span class="sub">{{ inv_analytics.over_count }} invoices</span>
+                    </a>
+
+                     <a class="mini-banner orange" href="{% url 'sales:invoices' %}?status=unpaid">
+                      <span class="kicker">Unpaid</span>
+                       <span class="value">{{ inv_analytics.unpaid_amount|floatformat:2|intcomma }}</span>
+                        <span class="sub">{{ inv_analytics.unpaid_count }} invoices</span>
+                    </a>
+
+                    <a class="mini-banner blue"   href="{% url 'sales:invoices' %}?status=paid">
+                     <span class="kicker">Paid</span>
+                      <span class="value">{{ inv_analytics.paid_amount|floatformat:2|intcomma }}</span>
+                       <span class="sub">{{ inv_analytics.paid_count }} invoices</span>
+                        </a>
+                </div>
+
+                <div class="income-overtime" id="income">INCOME OVERTIME</div>
+                <div class="estimates" id="income">ESTIMATES</div>
+              </div>
+            </div>
+              <section>
+                <h3 class="" style="color: rgb(7, 142, 36);">ALL SALES</h3>
+      <table class="content-table">
+        <thead>
+          <tr>
+                      <th>DATE</th>
+                      <th>TYPE</th>
+                      <th>NO.</th>
+                      <th>CUSTOMER</th>
+                      <th>MEMO</th>
+                      <th>AMOUNT</th>
+                      <th>STATUS</th>
+                      <th>ACTIONS <i class='bx bxs-down-arrow' ></i></th>
+            </tr>
+        </thead>
+       <tbody>
+  {% for r in sales_rows %}
+  <tr>
+    <td>{{ r.date|date:"d/m/Y" }}</td>
+    <td>
+      {% if r.type == "Invoice" %}
+        <span class="pill pill-brown">Invoice</span>
+      {% elif r.type == "Payment" %}
+        <span class="pill pill-blue">Payment</span>
+      {% else %}
+        <span class="pill pill-orange">Sales Receipt</span>
+      {% endif %}
+    </td>
+    <td>{{ r.no }}</td>
+    <td>{{ r.customer }}</td>
+    <td>{{ r.memo }}</td>
+    <td class="num">{{ r.amount|floatformat:2|intcomma }}</td>
+    <td><span class="status-chip">{{ r.status }}</span></td>
+    <td class="action-cell">
+      <div class="row-actions">
+        <a class="edit-link" href="{{ r.edit_url }}">Edit</a>
+        <div class="menu-wrap" tabindex="-1">
+          <strong class="kebab" aria-haspopup="true"style="border: none;" aria-expanded="false">▾</strong>
+          <div class="flyout" role="menu">
+            <a role="menuitem" href="{{ r.view_url }}">View</a>
+            <a role="menuitem" href="{{ r.print_url }}">Print</a>
+          </div>
+        </div>
+      </div>
+    </td>
+  </tr>
+  {% empty %}
+  <tr><td colspan="8">No sales yet.</td></tr>
+  {% endfor %}
+</tbody>
+      </table>
+  </section>
+</div>
+
+      <input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
+          <label for="tab2" class="tabs_label">Sales Activities</label>
+           <div class="tab-content" id="sales-activities">
+            <div class="sales-overview" id="salesOverview">
+              <div id="Overview">
+                <div class="customer">Customer</div>
+                <div class="invoice">Invoice</div>
+                <div class="recurring-invoice">Recurring invoice</div>
+                <div class="sales-receipts">Sales Receipts</div>
+                <div class="receive-payment"><a href="{% url 'sales:payments_list' %}">Receive payment</a></div>
+                <div class="bank-deposit">Bank Deposit</div>
+                <div class="create-statement">Create Statement</div>
+              </div>
+            </div>
+          </div>
+            <input type="radio" class="tabs_radio" name="tabs-example" id="tab3">
+            <label for="tab3" class="tabs_label">Products and Services</label>
+              <div class="tab-content">
+               <table class="content-table">
+  <thead>
+    <tr>
+      <th>PRODUCT NAME</th>
+      <th>SKU</th>
+      <th>TYPE</th>
+      <th>SALES DESCRIPTION</th>
+      <th>SALES PRICE</th>
+      <th class="action-cell">ACTIONS <i class='bx bxs-down-arrow'></i></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for product in products %}
+      <tr>
+        <td>{{ product.name }}</td>
+        <td>{{ product.sku }}</td>
+        <td>{{ product.type }}</td>
+        <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ product.sales_description }}
+        </td>
+        <td class="num">{{ product.sales_price|default:0|floatformat:2|intcomma }}</td>
+
+        <td class="action-cell">
+          <div class="row-actions">
+            <a href="{% url 'inventory:product-edit' product.id %}">Edit</a>
+
+            <div class="menu-wrap" tabindex="-1">
+              <button class="kebab" aria-haspopup="true" aria-expanded="false">More ▾</button>
+              <div class="flyout" role="menu">
+                <a role="menuitem" href="{% url 'inventory:product-detail' product.id %}">View</a>
+                <!-- optional: keep your create-invoice action -->
+                <a role="menuitem" href="{% url 'sales:add-invoice' %}?product_id={{ product.id }}">Create Invoice</a>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" style="color:#6b7280;padding:14px;">No products found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+              </div>
+      </div>
+    </div>
+    <script>
+  document.addEventListener('click', (e)=>{
+    document.querySelectorAll('.menu-wrap').forEach(w=>{
+      if(!w.contains(e.target)) w.classList.remove('open');
+    });
+  });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key==='Escape'){
+      document.querySelectorAll('.menu-wrap').forEach(w=>w.classList.remove('open'));
+    }
+  });
+  document.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.kebab');
+    if(btn){
+      const wrap = btn.closest('.menu-wrap');
+      wrap.classList.toggle('open');
+      e.stopPropagation();
+    }
+  });
+</script>
+
+ {% include 'includes/footer.html' %}

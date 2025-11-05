@@ -1,0 +1,219 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Import Bills</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+ <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: "Poppins", sans-serif;
+    }
+
+    body {
+      background: #f4f6f8;
+      padding: 40px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: auto;
+      background: #fff;
+      border-radius: 10px;
+      padding: 40px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+
+    h2.title {
+      font-size: 24px;
+      color: #39B54B;
+      margin-bottom: 20px;
+    }
+
+    .stepper {
+      display: flex;
+      flex-direction: column;
+      width: 150px;
+      gap: 20px;
+    }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #aaa;
+    }
+
+    .step.active {
+      color: #39B54B;
+      font-weight: 600;
+    }
+
+    .step .circle {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ddd;
+      color: white;
+      text-align: center;
+      line-height: 22px;
+      font-size: 13px;
+    }
+
+    .step.active .circle {
+      background: #39B54B;
+    }
+
+    .main {
+      display: flex;
+      gap: 40px;
+    }
+
+    .upload-section {
+      flex: 1;
+    }
+
+    .upload-box {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 25px;
+    }
+
+    .upload-box h3 {
+      margin-bottom: 15px;
+      font-size: 18px;
+      color: #333;
+    }
+
+    .upload-box p {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 15px;
+    }
+
+    .upload-box .upload-preview {
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .upload-box .upload-preview:hover {
+      background: #f0f0f0;
+    }
+
+    .upload-box input[type="file"] {
+      margin-bottom: 15px;
+    }
+
+    .upload-box label {
+      font-size: 14px;
+    }
+
+    .checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    .btn-next {
+      margin-top: 25px;
+      padding: 10px 20px;
+      background: #39B54B;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 15px;
+    }
+
+    .btn-next:hover {
+      background: #2e8b3f;
+    }
+
+    .download-example {
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+
+    .download-example a {
+      color: #39B54B;
+      text-decoration: none;
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 class="title">Import Bills</h2>
+    <div class="main">
+      <!-- Left: Stepper -->
+      <div class="stepper">
+        <div class="step active">
+          <div class="circle">1</div>
+          <span>Upload</span>
+        </div>
+        <div class="step">
+          <div class="circle">2</div>
+          <span>Map Fields</span>
+        </div>
+        <div class="step">
+          <div class="circle">3</div>
+          <span>Import</span>
+        </div>
+      </div>
+
+      <!-- Right: Upload Section -->
+      <div class="upload-section">
+        <div class="upload-box">
+          <h3>First things first</h3>
+          <p>Your CSV file must contain all mandatory fields (marked with *). New to this? <a href="#">Read the import guide</a>.</p>
+
+          <div class="upload-preview">
+            <strong>📄 Preview what's required</strong>
+          </div>
+
+          <div class="download-example">
+            <a href="#">⬇ Download an example</a>
+          </div>
+
+          <label for="csvFile">Upload your CSV file:</label><br>
+          <input type="file" id="csvFile" accept=".csv"><br>
+          <small>Your CSV file can have no more than 1000 rows.</small>
+
+          <div class="checkbox">
+            <input type="checkbox" id="addSuppliers">
+            <label for="addSuppliers">Add new suppliers that don't already exist</label>
+          </div>
+
+          <div style="margin-top: 25px; display: flex; gap: 10px;">
+            <button class="btn-next">Next</button>
+          </div>
+          
+        </div>
+
+        <div style="max-width: 900px; margin: 15px auto 0; text-align: left;">
+          <a href="{% url 'sowaf:expenses' %}" class="btn btn-green" style="text-decoration:none;">Cancel</a>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script src=" {% static 'sowaf/styles/script.js' %} "></script>
+</body>
+</html>

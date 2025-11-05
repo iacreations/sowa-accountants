@@ -1,0 +1,144 @@
+{% load humanize %}
+ {% include 'includes/navbar.html' %}
+<style>
+  :root{
+    --brand:#39B54B; --line:#e7e7e7; --muted:#6b7280;
+    --head:#f7fff8; --chip:#e8f5e9;
+  }
+  .page-wrap{max-width:1100px;margin:24px auto;padding:0 16px;}
+  .titlebar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .titlebar h2{margin:0;color:var(--brand)}
+  .btn{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;text-decoration:none}
+  .btn.secondary{background:#f0fdf4;color:#0f5132;border:1px solid #cceedd}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:0 8px 22px rgba(0,0,0,.05)}
+  .tbl{width:100%;border-collapse:separate;border-spacing:0;border-radius:12px;border:1px solid var(--line)}
+  .tbl thead th{background:linear-gradient(0deg,#e6f7ea,#f5fff8);color:#14532d;font-weight:800;text-transform:uppercase;letter-spacing:.3px;font-size:12px;border-bottom:1px solid var(--line);padding:10px 12px;text-align:left}
+  .tbl td{padding:10px 12px;border-bottom:1px solid var(--line);background:#fff}
+  .group-head td{background:var(--head);font-weight:700}
+  .chip{display:inline-block;background:var(--chip);color:#1e4620;padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px}
+  .ref{background:#f8fafc;border:1px dashed #dbe4ea;border-radius:6px;padding:2px 8px;font-family:ui-monospace,Menlo,monospace}
+  .num{text-align:right;white-space:nowrap}
+  .section{background:#f9fafb;font-weight:800;color:#0f5132}
+  .detail{width:100%;border-collapse:separate;border-spacing:0}
+  .detail th,.detail td{padding:8px 10px;border-bottom:1px solid var(--line)}
+  .detail th{text-transform:uppercase;letter-spacing:.3px;font-size:12px;background:#f7faf9;color:#14532d}
+  .detail tbody tr:nth-child(even) td{background:#fcfdfc}
+  .totals{background:#f8fff9;font-weight:800}
+  #payment{
+    margin-left: 20%;
+  }
+</style>
+ {% include 'includes/sidebar.html' %}
+<div class="page-wrap" id="payment">
+  <a href="{% url 'sales:payments_list' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back </a>
+  <div class="titlebar my-5">
+  <h2 style="margin-top: 5%;">Payment number {{ payment.id }}</h2>
+  <div style="display:flex; gap:8px;">
+    <a class="edit-link" href="{% url 'sales:payment-edit' payment.id %}" style="text-decoration: none; color: #39B54B; font-weight: 900;">Edit</a>
+    <a href="{% url 'sales:payment-print' payment.id %}" style="text-decoration: none; color: #39B54B; font-weight: 900;">Print</a>
+  </div>
+</div>
+
+  <div class="card">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Payment Date</th>
+          <th>Customer</th>
+          <th>Deposit To</th>
+          <th>Reference</th>
+          <th>Method</th>
+          <th class="num">Applied Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="group-head">
+  <td>{{ payment.payment_date|date:"M j, Y"|default:"—" }}</td>
+  <td><strong>{{ payment.customer.customer_name|default:"—" }}</strong></td>
+  <td>
+    {% if payment.deposit_to %}
+      <span class="chip">{{ payment.deposit_to.account_name }}</span>
+    {% else %}
+      <span class="muted">—</span>
+    {% endif %}
+  </td>
+  <td>
+    {% if payment.reference_no %}
+      <span class="ref">{{ payment.reference_no }}</span>
+    {% else %}
+      <span class="muted">—</span>
+    {% endif %}
+  </td>
+  <td><span class="chip">{{ payment.payment_method|title|default:"—" }}</span></td>
+  <td class="num">
+  {{ group.applied_total|default_if_none:0|floatformat:2|intcomma }}
+</td>
+
+</tr>
+
+        {% if group.lines %}
+          <tr class="section"><td colspan="6">Applied Invoices</td></tr>
+          <tr>
+            <td colspan="6" style="padding:0;">
+              <table class="detail">
+                <thead>
+                  <tr>
+                    <th>Invoice #</th>
+                    <th>Date Created</th>
+                    <th class="num">Total Due</th>
+                    <th class="num">Amount Applied</th>
+                    <th class="num">Remaining (this payment)</th>
+                    <th class="num">Outstanding Now</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for l in group.lines %}
+                    <tr>
+                      <td>INV - {{ l.invoice.id|stringformat:"04d" }}</td>
+                      <td>{{ l.invoice.date_created|date:"M. j, Y"|default:"—" }}</td>
+                      <td class="num">{{ l.total_due|floatformat:2|intcomma }}</td>
+                      <td class="num">{{ l.amount_applied|floatformat:2|intcomma }}</td>
+                      <td class="num">{{ l.remaining_this_payment|floatformat:2|intcomma }}</td>
+                      <td class="num">{{ l.outstanding_now|floatformat:2|intcomma }}</td>
+                    </tr>
+                  {% endfor %}
+                  <tr class="totals">
+                    <td colspan="3" class="num">Totals for payment:</td>
+                    <td class="num">{{ group.applied_total|floatformat:2|intcomma }}</td>
+                    <td class="num">{{ group.remaining_total_this_payment|floatformat:2|intcomma }}</td>
+                    <td class="num">{{ group.outstanding_total_now|floatformat:2|intcomma }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </td>
+          </tr>
+       {% else %}
+  <tr>
+    <td colspan="6" style="padding:0;">
+      <div style="
+        padding:14px 16px;
+        background:#f0fdf4;
+        border:1px solid #cceedd;
+        border-radius:8px;
+        color:#14532d;">
+        <strong>Unapplied payment.</strong>
+        This payment isn’t applied to any invoice yet.
+        <a href="{% url 'sales:payment-edit' payment.id %}" style="font-weight:700; color:#0f5132;">
+          Apply to invoices →
+        </a>
+
+        {% if payment.memo or payment.tags %}
+          <div style="margin-top:8px; font-size:13px; color:#065f46;">
+            {% if payment.memo %}<div><em>Memo:</em> {{ payment.memo }}</div>{% endif %}
+            {% if payment.tags %}<div><em>Tags:</em> {{ payment.tags }}</div>{% endif %}
+          </div>
+        {% endif %}
+      </div>
+    </td>
+  </tr>
+{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+ {% include 'includes/footer.html' %}

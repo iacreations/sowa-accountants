@@ -1,0 +1,221 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root {
+    --brand:#39B54B;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#e5e7eb;
+    --bg:#f9fafb;
+  }
+
+  body {
+    background: var(--bg);
+  }
+
+  .page {
+    margin-left: 270px;
+    padding: 25px 40px;
+    background: var(--bg);
+    min-height: 100vh;
+    margin-top: 5%;
+  }
+
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    margin-bottom: 25px;
+  }
+
+  .page-header h1 {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+
+  .page-header .meta {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 6px;
+  }
+
+  .toolbar a {
+    color: var(--brand);
+    font-weight: 700;
+    text-decoration: none;
+    margin-left: 12px;
+  }
+
+  .toolbar a:hover {
+    text-decoration: underline;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+    padding: 20px;
+    width: 100%;
+  }
+
+  .card h4 {
+    font-size: 16px;
+    color: var(--brand);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 18px;
+  }
+
+  .detail-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .detail-item label {
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+
+  .detail-item span {
+    color: var(--ink);
+    font-size: 15px;
+    font-weight: 500;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th, td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f1f5f9;
+  }
+
+  th {
+    background: #f3f4f6;
+    text-align: left;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+
+  tr:nth-child(even) {
+    background: #fafafa;
+  }
+
+  tr:hover {
+    background: #f0fdf4;
+  }
+
+  .money {
+    white-space: nowrap;
+    font-weight: 600;
+  }
+</style>
+
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1>Expense <span style="color: #39B54B;">Ref-{{ e.number_display }}</span></h1>
+      <div class="meta">{{ e.payment_date|date:"M d, Y" }} • {{ e.payee_display }}</div>
+    </div>
+    <div class="toolbar">
+      <a href="{% url 'expenses:expenses' %}">← Back to list</a>
+      <a href="{% url 'expenses:expense-edit' e.id %}">Edit</a>
+    </div>
+  </div>
+
+  <!-- Header Details -->
+  <div class="card">
+    <h4>Expense Information</h4>
+    <div class="detail-grid">
+      <div class="detail-item"><label>Payee</label><span>{{ e.payee_display }}</span></div>
+      <div class="detail-item"><label>Payment Account</label><span>{{ e.payment_account.account_name }}</span></div>
+      <div class="detail-item"><label>Payment Method</label><span>{{ e.get_payment_method_display }}</span></div>
+      <div class="detail-item"><label>Reference No.</label><span>{{ e.ref_no }}</span></div>
+      <div class="detail-item"><label>Location</label><span>{{ e.location|default:"—" }}</span></div>
+      <div class="detail-item"><label>Memo</label><span>{{ e.memo|default:"—" }}</span></div>
+      <div class="detail-item"><label>Total</label><span class="money">Ush{{ e.total_amount|floatformat:0|intcomma }}</span></div>
+    </div>
+  </div>
+
+  <!-- Category Lines -->
+  {% if e.cat_lines.exists %}
+  <div class="card">
+    <h4>Category Details</h4>
+    <table>
+      <thead>
+        <tr><th>Account</th><th>Description</th><th>Amount</th></tr>
+      </thead>
+      <tbody>
+        {% for cl in e.cat_lines.all %}
+        <tr>
+          <td>{{ cl.category.account_name }}</td>
+          <td>{{ cl.description|default:"—" }}</td>
+          <td class="money">Ush{{ cl.amount|floatformat:0|intcomma }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Item Lines -->
+  {% if e.item_lines.exists %}
+  <div class="card">
+    <h4>Item Details</h4>
+    <table>
+      <thead>
+        <tr><th>Product</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
+      </thead>
+      <tbody>
+        {% for il in e.item_lines.all %}
+        <tr>
+          <td>{{ il.product.name }}</td>
+          <td>{{ il.description|default:"—" }}</td>
+          <td>{{ il.qty }}</td>
+          <td class="money">Ush{{ il.rate|floatformat:0|intcomma }}</td>
+          <td class="money"><strong>Ush{{ il.amount|floatformat:0|intcomma }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Journal -->
+  {% if journal %}
+  <div class="card">
+    <h4>Journal Entries</h4>
+    <table>
+      <thead><tr><th>Account</th><th class="money">Debit</th><th class="money">Credit</th></tr></thead>
+      <tbody>
+        {% for ln in journal.lines.all %}
+        <tr>
+          <td>{{ ln.account.account_name }}</td>
+          <td class="money">{{ ln.debit|floatformat:2|intcomma }}</td>
+          <td class="money">{{ ln.credit|floatformat:2|intcomma }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+{% include 'includes/footer.html' %}

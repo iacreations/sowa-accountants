@@ -1,0 +1,161 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Payment Receipt #{{ payment.id }}</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <style>
+    :root{
+      --brand:#39B54B;
+      --ink:#1f2a37;
+      --muted:#6b7280;
+      --line:#e5e7eb;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; padding:0; font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Poppins", sans-serif; color:var(--ink); }
+    .wrap{ max-width:900px; margin:28px auto; padding:0 16px; }
+    .doc{
+      background:#fff; border:1px solid var(--line); border-radius:14px;
+      box-shadow:0 10px 28px rgba(0,0,0,.06); overflow:hidden;
+    }
+    .head{
+      display:flex; gap:18px; align-items:center; justify-content:space-between;
+      padding:20px 22px; border-bottom:1px solid var(--line);
+      background:linear-gradient(0deg, #fff 0%, #f7fff9 100%);
+    }
+    .brand{ display:flex; gap:14px; align-items:center; }
+    .brand img{ height:44px; width:auto; }
+    .brand h1{ margin:0; font-size:22px; color:var(--brand); }
+    .doc-meta{ text-align:right; }
+    .doc-meta .title{ font-size:22px; font-weight:800; color:var(--brand); margin:0 0 6px; }
+    .doc-meta .small{ color:var(--muted); font-size:13px; }
+
+    .grid{
+      display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr));
+      gap:10px 18px; padding:18px 22px;
+    }
+    .card{ border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+    .card h4{ margin:0 0 6px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    .card p{ margin:0; font-size:15px; }
+
+    table{ width:100%; border-collapse:collapse; margin:8px 0 0; }
+    th, td{ padding:10px 12px; border-bottom:1px solid var(--line); font-size:14px; }
+    thead th{ text-align:left; background:#fbfdfa; border-top:1px solid var(--line); }
+    td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
+    .subhead{ color:var(--muted); font-weight:700; padding:10px 12px; background:#fcfdfc; border-top:1px solid var(--line); }
+
+    .totals{ display:flex; justify-content:flex-end; padding:16px 22px; }
+    .totals .box{ min-width:340px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    .totals .row{ display:flex; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--line); }
+    .totals .row strong{ color:var(--ink); }
+    .totals .row.total{ background:#f6fff8; font-weight:800; color:var(--brand); }
+
+    .foot{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 22px; border-top:1px solid var(--line); }
+    .muted{ color:var(--muted); }
+    .btn-print{
+      appearance:none; border:1px solid var(--brand); color:#fff; background:var(--brand);
+      padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer;
+    }
+    .btn-print:focus{ outline:2px solid #a7f3d0; outline-offset:2px; }
+
+    @media print{
+      .wrap{ margin:0; padding:0; }
+      .btn-print{ display:none !important; }
+      body{ background:#fff; }
+      .doc{ border:none; box-shadow:none; }
+      @page{ size:A4; margin:12mm; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="doc">
+      <!-- Header -->
+      <div class="head">
+        <div class="brand">
+          <img src="{{ company.logo_url }}" alt="Logo">
+          <div>
+            <h1>{{ company.name }}</h1>
+            <div class="small muted">{{ company.address }} • {{ company.phone }} • {{ company.email }}</div>
+          </div>
+        </div>
+        <div class="doc-meta">
+          <div class="title">Payment Receipt</div>
+          <div class="small">Receipt No: {{ payment.id }}</div>
+          <div class="small">Reference: {{ payment.reference_no|default:"—" }}</div>
+          <div class="small">Date: {{ payment.payment_date|date:"M j, Y" }}</div>
+        </div>
+      </div>
+
+      <!-- Top cards -->
+      <div class="grid">
+        <div class="card">
+          <h4>Customer</h4>
+          <p><strong>{{ payment.customer.customer_name }}</strong></p>
+        </div>
+        <div class="card">
+          <h4>Deposit To</h4>
+          <p>{{ payment.deposit_to.account_name }}{% if payment.deposit_to.account_number %} ({{ payment.deposit_to.account_number }}){% endif %}</p>
+        </div>
+        <div class="card">
+          <h4>Payment Method</h4>
+          <p>{{ payment.payment_method|title }}</p>
+        </div>
+        {% if payment.tags %}
+        <div class="card">
+          <h4>Tags</h4>
+          <p>{{ payment.tags }}</p>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Lines -->
+      <div class="subhead">Applied Invoices</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:18%">Invoice #</th>
+            <th style="width:18%">Date</th>
+            <th class="num">Invoice Total</th>
+            <th class="num">Amount Applied</th>
+            <th class="num">Remaining (this payment)</th>
+            <th class="num">Outstanding Now</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in lines %}
+          <tr>
+            <td>INV-{{ r.invoice.id|stringformat:"04d" }}</td>
+            <td>{{ r.date_created|date:"M j, Y"|default:"—" }}</td>
+            <td class="num">{{ r.total_due|floatformat:2|intcomma }}</td>
+            <td class="num">{{ r.amount_applied|floatformat:2|intcomma }}</td>
+            <td class="num">{{ r.remaining_this_payment|floatformat:2|intcomma }}</td>
+            <td class="num">{{ r.outstanding_now|floatformat:2|intcomma }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="6" class="muted">No linked invoices.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <!-- Totals -->
+      <div class="totals">
+        <div class="box">
+          <div class="row"><span>Applied Total</span><strong>{{ applied_total|floatformat:2|intcomma }}</strong></div>
+          <div class="row"><span>Remaining (this payment)</span><strong>{{ remaining_total|floatformat:2|intcomma }}</strong></div>
+          <div class="row total"><span>Outstanding Now</span><strong>{{ outstanding_total|floatformat:2|intcomma }}</strong></div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="foot">
+        <div class="muted">Thank you for your business.</div>
+        <button class="btn-print" onclick="window.print()">Print Receipt</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

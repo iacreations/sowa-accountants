@@ -1,0 +1,254 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% if edit_mode %}Edit Payment{% else %}Receive Payment{% endif %}</title>
+
+  <link rel="icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}"/>
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}"/>
+
+  <style>
+    body { background:#f4f6f8; font-family:"Poppins",sans-serif; padding:30px; width: 100%; }
+    .container { background:#fff; border-radius:10px; float: right; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+    h2 { color:#39B54B; text-align:center; margin-bottom:30px; }
+    .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:20px; margin-bottom:20px; }
+    .form-group { display:flex; flex-direction:column; }
+    .form-group label { font-weight:500; margin-bottom:6px; }
+    .form-group input,.form-group select,.form-group textarea { padding:8px; border:1px solid #ccc; border-radius:6px; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    th,td { border:1px solid #e9ecef; padding:10px; text-align:left; }
+    th { background:#f9f9f9; }
+    .footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:24px; border-top:1px solid #e0e0e0; padding-top:16px; }
+    .btn-green { background:#39B54B; color:#fff; border:none; border-radius:5px; padding:10px 18px; font-weight:600; }
+    .btn-light { background:#f0f0f0; border:none; border-radius:5px; padding:10px 18px; }
+    .err { background:#ffecec; border:1px solid #ffb3b3; padding:10px; border-radius:6px; margin-bottom:12px; }
+    .section-title { color:#39B54B; font-weight:600; margin:8px 0; }
+    .hint { color:#6c757d; font-size:.9rem; }
+
+        @media only screen and (min-width: 1024px) and (max-width: 1600px) {
+#container{
+ width: 80%;
+ margin-right: 0%;
+ margin-left: -5%;
+ margin-top: 5%;
+  }
+}
+ 
+  </style>
+</head>
+<body>
+  {% include 'includes/navbar.html' %}
+  {% include 'includes/sidebar.html' %}
+
+  <a href="{% url 'sales:sales' %}" class="back text-decoration-none">&lt; Back to sales</a>
+
+  <div class="container" id="container">
+    <h2>{% if edit_mode %}Edit Payment{% else %}Receive Payment{% endif %}</h2>
+
+    {% if form_error %}<div class="err">{{ form_error }}</div>{% endif %}
+
+    <form method="post"
+          action="{% if edit_mode and payment %}{% url 'sales:payment-edit' payment.id %}{% else %}{% url 'sales:receive-payment' %}{% endif %}">
+      {% csrf_token %}
+
+      <div class="form-grid">
+        <!-- Customer -->
+        <div class="form-group">
+          <label>Customer</label>
+          <select class="form-control" id="customer-select" name="customer" required>
+            <option value="">Select Customer</option>
+            {% for c in customers %}
+              <option value="{{ c.id }}" {% if edit_mode and payment and payment.customer_id == c.id %}selected{% endif %}>
+                {{ c.customer_name }}
+              </option>
+            {% endfor %}
+            <option value="add_new">➕ Add New</option>
+          </select>
+          <div class="hint">Open invoices for this customer will appear below.</div>
+        </div>
+
+        <!-- Payment Date -->
+        <div class="form-group">
+          <label>Payment Date</label>
+          <input type="date" name="payment_date"
+                 value="{% if edit_mode and payment %}{{ payment.payment_date|date:'Y-m-d' }}{% endif %}"
+                 required>
+        </div>
+
+        <!-- Method -->
+        <div class="form-group">
+          <label>Payment Method</label>
+          {% with pm=payment.payment_method|default_if_none:'' %}
+          <select name="payment_method">
+            <option value="cash"          {% if edit_mode and pm == 'cash' %}selected{% endif %}>Cash</option>
+            <option value="bank_transfer" {% if edit_mode and pm == 'bank_transfer' %}selected{% endif %}>Bank Transfer</option>
+            <option value="mobile_money"  {% if edit_mode and pm == 'mobile_money' %}selected{% endif %}>Mobile Money</option>
+            <option value="cheque"        {% if edit_mode and pm == 'cheque' %}selected{% endif %}>Cheque</option>
+          </select>
+          {% endwith %}
+        </div>
+
+        <!-- Deposit To -->
+        <div class="form-group">
+          <label>Deposit To</label>
+          <select name="deposit_to" required>
+            <option value="">Select Account</option>
+            {% for acc in accounts %}
+              <option value="{{ acc.id }}" {% if edit_mode and payment and payment.deposit_to_id == acc.id %}selected{% endif %}>
+                {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
+                — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="hint">Includes Bank and Cash &amp; Cash Equivalents accounts.</div>
+        </div>
+
+        <!-- Reference No -->
+        <div class="form-group">
+          <label>Reference No.</label>
+          <input type="text" name="reference_no"
+                 value="{{ reference_no|default_if_none:'' }}"
+                 maxlength="8"
+                 {% if not edit_mode %}readonly{% endif %}
+                 style="color:#39B54B; font-weight:800;">
+          <div class="hint">Auto-generated in create; editable in edit.</div>
+        </div>
+
+        <!-- Tags -->
+        <div class="form-group">
+          <label>Tags</label>
+          <input type="text" name="tags" placeholder="Start typing to add tag"
+                 value="{% if edit_mode and payment %}{{ payment.tags|default:'' }}{% endif %}">
+        </div>
+      </div>
+
+      <!-- Memo -->
+      <div class="form-group">
+        <label>Memo</label>
+        <textarea name="memo" rows="3" placeholder="Optional notes or comments...">{% if edit_mode and payment %}{{ payment.memo|default:'' }}{% endif %}</textarea>
+      </div>
+
+      <div class="section-title">Outstanding Invoices</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Invoice #</th>
+            <th>Date Created</th>
+            <th>Due Date</th>
+            <th style="text-align:right;">Total Due</th>
+            <th style="text-align:right;">Balance</th>
+            <th style="width:180px;">Amount to Apply</th>
+          </tr>
+        </thead>
+
+        <tbody id="invoice-rows">
+          {% if edit_mode and prefill_rows %}
+            {# Server-side prefill of already-applied lines #}
+            {% for r in prefill_rows %}
+              <tr>
+                <td>INV-{{ r.id|stringformat:"04d" }}</td>
+                <td>{% if r.date_created %}{{ r.date_created }}{% else %}—{% endif %}</td>
+                <td>{% if r.due_date %}{{ r.due_date }}{% else %}—{% endif %}</td>
+                <td style="text-align:right;">{{ r.total_due|floatformat:2|intcomma }}</td>
+                <td style="text-align:right;">{{ r.balance|floatformat:2|intcomma }}</td>
+                <td>
+                  <input type="number" step="0.01"
+                         name="amount_paid_{{ r.id }}"
+                         value="{{ r.amount_applied }}"
+                         max="{{ r.balance }}"
+                         placeholder="0.00">
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="6" style="text-align:center; color:#888;">
+                Select a customer to load outstanding invoices…
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+
+      <div class="footer">
+        <a href="{% url 'sales:sales' %}" style="text-decoration: none;">
+          <button type="button" class="btn btn-light button">Cancel</button>
+        </a>
+        <button type="submit" class="btn btn-green button" style="width: 20%;">
+          {% if edit_mode %}Save Changes{% else %}Save Payment{% endif %}
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    (function () {
+      const addCustomerUrl = "{% url 'sowaf:add-customer' %}";
+      const sel   = document.getElementById('customer-select');
+      const tbody = document.getElementById('invoice-rows');
+
+      sel.addEventListener('change', function () {
+        if (this.value === 'add_new') {
+          window.open(addCustomerUrl, '_blank', 'noopener');
+          this.value = "";
+          return;
+        }
+        if (!this.value) return;
+
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">Loading…</td></tr>`;
+        const url = `{% url 'sales:outstanding_invoices_api' %}?customer=${encodeURIComponent(this.value)}`;
+
+        fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+          .then(res => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then(data => {
+            const invoices = data.invoices || [];
+            if (!invoices.length) {
+              tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">No outstanding invoices for this customer.</td></tr>`;
+              return;
+            }
+            tbody.innerHTML = invoices.map(inv => `
+              <tr>
+                <td>${inv.id}</td>
+                <td>${inv.date_created ?? '—'}</td>
+                <td>${inv.due_date ?? '—'}</td>
+                <td style="text-align:right;">${fmt(inv.total_due)}</td>
+                <td style="text-align:right;">${fmt(inv.balance)}</td>
+                <td>
+                  <input type="number" step="0.01"
+                         name="amount_paid_${inv.id}"
+                         max="${inv.balance}"
+                         placeholder="0.00">
+                </td>
+              </tr>
+            `).join('');
+          })
+          .catch(() => {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#c00;">Failed to load invoices.</td></tr>`;
+          });
+      });
+
+      function fmt(x) {
+        const n = Number(x);
+        if (Number.isNaN(n)) return x;
+        return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+    })();
+
+     const url = "{% url 'sales:outstanding_invoices_api' %}?customer=" + encodeURIComponent(customerId);
+  fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(data => { /* render */ });
+  </script>
+
+  {% include 'includes/footer.html' %}
+</body>
+</html>

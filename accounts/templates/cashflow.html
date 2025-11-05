@@ -1,0 +1,105 @@
+{% load humanize %}
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <title>Statement of Cash Flows</title>
+  <style>
+    :root{
+      --brand:#39B54B; --ink:#0f5132; --muted:#64748b; --line:#e7e7e7;
+      --head:#e9fbef; --card:#ffffff; --chip:#e8f5e9;
+    }
+    body{font-family:Poppins,system-ui,Segoe UI,Arial;margin:24px;background:#f6f8f7}
+    .wrap{max-width:900px;margin:auto}
+    h1{color:var(--brand);margin:0 0 12px}
+    .filters{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+    input[type="date"]{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px}
+    .btn{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer}
+    .btn.ghost{background:#f0fdf4;color:#0f5132;border:1px solid #cceedd}
+    .card{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.06);margin-bottom:14px}
+    .card h3{margin:0;padding:10px 12px;background:var(--head);color:var(--ink)}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    th,td{padding:10px 12px;border-top:1px solid #f1f1f1}
+    th{text-align:left;color:#0f5132;background:#fafdfb}
+    .num{text-align:right;white-space:nowrap}
+    .tot{font-weight:900;background:#f8fff9}
+    .muted{color:#64748b}
+    .recon{margin-top:8px;color:#64748b}
+    .ok{color:#166534}
+    .bad{color:#b45309}
+  </style>
+</head>
+<body>
+         <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back to Reports </a>
+
+<div class="wrap">
+  <h1 class="text-center my-5">Statement of Cash Flows</h1>
+
+  <form class="filters me-auto" method="get">
+    <label>From</label>
+    <input type="date" name="from" value="{{ dfrom|date:'Y-m-d' }}">
+    <label>To</label>
+    <input type="date" name="to" value="{{ dto|date:'Y-m-d' }}">
+    <button class="btn" type="submit">Run</button>
+    <a class="btn ghost" href="?">Clear</a>
+  </form>
+
+  <div class="card">
+    <h3>Cash Flows from Operating Activities</h3>
+    <table>
+      <tbody>
+        <tr><td>Net Profit</td><td class="num">{{ net_profit|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Change in Accounts Receivable</td><td class="num">{{ delta_ar|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Change in Inventory</td><td class="num">{{ delta_inv|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Change in Accounts Payable</td><td class="num">{{ delta_ap|floatformat:2|intcomma }}</td></tr>
+        <tr class="tot"><td>Net Cash from Operating Activities</td><td class="num">{{ cash_from_ops|floatformat:2|intcomma }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Cash Flows from Investing Activities</h3>
+    <table>
+      <tbody>
+        <tr><td>Change in Fixed/Other Assets</td><td class="num">{{ delta_fa|floatformat:2|intcomma }}</td></tr>
+        <tr class="tot"><td>Net Cash from Investing Activities</td><td class="num">{{ cash_from_investing|floatformat:2|intcomma }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Cash Flows from Financing Activities</h3>
+    <table>
+      <tbody>
+        <tr><td>Change in Loans</td><td class="num">{{ delta_loans|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Change in Equity</td><td class="num">{{ delta_equity|floatformat:2|intcomma }}</td></tr>
+        <tr class="tot"><td>Net Cash from Financing Activities</td><td class="num">{{ cash_from_financing|floatformat:2|intcomma }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Net Change in Cash</h3>
+    <table>
+      <tbody>
+        <tr><td>Cash at Start</td><td class="num">{{ cash_start|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Net Change in Cash</td><td class="num">{{ net_change|floatformat:2|intcomma }}</td></tr>
+        <tr class="tot"><td>Cash at End</td><td class="num">{{ cash_end|floatformat:2|intcomma }}</td></tr>
+      </tbody>
+    </table>
+    <div class="recon">
+      Reconciliation:
+      {% if recon_ok %}
+        <span class="ok">✔ cash_start + net_change = cash_end</span>
+      {% else %}
+        <span class="bad">⚠ Not reconciled</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</body>
+</html>

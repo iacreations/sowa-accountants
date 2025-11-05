@@ -1,0 +1,286 @@
+{% load static %}
+{% load humanize %}
+
+{% include 'includes/navbar.html' %}
+
+<style>
+/* tabs */
+.tabs { display:inline-flex; border:1px solid #ddd; border-radius:8px; overflow:hidden; margin: 12px 0 20px; }
+.tab { padding:10px 20px; font-size:14px; font-weight:500; color:#555; text-decoration:none; background:#f9f9f9; border-right:1px solid #ddd; transition:all .2s; }
+.tab:last-child { border-right:none; }
+.tab:hover { background:#f1f1f1; }
+.tab.active { background:#39B54B; color:#fff; }
+
+/* action dropdown */
+.action-wrapper { display:flex; align-items:center; gap:6px; position:relative; }
+.edit-link { color:#39B54B; font-weight:500; text-decoration:none; }
+.dropdown { position:relative; cursor:pointer; }
+.dropdown i { font-size:18px; color:#444; }
+.dropdown-menu { display:none; position:absolute; right:0; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,.15); min-width:150px; z-index:10; }
+.dropdown-menu a { display:block; padding:8px 12px; font-size:14px; color:#333; text-decoration:none; }
+.dropdown-menu a:hover { background:#f4f6f8; }
+.dropdown:hover .dropdown-menu { display:block; }
+
+/* inactive look */
+.inactive-row { color:#888; background:#f9f9f9; font-style:italic; }
+.edit-link.disabled { pointer-events:none; opacity:.5; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  background: #eee;
+  color: #333;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.tab.active .badge {
+  background: #fff;
+  color: #39B54B;
+}
+
+
+/* modal */
+#customizeModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); justify-content:center; align-items:center; z-index:999; }
+.modal-card { background:#fff; padding:20px; border-radius:12px; width:420px; max-width:90%; box-shadow:0 8px 24px rgba(0,0,0,.2); }
+.modal-card h4 { margin:0 0 12px; color:#39B54B; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+.btn { padding:8px 14px; border:none; border-radius:6px; cursor:pointer; }
+.btn-outline { background:#fff; border:1px solid #ddd; }
+.btn-primary { background:#39B54B; color:#fff; }
+
+.child-row .indent {
+ margin-left: 20px;
+  padding-left: 5px;
+  border-left: 4px dashed #39B54B; /* guide line */
+  font-style: italic;
+  color: #39B54B; /* softer text */
+
+}
+
+</style>
+
+{% include 'includes/sidebar.html' %}
+
+<div class="main_body" id="main_body" style="margin-top: 5%;">
+  <h1 class="text-success text-center">Chart Of Accounts</h1>
+  <hr>
+<button type="button" id="customizeBtn" class="button ms-auto">
+          ⚙ Customize
+</button>
+  <!-- top mini menu -->
+  <div class="text-center">
+    <ul class="d-flex" style="list-style:none; justify-content:center; gap:16px; padding-left:0;">
+      <li><a href="#" class="text-secondary" style="text-decoration:none;">Import</a></li>
+      <li><a href="{% url 'accounts:add-account' %}" class="text-secondary" style="text-decoration:none;">Add account</a></li>
+      <li>
+       
+      </li>
+    </ul>
+  </div>
+
+  <h4 class="text-secondary text-center">Account Lists</h4>
+
+  <!-- tabs -->
+  <div class="tabs">
+<a href="?status=active" class="tab {% if status == 'active' %}active{% endif %}">
+  Active <span class="badge">{{ active_count }}</span>
+</a>
+<a href="?status=inactive" class="tab {% if status == 'inactive' %}active{% endif %}">
+  Inactive <span class="badge">{{ inactive_count }}</span>
+</a>
+<a href="?status=all" class="tab {% if status == 'all' %}active{% endif %}">All <span class="badge">{{ all_count }}</span></a>
+</div>
+
+  <!-- table -->
+  <table class="content-table">
+    <thead>
+      <tr>
+        <th data-col="account_name"    style="text-transform:uppercase;">Account Name</th>
+        <th data-col="opening_balance" style="text-transform:uppercase;">Open Balance</th>
+        <th data-col="as_of"           style="text-transform:uppercase;">Date</th>
+        <th data-col="account_number"  style="text-transform:uppercase;">Account Number</th>
+        <th data-col="account_type"    style="text-transform:uppercase;">Account Type</th>
+        <th data-col="detail_type"     style="text-transform:uppercase;">Detail Type</th>
+        <th data-col="description"     style="text-transform:uppercase;">Description</th>
+        <th data-col="actions"         style="text-transform:uppercase;">Actions <i class='bx bxs-down-arrow'></i></th>
+      </tr>
+    </thead>
+ <tbody>
+  {% for coa in coas %}
+    {% if not coa.parent %} {# Only show parent accounts at top level #}
+      <tr class="parent-row {% if not coa.is_active %}inactive-row{% endif %}">
+        <td>{{ coa.account_name }}</td>
+        <td>{{ coa.opening_balance|intcomma }}</td>
+        <td>{{ coa.as_of|date:"d/m/Y" }}</td>
+        <td>{{ coa.account_number }}</td>
+        <td>{{ coa.account_type }}</td>
+        <td>{{ coa.detail_type }}</td>
+        <td>{{ coa.description }}</td>
+        <td class="action-cell">
+          <div class="action-wrapper">
+            <a href="#" class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit</a>
+            <div class="dropdown">
+              <i class='bx bx-chevron-down'></i>
+              <div class="dropdown-menu">
+                {% if coa.is_active %}
+                  <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
+                {% else %}
+                  <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+
+      {# Now render child accounts indented #}
+      {% for child in coa.children.all %}
+        <tr class="child-row {% if not child.is_active %}inactive-row{% endif %}">
+          <td><span class="indent">{{ child.account_name }}</span></td>
+          <td>{{ child.opening_balance|intcomma }}</td>
+          <td>{{ child.as_of|date:"d/m/Y" }}</td>
+          <td>{{ child.account_number }}</td>
+          <td>{{ child.account_type }}</td>
+          <td>{{ child.detail_type }}</td>
+          <td>{{ child.description }}</td>
+          <td class="action-cell">
+            <div class="action-wrapper">
+              <a href="#" class="edit-link {% if not child.is_active %}disabled{% endif %}">Edit</a>
+              <div class="dropdown">
+                <i class='bx bx-chevron-down'></i>
+                <div class="dropdown-menu">
+                  {% if child.is_active %}
+                    <a href="{% url 'accounts:deactivate-account' child.id %}">Make inactive</a>
+                  {% else %}
+                    <a href="{% url 'accounts:activate-account' child.id %}">Activate</a>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+    {% endif %}
+  {% empty %}
+    <tr><td colspan="8">No accounts available.</td></tr>
+  {% endfor %}
+</tbody>
+
+</table>
+
+  <!-- Customize Modal -->
+  <div id="customizeModal">
+    <div class="modal-card">
+      <h4>Customize Columns</h4>
+      <div style="line-height: 1.9;">
+        <label><input type="checkbox" class="col-toggle" data-col="account_name"    checked> Account Name</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="opening_balance" checked> Opening Balance</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="as_of"           checked> Date</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="account_number"  checked> Account Number</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="account_type"    checked> Account Type</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="detail_type"     checked> Detail Type</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="description"     checked> Description</label><br>
+        <label><input type="checkbox" class="col-toggle" data-col="actions"         checked> Actions</label><br>
+      </div>
+      <div class="modal-actions">
+        <button id="closeModal" class="btn btn-outline">Close</button>
+        <button id="selectAll" class="btn btn-primary">Select all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Safely inject prefs JSON -->
+  {{ column_prefs|json_script:"col-prefs" }}
+
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  // ===== Elements
+  const modal     = document.getElementById("customizeModal");
+  const openBtn   = document.getElementById("customizeBtn");
+  const closeBtn  = document.getElementById("closeModal");
+  const selectAll = document.getElementById("selectAll");
+
+  // ===== Load prefs safely
+  let savedPrefs = {};
+  try {
+    savedPrefs = JSON.parse(document.getElementById("col-prefs").textContent) || {};
+  } catch (e) {
+    savedPrefs = {};
+  }
+
+  // ===== Helpers
+  function toggleColumn(colName, show) {
+    const header = document.querySelector(`th[data-col='${colName}']`);
+    if (!header) return;
+    const colIndex = header.cellIndex;
+    document.querySelectorAll(`thead th:nth-child(${colIndex+1}), tbody td:nth-child(${colIndex+1})`)
+      .forEach(cell => { cell.style.display = show ? "" : "none"; });
+  }
+
+  function applyAllPrefs() {
+    // set checkbox state and apply column visibility
+    document.querySelectorAll(".col-toggle").forEach(cb => {
+      const col = cb.dataset.col;
+      const value = (savedPrefs[col] !== undefined) ? savedPrefs[col] : true;
+      cb.checked = !!value;
+      toggleColumn(col, cb.checked);
+    });
+  }
+
+  function savePrefs() {
+    fetch("{% url 'accounts:save_column_prefs' %}", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": "{{ csrf_token }}",
+      },
+      body: JSON.stringify({ preferences: savedPrefs }),
+    }).catch(()=>{ /* ignore network hiccups silently */ });
+  }
+
+  // ===== Init
+  applyAllPrefs();
+
+  // ===== Events
+  openBtn.addEventListener("click", () => { modal.style.display = "flex"; });
+  closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+
+  // close on overlay click
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.style.display = "none";
+  });
+  // close on Escape
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") modal.style.display = "none";
+  });
+
+  // checkbox changes
+  document.querySelectorAll(".col-toggle").forEach(cb => {
+    cb.addEventListener("change", function() {
+      const col = this.dataset.col;
+      savedPrefs[col] = this.checked;
+      toggleColumn(col, this.checked);
+      savePrefs();
+    });
+  });
+
+  // select all
+  selectAll.addEventListener("click", () => {
+    document.querySelectorAll(".col-toggle").forEach(cb => {
+      cb.checked = true;
+      savedPrefs[cb.dataset.col] = true;
+      toggleColumn(cb.dataset.col, true);
+    });
+    savePrefs();
+  });
+});
+</script>
+
+{% include 'includes/footer.html' %}

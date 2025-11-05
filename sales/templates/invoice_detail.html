@@ -1,0 +1,114 @@
+{% load humanize %}
+{% load static %}
+
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<div class="container" style="max-width:1100px; margin-top: 5%; margin-left: 19%; background:#fff; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.06); padding:24px;">
+  
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <div>
+      <h2 style="margin:0;">Invoice #{{ inv.id|stringformat:"04d" }}</h2>
+      <div style="color:#666; margin-top:4px;">
+        {{ inv.date_created|date:"d/m/Y" }}{% if inv.due_date %} • Due {{ inv.due_date|date:"d/m/Y" }}{% endif %}
+      </div>
+      <div style="margin-top:8px;">
+        <span style="display:inline-block; background:#e8f5e9; color:#2e7d32; border-radius:999px; padding:4px 10px; font-weight:600;">
+          {{ status_text }}
+        </span>
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:13px; color:#666;">Customer</div>
+      <div style="font-weight:600;">{{ inv.customer.customer_name }}</div>
+      {% if inv.class_field %}<div style="color:#666;">Class: {{ inv.class_field.class_name }}</div>{% endif %}
+    </div>
+  </div>
+
+  <hr style="margin:16px 0;">
+
+  <!-- Amount chips -->
+  <div style="display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
+    <div style="background:#f6f8fa; border-radius:10px; padding:12px;">
+      <div style="color:#666; font-size:13px;">Total</div>
+      <div style="font-weight:700; font-size:20px;">{{ total_due|floatformat:2|intcomma }}</div>
+    </div>
+    <div style="background:#f6f8fa; border-radius:10px; padding:12px;">
+      <div style="color:#666; font-size:13px;">Paid</div>
+      <div style="font-weight:700; font-size:20px;">{{ total_paid|floatformat:2|intcomma }}</div>
+    </div>
+    <div style="background:#fff3e0; border:1px solid #ffe0b2; border-radius:10px; padding:12px;">
+      <div style="color:#a75a00; font-size:13px;">Balance</div>
+      <div style="font-weight:700; font-size:20px; color:#a75a00;">{{ balance|floatformat:2|intcomma }}</div>
+    </div>
+  </div>
+
+  <h4 style="margin-top:24px;">Line Items</h4>
+  <table class="table table-sm" style="width:100%; border-collapse:collapse;">
+    <thead>
+      <tr style="background:#f0f2f5;">
+        <th>Product/Service</th>
+        <th>Description</th>
+        <th style="text-align:right;">Qty</th>
+        <th style="text-align:right;">Rate</th>
+        <th style="text-align:right;">Amount</th>
+        <th style="text-align:right;">VAT</th>
+        <th style="text-align:right;">Discount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr>
+        <td>{{ it.product.name }}</td>
+        <td>{{ it.description }}</td>
+        <td style="text-align:right;">{{ it.qty|floatformat:2 }}</td>
+        <td style="text-align:right;">{{ it.unit_price|floatformat:2|intcomma }}</td>
+        <td style="text-align:right;">{{ it.amount|floatformat:2|intcomma }}</td>
+        <td style="text-align:right;">{{ it.vat|floatformat:2|intcomma }}</td>
+        <td style="text-align:right;">{{ it.discount_amount|floatformat:2|intcomma }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" style="color:#888;">No items.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h4 style="margin-top:24px;">Payment History</h4>
+  <table class="table table-sm" style="width:100%; border-collapse:collapse;">
+    <thead>
+      <tr style="background:#f0f2f5;">
+        <th>Date</th>
+        <th>Reference</th>
+        <th>Method</th>
+        <th>Deposit To</th>
+        <th style="text-align:right;">Amount Applied</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in payment_rows %}
+      <tr>
+        <td>{{ p.date|date:"d/m/Y" }}</td>
+        <td>Ref{{ p.ref|default:"—" }}</td>
+        <td>{{ p.method|default:"—" }}</td>
+        <td>{{ p.deposit_to|default:"—" }}</td>
+        <td style="text-align:right;">{{ p.amount|floatformat:2|intcomma }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5" style="color:#888;">No payments applied yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+    <a href="{% url 'sales:edit-invoice' inv.id %}" class="button" style="text-decoration:none;">
+      <span class="button_text">Edit</span>
+    </a>
+    <a href="{% url 'sales:receive-payment' %}?customer={{ inv.customer.id }}" class="button" style="text-decoration:none;">
+      <span class="button_text">Receive Payment</span>
+    </a>
+    <a href="{% url 'sales:invoice-print' inv.id %}" class="button" style="text-decoration:none;">
+  <span class="button_text">Print / PDF</span>
+</a>
+  </div>
+</div>
+{% include 'includes/footer.html' %}

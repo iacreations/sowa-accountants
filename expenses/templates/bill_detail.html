@@ -1,0 +1,186 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .page-wrap{background:#f4f6f8;padding:24px}
+  .bill-header{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08);padding:20px;margin:0 auto 18px;max-width:1200px}
+  .bill-title{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+  .bill-title h1{font-size:22px;margin:0;color:#222}
+  .pill{display:inline-flex;align-items:center;gap:8px;background:#e8f7ed;border:1px solid #39B54B;color:#167a2a;padding:6px 10px;border-radius:999px;font-weight:600}
+  .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:14px}
+  .meta .card{background:#fafafa;border:1px solid #eee;border-radius:8px;padding:12px}
+  .meta .label{font-size:12px;color:#666;margin-bottom:4px}
+  .meta .value{font-weight:600}
+
+  .section{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08);padding:16px;margin:0 auto 18px;max-width:1200px}
+  .section h3{margin:0 0 10px;color:#39B54B;font-size:16px}
+  .content-table{width:100%;border-collapse:collapse}
+  .content-table th, .content-table td{border:1px solid #e0e0e0;padding:10px;text-align:left}
+  .content-table th{background:#f9fafb;font-weight:600}
+  .totals{display:flex;justify-content:flex-end;margin-top:12px}
+  .totals .box{min-width:280px;border:1px solid #eee;border-radius:8px;padding:12px;background:#fafafa}
+  .rowflex{display:flex;justify-content:space-between;margin:6px 0}
+  .rowflex strong{font-weight:700}
+
+  .footer-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin:16px auto 0;max-width:1200px}
+  .btn{border:none;border-radius:6px;padding:10px 16px;cursor:pointer;font-weight:600}
+  .btn-green{background:#39B54B;color:#fff}
+  .btn-light{background:#f5f5f5;color:#333}
+  .dropdown{position:relative;display:inline-block}
+  .dropdown-menu{display:none;position:absolute;right:0;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.1);z-index:10;min-width:180px}
+  .dropdown-menu a, .dropdown-menu button{display:block;width:100%;padding:10px 12px;border:none;background:none;text-align:left;cursor:pointer}
+  .dropdown:hover .dropdown-menu{display:block}
+  .muted{color:#666}
+</style>
+
+<div class="page-wrap" style="width: 80%; margin-top: 5%; margin-left: 19.5%;">
+  <div class="bill-header">
+    <div class="bill-title">
+      <h1 style="color: #167a2a;">
+        Bill No: {{ bill.bill_no|default:"—" }}
+      </h1>
+      <span class="pill">
+        Status<i class='bx bx-file'></i> Open
+      </span>
+    </div>
+
+    <div class="meta">
+      <div class="card">
+        <div class="label">Supplier</div>
+        <div class="value">
+          {% firstof bill.supplier.company_name bill.supplier_name bill.mailing_address "—" %}
+        </div>
+      </div>
+      <div class="card">
+        <div class="label">Bill Date</div>
+        <div class="value">{{ bill.bill_date|date:"d/m/Y" }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Due Date</div>
+        <div class="value">{{ bill.due_date|date:"d/m/Y" }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Terms</div>
+        <div class="value">{{ bill.terms|default:"—" }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Location</div>
+        <div class="value">{{ bill.location|default:"—" }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Total</div>
+        <div class="value">UGX {{ bill.total_amount|floatformat:2|intcomma }}</div>
+      </div>
+    </div>
+  </div>
+
+  {% if bill.memo %}
+  <div class="section">
+    <h3>Memo</h3>
+    <p class="muted">{{ bill.memo }}</p>
+  </div>
+  {% endif %}
+
+  <div class="section">
+    <h3>Category Details</h3>
+    <table class="content-table">
+      <thead>
+        <tr style="color: #39B54B;">
+          <th>#</th>
+          <th>Category</th>
+          <th>Description</th>
+          <th>Billable</th>
+          <th>Customer / Project</th>
+          <th>Class</th>
+          <th class="text-end">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if bill.category_lines.all %}
+          {% for line in bill.category_lines.all %}
+          <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ line.category.account_name }}</td>
+            <td>{{ line.description|default:"—" }}</td>
+            <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
+            <td>{% firstof line.customer.customer_name "—" %}</td>
+            <td>{% firstof line.class_field.class_name "—" %}</td>
+            <td>UGX {{ line.amount|floatformat:2|intcomma }}</td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="7" class="muted">No category lines.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h3>Item Details</h3>
+    <table class="content-table">
+      <thead>
+        <tr style="color: #39B54B;">
+          <th>#</th>
+          <th>Product / Service</th>
+          <th>Description</th>
+          <th class="text-end">Qty</th>
+          <th class="text-end">Rate</th>
+          <th class="text-end">Amount</th>
+          <th>Billable</th>
+          <th>Customer / Project</th>
+          <th>Class</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if bill.item_lines.all %}
+          {% for line in bill.item_lines.all %}
+          <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{% firstof line.product.name "—" %}</td>
+            <td>{{ line.description|default:"—" }}</td>
+            <td>{{ line.qty|floatformat:2 }}</td>
+            <td>UGX {{ line.rate|floatformat:2|intcomma }}</td>
+            <td>UGX {{ line.amount|floatformat:2|intcomma }}</td>
+            <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
+            <td>{% firstof line.customer.customer_name "—" %}</td>
+            <td>{% firstof line.class_field.class_name "—" %}</td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="9" class="muted">No item lines.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <div class="totals">
+      <div class="box">
+        <div class="rowflex"><span>Subtotal</span><span>UGX {{ subtotal|floatformat:2|intcomma }}</span></div>
+        {# If you add tax later, show it here #}
+        <div class="rowflex"><strong>Total</strong><strong>UGX {{ bill.total_amount|floatformat:2|intcomma }}</strong></div>
+      </div>
+    </div>
+  </div>
+
+  {% if bill.attachments %}
+  <div class="section">
+    <h3>Attachments</h3>
+    <p>
+      <a href="{{ bill.attachments.url }}" target="_blank" style="color:#39B54B;">Download attachment</a>
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="footer-actions">
+    <div>
+      <a class="btn button btn-green" href="{% url 'expenses:bills-list' %}">Back to Bills</a>
+    </div>
+    <div class="dropdown">
+      <button class="btn btn-green">Actions ▼</button>
+      <div class="dropdown-menu">
+        <a href="{% url 'expenses:bill-edit' bill.id %}">Edit Bill</a>
+        <a href="#" onclick="window.print()">Print</a>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,103 @@
+{# templates/journal_entries.html #}
+{% load humanize %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --ink:#0f172a;
+    --muted:#64748b;
+    --line:#e5efe8;
+    --thead:#f3fff6;
+    --chip:#e8f5ec;
+  }
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px;font-family:"Poppins",system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  h2{color:var(--brand);margin:.2rem 0 1rem;font-weight:800;letter-spacing:.2px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 22px rgba(0,0,0,.05);overflow:hidden}
+
+  table.journal{width:100%;border-collapse:separate;border-spacing:0}
+  .journal thead th{
+    background:linear-gradient(0deg,var(--thead),#fff);
+    color:#14532d;
+    font-size:.78rem;
+    text-transform:uppercase;
+    letter-spacing:.28px;
+    padding:12px 14px;
+    border-bottom:1px solid var(--line);
+    text-align:left;
+  }
+  .journal td{
+    padding:10px 14px;
+    border-bottom:1px solid var(--line);
+    vertical-align:top;
+    color:var(--ink);
+  }
+  .num{text-align:right; white-space:nowrap}
+  .rowspan{
+    background:#fcfffd;
+    color:#0f5132;
+    font-weight:600;
+  }
+  .chip{
+    display:inline-block;
+    background:var(--chip);
+    color:#14532d;
+    padding:2px 8px;
+    border-radius:999px;
+    font-weight:700;
+    font-size:.75rem;
+  }
+  tfoot td{
+    background:#f7fff9;
+    font-weight:800;
+    border-top:2px solid var(--line);
+  }
+</style>
+
+<div class="wrap">
+     <a href="{% url 'accounts:accounts' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back to Accounts </a>
+  <h2 style="margin-top: 5%; text-align: center;">Journal Entries</h2>
+
+  <div class="card">
+    <table class="journal">
+      <thead>
+        <tr>
+          <th style="width:10rem;">Date</th>
+          <th>Description</th>
+          <th style="width:8rem;">ID no.</th>
+          <th>Account</th>
+          <th class="num" style="width:9rem;">Debit</th>
+          <th class="num" style="width:9rem;">Credit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+          {% for line in entry.lines.all %}
+            <tr>
+              {% if forloop.first %}
+                <td class="rowspan" rowspan="{{ entry.lines.count }}">{{ entry.date|date:"M. j, Y" }}</td>
+                <td class="rowspan" rowspan="{{ entry.lines.count }}">{{ entry.description|default:"—" }}</td>
+                <td class="rowspan" rowspan="{{ entry.lines.count }}">
+                  {% if entry.invoice %}<span class="chip">INV - {{ entry.invoice.id|stringformat:"04d" }}</span>{% else %} {% endif %}
+                </td>
+              {% endif %}
+              <td>{{ line.account.account_name }}</td>
+              <td class="num">{{ line.debit|floatformat:2|intcomma }}</td>
+              <td class="num">{{ line.credit|floatformat:2|intcomma }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" style="color:#7a8691; padding:16px;">No journal entries found.</td></tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+
+      <tfoot>
+        <tr>
+          <td colspan="3"></td>
+          <td>Total</td>
+          <td class="num">{{ grand_debit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ grand_credit|floatformat:2|intcomma }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>

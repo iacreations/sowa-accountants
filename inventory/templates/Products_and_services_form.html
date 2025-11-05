@@ -1,0 +1,470 @@
+{% load static %}
+{% load humanize %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% if edit_mode %}Edit{% else %}New{% endif %} Product/Service</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}"/>
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}"/>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+    body { background: #f4f6f8; padding: 30px; }
+    .container { background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 90%; margin: auto; }
+    h2.title { text-align: center; color: #39B54B; margin-bottom: 25px; font-size: 28px; font-weight: 700; }
+    .section-wrapper { background: #f9f9f9; padding: 20px; border-radius: 10px; margin-bottom: 25px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+    .form-group { display: flex; flex-direction: column; }
+    .form-group label { font-weight: 500; margin-bottom: 6px; }
+    .form-group input, .form-group select, .form-group textarea { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; }
+    .form-group input[type="checkbox"] { width: auto; margin-top: 10px; }
+    .collapsible { cursor: pointer; padding: 10px; background-color: #f1f1f1; border: none; border-radius: 6px; font-weight: 600; margin-bottom: 10px; width: 100%; text-align: left; }
+    .content { display: none; }
+    .content.active { display: block; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background-color: #fafafa; }
+    .btn-light-green { background-color: #d2f4dc; color: #2a8b3f; padding: 6px 14px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; }
+    .btn-light-green:hover { background-color: #c3eecf; }
+    .delete-btn { color: #d11a2a; background: none; border: none; font-size: 18px; cursor: pointer; }
+    .footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-top: 30px; border-top: 1px solid #e0e0e0; padding-top: 20px; gap: 10px; }
+    .btn { padding: 10px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; }
+    .btn-cancel { background: #f5f5f5; color: #333; }
+    .dropdown { position: relative; display: inline-block; }
+    .dropdown .btn-green { background: #39B54B; color: #fff; }
+    .dropdown-menu { display: none; position: absolute; right: 0; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 100; width: 160px; }
+    .dropdown-menu button { width: 100%; padding: 10px 16px; background: none; border: none; text-align: left; cursor: pointer; white-space: nowrap; }
+    .dropdown:hover .dropdown-menu { display: block; }
+
+    .tooltip-container { position: relative; display: inline-block; }
+    .tooltip-container .tooltip-text {
+      visibility: hidden; width: 200px; background-color: #39B54B; color: #fff; text-align: center;
+      padding: 6px; border-radius: 6px; position: absolute; z-index: 1; bottom: 125%; left: 50%;
+      transform: translateX(-50%); opacity: 0; transition: opacity 0.3s;
+    }
+    .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
+
+    @media only screen and (max-width: 600px) {
+      .search_bar{ display: none; }
+      .logo_item{ margin-left: 15%; position: fixed; }
+      #iconDropdown { display: block; background-color: rgb(7, 142, 36); border-radius: 20px; }
+      #iconDropdown #btn{ float: left; color: white; }
+      #dropdownMenu{ background-color: rgb(7, 142, 36); color: white; float: left; position: bottom; }
+      #action{ width: 50%; }
+      #sidebar{ margin-top: 30%; padding-top: 50%; width: 4%; margin-left: 0; }
+    }
+    #btn:hover{ color: #fff; }
+    @media only screen and (min-width: 1024px) and (max-width: 1600px) {
+      #expand { top: 100%; margin-top: 120%; padding: 5%; }
+      .menu_items{ margin-top: 5%; }
+      #home{ margin-top: -10%; }
+      .container{ width: 65%; margin-top: 5%; margin-left: 25%; }
+    }
+  </style>
+</head>
+<body>
+  <!-- navbar -->
+  <nav class="navbar w3-row-padding">
+    <div class="logo_item">
+      <i class="bx bx-menu" id="sidebarOpen"></i>
+      <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt="">YoAccountant
+    </div>
+
+    <div class="search_bar">
+      <input type="text" placeholder="Search" />
+    </div>
+
+    <div class="dropdown" id="iconDropdown">
+      <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+        <i class='bx bx-menu'></i>
+      </button>
+      <div class="dropdown-menu" id="dropdownMenu">
+        <i class="bi bi-grid"></i>
+        <i class='bx bx-sun' id="darkLight"></i>
+        <i class='bx bx-cog'></i>
+        <i class='bx bx-bell'></i>
+        <i class='bx bx-user-circle'></i>
+        <i class='bx bxs-down-arrow'></i>
+      </div>
+    </div>
+
+    <div class="navbar_content" id="icons">
+      <i class="bi bi-grid"></i>
+      <i class='bx bx-sun' id="darkLight"></i>
+      <i class='bx bx-cog'></i>
+      <i class='bx bx-bell'></i>
+      <i class='bx bx-user-circle'></i>
+      <i class='bx bxs-down-arrow'></i>
+    </div>
+  </nav>
+
+  {% include 'includes/sidebar.html' %}
+  <div>
+  <div class="container">
+    <h2 class="title">{% if edit_mode %}Edit{% else %}New{% endif %} Product/Service</h2>
+
+    <div class="section-wrapper">
+      <form method="POST"
+            action="{% if edit_mode %}{% url 'inventory:product-edit' product.id %}{% else %}{% url 'inventory:add-products' %}{% endif %}">
+        {% csrf_token %}
+
+        <div class="form-grid">
+          <!-- Type -->
+          <div class="form-group">
+            <label>Type</label>
+            <select id="typeSelect" name="type" onchange="handleTypeChange()">
+              <option value="Non-Inventory" {% if edit_mode and product.type == "Non-Inventory" %}selected{% endif %}>Non-Inventory</option>
+              <option value="Inventory" {% if edit_mode and product.type == "Inventory" %}selected{% endif %}>Inventory</option>
+              <option value="Service" {% if edit_mode and product.type == "Service" %}selected{% endif %}>Service</option>
+              <option value="Bundle" {% if edit_mode and product.type == "Bundle" %}selected{% endif %}>Bundle</option>
+            </select>
+          </div>
+
+          <!-- Name -->
+          <div class="form-group">
+            <label>Name</label>
+            <input name="name" type="text" value="{% if edit_mode %}{{ product.name }}{% endif %}">
+          </div>
+
+          <!-- SKU -->
+          <div class="form-group">
+            <label>SKU</label>
+            <input name="sku" type="text" value="{% if edit_mode %}{{ product.sku }}{% endif %}">
+          </div>
+
+          <!-- Category -->
+          <div class="form-group">
+            <label>Category</label>
+            <div class="d-flex">
+              <select name="category" id="categorySelect" class="form-control" required>
+                <option value="">-- Select Category --</option>
+                {% for category in categories %}
+                  <option value="{{ category.id }}" {% if edit_mode and product.category_id == category.id %}selected{% endif %}>{{ category.category_type }}</option>
+                {% endfor %}
+              </select>
+              <button type="button" class="btn btn-sm button ms-2" onclick="showAddCategory()">+ Add</button>
+            </div>
+          </div>
+
+          <!-- Class -->
+          <div class="form-group">
+            <label>Class</label>
+            <div class="d-flex">
+              <select name="class_field" id="classSelect" class="form-control" required>
+                <option value="">-- Select Class --</option>
+                {% for class in classes %}
+                  <option value="{{ class.id }}" {% if edit_mode and product.class_field_id == class.id %}selected{% endif %}>{{ class.class_name }}</option>
+                {% endfor %}
+              </select>
+              <button type="button" class="btn btn-sm button ms-2" onclick="showAddClass()">+ Add</button>
+            </div>
+          </div>
+
+          <!-- Taxable -->
+          <div class="form-group mx-5">
+            <label>Taxable
+              <input type="checkbox" class="mx-3" name="taxable" {% if edit_mode and product.taxable %}checked{% endif %}>
+            </label>
+          </div>
+
+          <!-- Sell to customers -->
+          <div class="form-group">
+            <label for="sellCheckbox">I sell this product/service to my customers
+              <input name="sell_checkbox" type="checkbox" id="sellCheckbox" class="mx-3" onchange="toggleSellFields()" {% if edit_mode and product.sell_checkbox %}checked{% endif %}>
+            </label>
+          </div>
+
+          <!-- Sell fields -->
+          <div id="sellFields" style="display:none;">
+            <div class="form-grid">
+              <div></div><div></div>
+              <div class="form-group">
+                <label>Income Account</label>
+                <select name="income_account">
+                  <option value="">-- Select --</option>
+                  {% for acc in income_accounts %}
+                    <option value="{{ acc.id }}" {% if edit_mode and product.income_account_id == acc.id %}selected{% endif %}>{{ acc.account_name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Description</label>
+                <textarea name="sales_description" rows="2">{% if edit_mode %}{{ product.sales_description }}{% endif %}</textarea>
+              </div>
+              <div class="form-group">
+                <label>Sales Price</label>
+                <input name="sales_price" type="number" step="0.01" value="{% if edit_mode %}{{ product.sales_price }}{% endif %}">
+              </div>
+            </div>
+          </div>
+
+          <!-- Purchase from supplier -->
+          <div class="form-group">
+            <label for="purchaseCheckbox">I purchase this product/service from a supplier
+              <input name="purchase_checkbox" type="checkbox" id="purchaseCheckbox" class="mx-1" onchange="togglePurchaseFields()" {% if edit_mode and product.purchase_checkbox %}checked{% endif %}>
+            </label>
+          </div>
+
+          <!-- Purchase fields -->
+          <div id="purchaseFields" style="display:none;">
+            <div class="form-grid">
+              <div></div>
+
+              <div class="form-group">
+                <label>Supplier</label>
+                <select class="form-control" name="supplier" required>
+                  <option value="">-- Select Supplier --</option>
+                  {% for supplier in suppliers %}
+                    <option value="{{ supplier.id }}" {% if edit_mode and product.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.company_name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Purchase Price</label>
+                <input name="purchase" type="number" step="0.01" value="{% if edit_mode %}{{ product.purchase_price }}{% endif %}">
+              </div>
+
+              <div class="form-group">
+                <label>Quantity on hand</label>
+                <input name="quantity" type="text" value="{% if edit_mode %}{{ product.quantity }}{% endif %}">
+              </div>
+
+              <div class="form-group tooltip-container">
+                <label>Purchase date</label>
+                <input type="date" name="purchase_date" value="{% if edit_mode and product.purchase_date %}{{ product.purchase_date|date:'Y-m-d' }}{% endif %}"/>
+                <span class="tooltip-text">We shall start to track your inventory from this date onwards.</span>
+              </div>
+
+              <div class="form-group">
+                <label>Description</label>
+                <textarea name="purchase_description" rows="2">{% if edit_mode %}{{ product.purchase_description }}{% endif %}</textarea>
+              </div>
+
+              <div class="form-group">
+                <label>Expense Account</label>
+                <select name="expense_account">
+                  <option value="">-- Select --</option>
+                  {% for account in expense_accounts %}
+                    <option value="{{ account.id }}" {% if edit_mode and product.expense_account_id == account.id %}selected{% endif %}>{{ account.account_name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /.form-grid -->
+
+        <!-- Bundle items -->
+        <div id="bundleExtras" class="section-wrapper" style="display: none;">
+          <div class="form-group">
+            <label>Bundle items</label>
+          </div>
+
+          <div id="bundleTableWrapper" style="margin-top: 15px;">
+            <table id="bundle-table">
+              <thead>
+                <tr>
+                  <th>Product/Service</th>
+                  <th>Qty</th>
+                  <th>Operations</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% if edit_mode and product.is_bundle %}
+                  {% for bi in product.bundleitem_set.all %}
+                    <tr>
+                      <td>
+                        <select class="form-control product-select" name="bundle_product_id[]">
+                          <option value="">-- Select Product/Service --</option>
+                          {% for prod in products %}
+                            <option value="{{ prod.id }}" {% if bi.product_id == prod.id %}selected{% endif %}>{{ prod.name }}</option>
+                          {% endfor %}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="number" class="form-control" name="bundle_product_qty[]" min="1" value="{{ bi.quantity|default:1 }}" />
+                      </td>
+                      <td>
+                        <button type="button" class="delete-btn bx bx-trash" onclick="deleteRow(this)"></button>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td>
+                      <select class="form-control product-select" name="bundle_product_id[]">
+                        <option value="">-- Select Product/Service --</option>
+                        {% for prod in products %}
+                          <option value="{{ prod.id }}">{{ prod.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td>
+                      <input type="number" class="form-control" name="bundle_product_qty[]" min="1" value="1" />
+                    </td>
+                    <td>
+                      <button type="button" class="delete-btn bx bx-trash" onclick="deleteRow(this)"></button>
+                    </td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+            <button type="button" class="btn-light-green" onclick="addBundleRow()">+ Add Line</button>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+          <a href="{% url 'sales:sales' %}" class="text-decoration-none" id="btn">
+            <button type="button" class="btn button">Cancel</button>
+          </a>
+
+          <div class="dropdown">
+            <button type="button" class="btn btn-green">Save ▼</button>
+            <div class="dropdown-menu">
+              <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
+              <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
+              <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+            </div>
+          </div>
+        </div>
+
+      </form>
+    </div>
+  </div>
+
+  <script src=" {% static 'sowaf/styles/script.js' %} "></script>
+  <script>
+    function toggleSection(btn) {
+      const content = btn.nextElementSibling;
+      content.classList.toggle("active");
+    }
+
+    // Show bundle section when type = Bundle
+    function handleTypeChange() {
+      const type = document.getElementById("typeSelect").value;
+      document.getElementById("bundleExtras").style.display = (type === "Bundle") ? "block" : "none";
+    }
+
+    // Add a bundle row with Product dropdown + qty
+    function addBundleRow() {
+      const table = document.querySelector("#bundle-table tbody");
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>
+          <select class="form-control product-select" name="bundle_product_id[]">
+            <option value="">-- Select Product/Service --</option>
+            {% for prod in products %}
+              <option value="{{ prod.id }}">{{ prod.name }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <input type="number" class="form-control" name="bundle_product_qty[]" min="1" value="1" />
+        </td>
+        <td>
+          <button type="button" class="delete-btn bx bx-trash" onclick="deleteRow(this)"></button>
+        </td>
+      `;
+      table.appendChild(row);
+    }
+
+    // Delete row (leave at least one)
+    function deleteRow(button) {
+      const table = document.querySelector("#bundle-table tbody");
+      if (table.rows.length > 1) {
+        button.closest("tr").remove();
+      } else {
+        alert("At least one bundle item is required!");
+      }
+    }
+
+    function toggleSellFields() {
+      const sellChecked = document.getElementById("sellCheckbox").checked;
+      document.getElementById("sellFields").style.display = sellChecked ? "flex" : "none";
+    }
+
+    function togglePurchaseFields() {
+      const purchaseChecked = document.getElementById("purchaseCheckbox").checked;
+      document.getElementById("purchaseFields").style.display = purchaseChecked ? "block" : "none";
+    }
+
+    // initial
+    window.onload = function() {
+      toggleSellFields();
+      togglePurchaseFields();
+      handleTypeChange(); // shows bundle section on load if editing a Bundle
+    };
+
+    function showAddCategory() {
+      document.getElementById("addCategoryBox").style.display = "block";
+    }
+    function saveNewCategory() {
+      const name = document.getElementById("newCategoryName").value;
+      if (!name) return alert("Enter category name");
+
+      fetch("{% url 'inventory:add_category_ajax' %}", {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": "{{ csrf_token }}",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "name=" + encodeURIComponent(name)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          const select = document.getElementById("categorySelect");
+          const option = document.createElement("option");
+          option.value = data.id;
+          option.textContent = data.name;
+          option.selected = true;
+          select.appendChild(option);
+          document.getElementById("newCategoryName").value = "";
+          document.getElementById("addCategoryBox").style.display = "none";
+        } else {
+          alert(data.error);
+        }
+      });
+    }
+
+    function showAddClass() {
+      document.getElementById("addClassBox").style.display = "block";
+    }
+    function saveNewClass() {
+      const name = document.getElementById("newClassName").value;
+      if (!name) return alert("Enter class name");
+
+      fetch("{% url 'inventory:add_class_ajax' %}", {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": "{{ csrf_token }}",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "name=" + encodeURIComponent(name)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          const select = document.getElementById("classSelect");
+          const option = document.createElement("option");
+          option.value = data.id;
+          option.textContent = data.name;
+          option.selected = true;
+          select.appendChild(option);
+          document.getElementById("newClassName").value = "";
+          document.getElementById("addClassBox").style.display = "none";
+        } else {
+          alert(data.error);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
