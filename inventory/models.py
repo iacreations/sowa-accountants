@@ -40,8 +40,6 @@ class Product(models.Model):
     quantity = models.IntegerField(null=True, blank=True)
     purchase_date = models.DateField(null=True, blank=True)
     taxable = models.BooleanField(default=False)
-    income_account = models.CharField(max_length=200,blank=True, null=True)
-    expense_account = models.CharField(max_length=200,blank=True, null=True)
     supplier = models.ForeignKey(Newsupplier, on_delete=models.CASCADE)
     purchase_checkbox = models.BooleanField(default=False)
     is_bundle = models.BooleanField(default=False)
@@ -51,13 +49,13 @@ class Product(models.Model):
         Account,
         on_delete=models.CASCADE,
         limit_choices_to={'account_type': 'Income'},  # only Income accounts can be picked
-        related_name="income_products"
+        related_name="income_products",blank=True, null=True
     )
     expense_account = models.ForeignKey(
         Account,
         on_delete=models.CASCADE,
         limit_choices_to={'account_type': 'Cost of Sales'},# only cost of sales accounts can be picked
-        related_name="expense_products"
+        related_name="expense_products",blank=True, null=True
     )
     def __str__(self):
         return self.name

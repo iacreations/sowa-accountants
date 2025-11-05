@@ -1,6 +1,8 @@
 {% load static %}
 {% load humanize %}
 
+  {% include 'includes/navbar.html' %}
+  {% include 'includes/sidebar.html' %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -68,43 +70,7 @@
   </style>
 </head>
 <body>
-  <!-- navbar -->
-  <nav class="navbar w3-row-padding">
-    <div class="logo_item">
-      <i class="bx bx-menu" id="sidebarOpen"></i>
-      <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt="">YoAccountant
-    </div>
-
-    <div class="search_bar">
-      <input type="text" placeholder="Search" />
-    </div>
-
-    <div class="dropdown" id="iconDropdown">
-      <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
-        <i class='bx bx-menu'></i>
-      </button>
-      <div class="dropdown-menu" id="dropdownMenu">
-        <i class="bi bi-grid"></i>
-        <i class='bx bx-sun' id="darkLight"></i>
-        <i class='bx bx-cog'></i>
-        <i class='bx bx-bell'></i>
-        <i class='bx bx-user-circle'></i>
-        <i class='bx bxs-down-arrow'></i>
-      </div>
-    </div>
-
-    <div class="navbar_content" id="icons">
-      <i class="bi bi-grid"></i>
-      <i class='bx bx-sun' id="darkLight"></i>
-      <i class='bx bx-cog'></i>
-      <i class='bx bx-bell'></i>
-      <i class='bx bx-user-circle'></i>
-      <i class='bx bxs-down-arrow'></i>
-    </div>
-  </nav>
-
-  {% include 'includes/sidebar.html' %}
-  <div>
+  <a href="" class="btn button">Back to Product List</a>
   <div class="container">
     <h2 class="title">{% if edit_mode %}Edit{% else %}New{% endif %} Product/Service</h2>
 
