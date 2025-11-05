@@ -46,9 +46,7 @@ urlpatterns = [
     path('suppliers/import/import-suppliers', views.import_suppliers, name='import-suppliers'),
     path('templates/suppliers/', views.download_suppliers_template, name='import_suppliers_template'),
     
- 
-        # expenses url
-    path('expenses/', views.expenses, name='expenses'),
+
     # tasks url
     path('tasks/', views.tasks, name='tasks'),
     # taxes url

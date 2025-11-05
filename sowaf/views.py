@@ -491,6 +491,8 @@ def add_customer(request):
         new_customer.save()
         # adding save actions
         save_action = request.POST.get('save_action')
+        if save_action == 'save':
+            return redirect('customers')
         if save_action == 'save&new':
             return redirect('add-customer')
         elif save_action == 'save&close':
@@ -977,6 +979,8 @@ def add_employees(request):
         # adding button save actions
         save_action = request.POST.get('save_action')
         if save_action == 'save&new':
+            return redirect('employees')
+        if save_action == 'save&new':
             return redirect('add-employee')
         elif save_action == 'save&close':
             return redirect('sowaf:employees')
@@ -1275,6 +1279,8 @@ def add_supplier(request):
          # adding save actions
         save_action = request.POST.get('save_action')
         if save_action == 'save&new':
+            return redirect('suppliers')
+        if save_action == 'save&new':
             return redirect('add-suppliers')
         elif save_action == 'save&close':
             return redirect('sowaf:suppliers')
@@ -1472,11 +1478,6 @@ def taxes(request):
 
     return render(request, 'Taxes.html', {})
 
-
-# expenses view
-def expenses(request):
-
-    return render(request, 'Expenses.html', {})
 
 # millecious view
 def miscellaneous(request):
