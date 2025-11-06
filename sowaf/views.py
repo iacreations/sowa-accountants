@@ -445,9 +445,29 @@ def import_assets(request):
 
 # customer view
 def customers(request):
+    q = (request.GET.get("q") or "").strip()
     customers = Newcustomer.objects.all()
+    if q:
+        customers = customers.filter(
+            Q(customer_name__icontains=q) |
+            Q(company_name__icontains=q)
+        )
+    return render(request, "Customers.html", {"customers": customers, "q": q})
 
-    return render(request, 'Customers.html', {'customers':customers})
+# making a customer active and inactive
+def make_inactive_customer(request, pk):
+    customer = get_object_or_404(Newcustomer, pk=pk)
+    customer.is_active = False
+    messages.success(request, f"{customer.customer_name} has been marked as inactive.")
+    customer.save()
+    return redirect('sowaf:customers')
+# reactivating
+def make_active_customer(request, pk):
+    customer = get_object_or_404(Newcustomer, pk=pk)
+    customer.is_active = True
+    customer.save()
+    messages.success(request, f"{customer.customer_name} has been reactivated.")
+    return redirect('sowaf:customers')
 
 # customer form view
 
@@ -484,10 +504,9 @@ def add_customer(request):
         province =request.POST.get('province')
         postal_code =request.POST.get('postalcode')
         country =request.POST.get('country')
-        actions =request.POST.get('actions')
         notes =request.POST.get('notes')
         attachments =request.FILES.get('attachments')
-        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,opening_balance=opening_balance,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,actions=actions,notes=notes,attachments=attachments)
+        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,opening_balance=opening_balance,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,notes=notes,attachments=attachments)
         new_customer.save()
         # adding save actions
         save_action = request.POST.get('save_action')
@@ -525,7 +544,6 @@ def edit_customer(request, pk):
         customer.province = request.POST.get('province',customer.province)
         customer.postal_code = request.POST.get('postalcode',customer.postal_code)
         customer.country = request.POST.get('country',customer.country)
-        customer.actions = request.POST.get('actions',customer.actions)
         customer.notes = request.POST.get('notes',customer.notes)
 
         logo = request.FILES.get('logo')
@@ -549,11 +567,6 @@ def edit_customer(request, pk):
 
     return render(request, 'customers_form.html', {'customer': customer})
 
-# Delete view
-def delete_customer(request, pk):
-    customer = get_object_or_404(Newcustomer, pk=pk)
-    customer.delete()
-    return redirect('sowaf:customers')
 # importing a customer sheet
 # template for the download
 def download_customers_template(request):
@@ -562,7 +575,7 @@ def download_customers_template(request):
     ws.title = "Customer Template"
 
     headers = [
-        'name', 'company', 'email', 'phone', 'mobile', 'website', 'tin', 'balance', 'date_str', 'street1', 'street2', 'city', 'province', 'postal_code', 'country', 'actions', 'notes', 'logo'
+        'name', 'company', 'email', 'phone', 'mobile', 'website', 'tin', 'balance', 'date_str', 'street1', 'street2', 'city', 'province', 'postal_code', 'country', 'notes', 'logo'
     ]
     ws.append(headers)
 
@@ -603,7 +616,6 @@ def import_customers(request):
                         province=province,
                         postal_code=postal_code,
                         country=country,
-                        actions=actions,
                         notes=notes,
                     )
                    if logo:
@@ -637,7 +649,6 @@ def import_customers(request):
                         province=province,
                         postal_code=postal,
                         country=country,
-                        actions=actions,
                         notes=notes,
                     )
                     if logo:

@@ -39,6 +39,19 @@
     margin-left:70%;
   }
 }
+/* dropdown code  */
+/* Minimal, scoped dropdown styles */
+.dd { position: relative; display: inline-block; }
+.dd-toggle { background: transparent; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.dd-menu {
+  display: none; position: absolute; right: 0; top: 100%;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+  min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 10;
+}
+.dd-menu a { display: block; padding: 10px 12px; text-decoration: none; color: inherit; }
+.dd-menu a:hover { background: #f2f2f2; }
+.dd.open .dd-menu { display: block; }
+tr.inactive { opacity: 0.55; }
 /* Laptops & small desktops */
 @media only screen and (min-width: 1024px) and (max-width: 1600px) {
 #main{
@@ -48,10 +61,10 @@
 </style>
 {% include 'includes/sidebar.html' %}
     <div class="action" id="action">
-      <h1>CUSTOMER</h1>
-      <div class="search_bar" id="search">
-        <input type="text" placeholder="Search customers" />
-      </div>
+      <h3 style="color: #39B54B; font-weight: 600;">CUSTOMER</h3>
+      <form class="search_bar" id="search" method="get" action="{% url 'sowaf:customers' %}" style="width: 20%;">
+  <input type="text" name="q" placeholder="Search customers" value="{{ q|default:'' }}">
+</form>
 
       <a href="{% url 'sowaf:add-customer' %}" style="text-decoration: none;">
          <button class="button">
@@ -87,61 +100,91 @@
             <i class='bx bxs-customize' ></i>
           </span>
         </button>
-          <span>
+          <!-- <span>
             <i class='bx bx-printer'></i>
             <i class='bx bx-customize'></i>
             <i class='bx bx-cog' ></i>
-          </span>
+          </span> -->
     </div>
-    <div class="main_body" id="main">
+    <div class="main_body" id="main" style="margin-top: 12%;">
       <table class="content-table">
-        <thead>
-          <tr>
-            <th>PROFILE ICON</th>
-            <th>NAME</th>
-            <th>COMPANY NAME</th>
-            <th>OPEN BALANCE</th>
-            <th>OPERATIONS</th>
-            <th>ACTIONS <i class='bx bxs-down-arrow' ></i></th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for customer in customers %}
-          <tr>
-            
-            <td>
-              {%if customer.logo %}
-              <img src=" {{ customer.logo.url }}" alt="picture" style="width: 40px; height: 40px; border-radius: 50%;">
-              {% else %}
-              <i class='bx bx-user-circle'></i>
-              {% endif %}
-              </td>
-            <td>{{customer.customer_name}}</td>
-            <td>{{customer.company_name}}</td>
-            <td>{{customer.opening_balance}}</td>
-            <td>
-              <a href="{% url 'sowaf:edit-customer' customer.id %}" title="Edit" style="color:green;">
-              <i class='bx bxs-edit'></i> 
-                </a>
-                <a href="{% url 'sowaf:delete-customer' customer.id %}" title="Delete" onclick="return confirm('Are you sure you want to delete this customer?');">
-               <i class='bx bxs-trash' style="color:green; margin-left: 10px;">
-
-    </i>
-  </a>
-            </td>
-            <td><a>{{customer.actions}}</a></td>
-          </tr>   
-          {% empty %}    
-                <tr>
-      <td colspan="6">No customers available.</td>
+  <thead>
+    <tr>
+      <th>PROFILE ICON</th>
+      <th>NAME</th>
+      <th>COMPANY NAME</th>
+      <th>OPEN BALANCE</th>
+      <th>ACTIONS <i class='bx bxs-down-arrow'></i></th>
     </tr>
-         {% endfor %}
-        </tbody>
-      </table>
+  </thead>
+  <tbody>
+{% for customer in customers %}
+<tr class="{% if not customer.is_active %}inactive{% endif %}">
+  <td>
+    {% if customer.logo %}
+      <img src="{{ customer.logo.url }}" alt="picture" style="width:40px;height:40px;border-radius:50%;">
+    {% else %}
+      <i class='bx bx-user-circle'></i>
+    {% endif %}
+  </td>
+
+  <td>{{ customer.customer_name }}</td>
+  <td>{{ customer.company_name }}</td>
+  <td>{{ customer.opening_balance }}</td>
+
+  <!-- Actions dropdown -->
+  <td>
+    <div class="dd">
+      <button type="button" class="dd-toggle">
+          <a href="{% url 'sowaf:edit-customer' customer.id %}" style="color: #39B54B;">Edit</a> <i class='bx bxs-down-arrow' style="color: #39B54B;"></i>
+      </button>
+
+      {% if customer.is_active %}
+        <div class="dd-menu">
+          <a href="">Create task</a>
+          <a href="">Create invoice</a>
+        <a href="">Create sales receipt</a>
+        <a href="">Create charge</a>
+        <a href="">Create time activity</a>
+          <a href="{% url 'sowaf:make-inactive' customer.id %}">Make inactive</a>
+        </div>
+      {% else %}
+        <div class="dd-menu">
+          <a href="{% url 'sowaf:make-active' customer.id %}">Make active</a>
+        </div>
+      {% endif %}
+    </div>
+  </td>
+</tr>
+{% empty %}
+<tr>
+  <td colspan="5">No customers available.</td>
+</tr>
+{% endfor %}
+
+</tbody>
+</table>
+
       <a href="{% url 'sowaf:import_customers_template' %}" style="text-decoration: none; float:right;" id="template">
         <button class="button">
           <span class="button_text">Template</span>
         </button>
       </a>
     </div>
+    <script>
+document.addEventListener('click', function (e) {
+  // Close any open dropdowns when clicking outside
+  document.querySelectorAll('.dd.open').forEach(dd => {
+    if (!dd.contains(e.target)) dd.classList.remove('open');
+  });
+
+  // Toggle the clicked one
+  const toggle = e.target.closest('.dd-toggle');
+  if (toggle) {
+    const dd = toggle.closest('.dd');
+    dd.classList.toggle('open');
+  }
+});
+</script>
+
 {% include 'includes/footer.html' %}

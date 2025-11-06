@@ -18,9 +18,12 @@ urlpatterns = [
     path('customers/', views.customers, name='customers'),
     path('customers/add/', views.add_customer, name='add-customer'),
     path('customers/edit/<str:pk>/', views.edit_customer, name='edit-customer'),
-    path('customers/delete/<str:pk>/', views.delete_customer, name='delete-customer'),
     path('customers/import/import-customers', views.import_customers, name='import-customers'),
     path('templates/customers/', views.download_customers_template, name='import_customers_template'),
+    path("customers/<int:pk>/make-inactive/", views.make_inactive_customer, name="make-inactive"),
+    path("customers/<int:pk>/make-active/", views.make_active_customer, name="make-active"),
+
+
     
     # clents urls
     path('clients/', views.clients, name='clients'),

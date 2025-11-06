@@ -227,27 +227,7 @@ small{ color:var(--muted); }
           </div>
         </div>
       </div>
-{% comment %} this is the actions column {% endcomment %}
-  <div class="section">
-        <div class="collapsible-header">Actions</div>
-        <div class="collapsible-content form-row">
-          <div class="field"><label for='actions'>Actions</label>
-            <select name='actions'>
-              <option value="actions">--- record an action to be done ---</option>
-              <option value="create invoice" {% if customer.actions == "create invoice" %}selected{% endif %}>create invoice</option>
-              <option value="create a sales receipt" {% if customer.actions == "create a sales receipt" %}selected{% endif %}>create a sales receipt</option>
-
-              <option value="create a charge" {% if customer.actions == "create a charge" %}selected{% endif %}>create a charge</option>
-
-              <option value="create a time activity" {% if customer.actions == "create a time activity" %}selected{% endif %}>create a time activity</option>
-
-              <option value="create a task" {% if customer.actions == "create a task" %}selected{% endif %}>create a task</option>
-
-              <option value="make inactive" {% if customer.actions == "make inactive" %}selected{% endif %}>make inactive</option>
-            </select>
-          </div>
-        </div>
-  </div>
+ 
       <!-- Notes and Attachments -->
       <div class="section">
         <div class="collapsible-header">Notes and Attachments</div>

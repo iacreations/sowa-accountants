@@ -5,13 +5,6 @@ from django.utils import timezone
 # Create your models here.
 
 class Newcustomer(models.Model):
-    ACTION_CHOICES = [
-            ('create a sales receipt', 'create a sales receipt'),
-            ('create a charge','create a charge'),
-            ('create a time activity','create a time activity'),
-            ('create a task','create a task'),
-            ('make inactive','make inactive'),
-    ]
     logo = models.ImageField(null=True, blank=True)
     customer_name = models.CharField(max_length=255,null=True, blank=True)
     company_name = models.CharField(max_length=255,null=True, blank=True)
@@ -28,8 +21,8 @@ class Newcustomer(models.Model):
     province = models.CharField(max_length=255,null=True, blank=True)
     postal_code = models.CharField(max_length=5,null=True, blank=True)
     country = models.CharField(max_length=255,null=True, blank=True)
-    actions = models.CharField(max_length=255, choices=ACTION_CHOICES, default='',null=True, blank=True)
     notes = models.TextField(max_length=1000,null=True, blank=True)
+    is_active = models.BooleanField(default=True)
     attachments = models.FileField(upload_to='uploads/',null=True, blank=True)
 
     class Meta:
