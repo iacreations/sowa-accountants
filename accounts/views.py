@@ -16,6 +16,7 @@ from datetime import timedelta
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Sum, F, Value
 from django.db.models.functions import Coalesce
+from django.contrib.auth.decorators import login_required
 from django.utils.dateparse import parse_date
 
 # my views
@@ -152,7 +153,7 @@ def activate_account(request, pk):
     return redirect('accounts:accounts')
 
 # working on the COA calcs
-
+@login_required
 def journal_list(request):
     entries = (
         JournalEntry.objects
@@ -186,7 +187,7 @@ def _period(request):
     dto   = parse_date(request.GET.get("to") or "")
     return dfrom, dto
 
-
+@login_required
 def trial_balance(request):
     dfrom = parse_date(request.GET.get("from", "") or "")
     dto   = parse_date(request.GET.get("to", "") or "")
@@ -258,7 +259,8 @@ def _apply_entry_date_range(qs, dfrom, dto):
         qs = qs.filter(**{f"entry__{date_field_name}__lte": dto})
     return qs
 
-
+# profits and loss 
+@login_required
 def report_pnl(request):
     dfrom, dto = _period(request)  # your helper used in TB
 
@@ -382,7 +384,8 @@ def _apply_cash_basis_rules(asset_types, liab_types):
     liab -= {"accounts payable"}
     return aset, liab
 
-
+# balance sheet
+@login_required
 def report_bs(request):
     """
     Balance Sheet (vertical, QBO-like).
@@ -516,6 +519,7 @@ def _net_profit_for_period(dfrom, dto):
     return inc - exp  # profit positive
 
 # ----- CASH FLOW (Indirect) -------------------------------------------
+@login_required
 def report_cashflow(request):
     dfrom, dto = _period(request)
 
