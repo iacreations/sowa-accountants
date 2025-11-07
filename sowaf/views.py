@@ -458,7 +458,6 @@ def customers(request):
 def make_inactive_customer(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)
     customer.is_active = False
-    messages.success(request, f"{customer.customer_name} has been marked as inactive.")
     customer.save()
     return redirect('sowaf:customers')
 # reactivating
@@ -466,7 +465,6 @@ def make_active_customer(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)
     customer.is_active = True
     customer.save()
-    messages.success(request, f"{customer.customer_name} has been reactivated.")
     return redirect('sowaf:customers')
 
 # customer form view
@@ -1246,7 +1244,18 @@ def supplier(request):
     suppliers = Newsupplier.objects.all()
      
     return render(request, 'Supplier.html', {'suppliers':suppliers})
-
+# making the row active or inactive
+def make_inactive_supplier(request, pk):
+    supplier = get_object_or_404(Newsupplier, pk=pk)
+    supplier.is_active = False
+    supplier.save()
+    return redirect('sowaf:suppliers')
+# reactivating
+def make_active_supplier(request, pk):
+    supplier = get_object_or_404(Newsupplier, pk=pk)
+    supplier.is_active = True
+    supplier.save()
+    return redirect('sowaf:suppliers')
 #add new supplier form view
 def add_supplier(request):
     if request.method == 'POST':

@@ -71,6 +71,7 @@ class Newsupplier(models.Model):
     payment_method = models.CharField(max_length=255, choices=PAYMENT_CHOICES, default='',null=True, blank=True)
     tin = models.CharField(max_length=10,null=True, blank=True)
     reg_number=models.CharField(max_length=255,null=True, blank=True)
+    is_active = models.BooleanField(default=True)
     tax_rate=models.DecimalField(max_digits=10,default=0,decimal_places=2,null=True, blank=True)
     attachments = models.FileField(upload_to='uploads/',null=True, blank=True)
 
