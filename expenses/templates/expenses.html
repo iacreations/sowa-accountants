@@ -283,48 +283,23 @@
           </tr>
         </thead>
         <tbody>
-          {% for e in expenses %}
-          <tr>
-            <td>{{ e.payment_date|date:"d/m/Y" }}</td>
-            <td>{{ e.type_display }}</td>
-            <td class="muted">{{ e.number_display }}</td>
-            <td>{{ e.payee_display }}</td>
-            <td>{{ e.category_display }}</td>
-            <td class="money">Ush{{ e.total_before_tax|floatformat:0|intcomma }}</td>
-            <td class="money">Ush{{ e.sales_tax_amount|floatformat:0|intcomma }}</td>
-            <td class="money"><strong>Ush{{ e.total_display|floatformat:0|intcomma }}</strong></td>
-            <td>
-              {% if e.approval_status|lower == "approved" %}
-                <span class="badge approved"><i class='bx bx-check-circle'></i> Approved</span>
-              {% elif e.approval_status|lower == "pending" %}
-                <span class="badge pending"><i class='bx bx-time-five'></i> Pending</span>
-              {% elif e.approval_status|lower == "rejected" %}
-                <span class="badge rejected"><i class='bx bx-x-circle'></i> Rejected</span>
-              {% else %}
-                <span class="badge na"><i class='bx bx-minus-circle'></i> N/A</span>
-              {% endif %}
-            </td>
-            
-            <td class="action-cell">
-              <div class="row-actions">
-                <a href="{% url 'expenses:expense-edit' e.id %}">Edit</a>
-                <div class="menu-wrap">
-                  <button class="kebab" aria-haspopup="true" aria-expanded="false">▾</button>
-                  <div class="flyout" role="menu">
-                    <a role="menuitem" href="{% url 'expenses:expense-detail' e.id %}">View</a>
-                    <a role="menuitem" href="">Print</a>
-                  </div>
-                </div>
-              </div>
-            </td>
-          </tr>
-          {% empty %}
-          <tr>
-            <td colspan="11" style="text-align:center; padding:28px; color:#6b7280;">
-              No expenses yet. <a href="{% url 'expenses:add-expenses' %}" class="btn" style="margin-left:8px; text-decoration:none;">Create your first expense</a>
-            </td>
-          </tr>
-          {% endfor %}
+         {% for r in transactions %}
+<tr>
+  <td>{{ r.date|date:"d/m/Y" }}</td>
+  <td>{{ r.kind }}</td>
+  <td>{{ r.number }}</td>
+  <td>{{ r.payee }}</td>
+  <td>{{ r.category }}</td>
+  <td class="num">{{ r.total_before_tax|floatformat:2|intcomma }}</td>
+  <td class="num">{{ r.sales_tax|floatformat:2|intcomma }}</td>
+  <td class="num">{{ r.total|floatformat:2|intcomma }}</td>
+  <td>—</td>
+  <td><a href="{{ r.edit_url }}">Edit</a></td>
+</tr>
+{% empty %}
+<tr><td colspan="10">No expenses yet.</td></tr>
+{% endfor %}
+
         </tbody>
       </table>
        <!-- Customize Modal -->

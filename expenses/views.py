@@ -5,6 +5,7 @@ from django.db.models.functions import Coalesce
 from django.db.models import Sum, Value, DecimalField, Prefetch
 from django.views.decorators.csrf import csrf_exempt
 import json
+from django.urls import reverse
 from django.db import transaction
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
@@ -32,19 +33,106 @@ DEFAULT_ACCOUNTS_COL_PREFS = {
     "memo": True,
     "attachments": True,  # keep actions togglable too
 }
+def _cat_label_from_lines(cat_lines, item_lines):
+    """
+    Build a single Category label for the row:
+      - '--Split--' if more than one line
+      - category account name for a single category line
+      - product name for a single item line
+      - '' if no lines
+    Assumes related lines were prefetched.
+    """
+    cats = list(cat_lines) if hasattr(cat_lines, "__iter__") else list(cat_lines.all())
+    items = list(item_lines) if hasattr(item_lines, "__iter__") else list(item_lines.all())
+    n = len(cats) + len(items)
+    if n == 0:
+        return ""
+    if n > 1:
+        return "--Split--"
+    if len(cats) == 1:
+        return getattr(cats[0].category, "account_name", "")
+    if len(items) == 1:
+        return getattr(items[0].product, "name", "")
+    return ""
+
 def expenses(request):
-    qs = (
+    # ---------------- Expenses ----------------
+    exp_qs = (
         Expense.objects
         .select_related("payee_supplier")
         .prefetch_related("cat_lines__category", "item_lines__product")
         .order_by("-payment_date", "-id")
     )
 
-    # Optional: precompute line counts to avoid .count() hits in properties
-    for e in qs:
-        e._total_lines = (len(getattr(e, "cat_lines").all())
-                          + len(getattr(e, "item_lines").all()))
-    
+    # Optional: cache line counts for old template bits
+    for e in exp_qs:
+        e._total_lines = len(list(e.cat_lines.all())) + len(list(e.item_lines.all()))
+
+    # ---------------- Bills ----------------
+    bill_qs = (
+        Bill.objects
+        .select_related("supplier")
+        .prefetch_related("category_lines__category", "item_lines__product")
+        .order_by("-bill_date", "-id")
+    )
+
+    # ---------------- Cheques ----------------
+    cheque_qs = (
+        Cheque.objects
+        .select_related("payee_supplier", "bank_account")
+        .prefetch_related("category_lines__category", "item_lines__product")
+        .order_by("-payment_date", "-id")
+    )
+
+    # ---------------- Normalize into one list ----------------
+    rows = []
+
+    for e in exp_qs:
+        rows.append({
+            "id": e.id,
+            "kind": "Expense",
+            "date": e.payment_date,
+            "number": getattr(e, "ref_no", "") or "",
+            "payee": (e.payee_supplier.company_name if e.payee_supplier else (e.payee_name or "")),
+            "category": _cat_label_from_lines(e.cat_lines.all(), e.item_lines.all()),
+            "total_before_tax": e.total_amount,   # adjust if you add tax columns later
+            "sales_tax": Decimal("0.00"),
+            "total": e.total_amount,
+            "edit_url": reverse("expenses:expense-edit", args=[e.id]),
+        })
+
+    for b in bill_qs:
+        rows.append({
+            "id": b.id,
+            "kind": "Bill",
+            "date": b.bill_date,
+            "number": b.bill_no or "",
+            "payee": (b.supplier.company_name if b.supplier else (b.supplier_name or "")),
+            "category": _cat_label_from_lines(b.category_lines.all(), b.item_lines.all()),
+            "total_before_tax": b.total_amount,
+            "sales_tax": Decimal("0.00"),
+            "total": b.total_amount,
+            "edit_url": reverse("expenses:bill-edit", args=[b.id]),
+        })
+
+    for c in cheque_qs:
+        rows.append({
+            "id": c.id,
+            "kind": "Cheque",
+            "date": c.payment_date,
+            "number": c.cheque_no or "",
+            "payee": (c.payee_supplier.company_name if c.payee_supplier else (c.payee_name or "")),
+            "category": _cat_label_from_lines(c.category_lines.all(), c.item_lines.all()),
+            "total_before_tax": c.total_amount,
+            "sales_tax": Decimal("0.00"),
+            "total": c.total_amount,
+            "edit_url": reverse("expenses:cheque-edit", args=[c.id])  # make sure this url exists
+        })
+
+    # Sort all transactions together: newest date, then newest id
+    rows = sorted(rows, key=lambda r: (r["date"], r["id"]), reverse=True)
+
+    # ---------------- Column prefs (unchanged) ----------------
     if getattr(request.user, "is_authenticated", False):
         prefs, _ = ColumnPreference.objects.get_or_create(
             user=request.user,
@@ -55,11 +143,12 @@ def expenses(request):
     else:
         merged_prefs = DEFAULT_ACCOUNTS_COL_PREFS
 
+    # Keep old 'expenses' for compatibility; add 'transactions' for the unified list
     return render(request, "expenses.html", {
-        "expenses": qs,
-        'column_prefs': merged_prefs
-        })
-
+        "expenses": exp_qs,            # existing var (if anything still uses it)
+        "transactions": rows,          # unified list for the table
+        "column_prefs": merged_prefs,
+    })
 
 @csrf_exempt
 def save_column_prefs(request):
@@ -192,7 +281,6 @@ def add_expense(request):
                 exp.save(update_fields=["total_amount"])
                 # posting to chart of accounts
                 post_expense_to_gl(exp)
-                messages.success(request, "Expense saved.")
                 action = request.POST.get("save_action") or "save"
                 if action == "save":
                     return redirect("expenses:expenses")

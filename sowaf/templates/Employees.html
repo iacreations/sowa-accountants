@@ -49,7 +49,7 @@
 {% include 'includes/sidebar.html' %}
     <div class="action" id="action">
       <h1>EMPLOYEES</h1>
-      <div class="search_bar" id="search">
+      <div class="search_bar" id="search" style="width: 20%;">
         <input type="text" placeholder="Search Employees" />
       </div>
       <a href="{% url 'sowaf:add-employee' %}" style="text-decoration: none;">
@@ -88,7 +88,7 @@
           </span>
         </button>
     </div>
-    <div class="main_body" id="main">
+    <div class="main_body" id="main" style="margin-top: 12%;">
       <table class="content-table">
         <thead>
           <tr>
@@ -144,7 +144,7 @@
       {% endfor %}
     {% endif %}
       </td>
-      
+    </tr>
          {% endfor %}
         </tbody>
         

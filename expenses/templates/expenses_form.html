@@ -183,17 +183,13 @@
                   <td>
                     <select name="cat_customer[]">
                       <option value="">-- Customer --</option>
-                      {% for c in customers %}
-                        <option value="{{ c.id }}">{{ c.customer_name }}</option>
-                      {% endfor %}
+                      {% for c in customers %}<option value="{{ c.id }}">{{ c.customer_name }}</option>{% endfor %}
                     </select>
                   </td>
                   <td>
                     <select name="cat_class[]">
                       <option value="">-- Class --</option>
-                      {% for cl in classes %}
-                        <option value="{{ cl.id }}">{{ cl.class_name }}</option>
-                      {% endfor %}
+                      {% for cl in classes %}<option value="{{ cl.id }}">{{ cl.class_name }}</option>{% endfor %}
                     </select>
                   </td>
                   <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -233,10 +229,15 @@
                 <tr>
                   <td>{{ forloop.counter }}</td>
                   <td>
-                    <select name="item_product[]">
+                    <select name="item_product[]" onchange="fillItemFromProduct(this)">
                       <option value="">-- Select --</option>
                       {% for p in products %}
-                        <option value="{{ p.id }}" {% if il.product_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                        <option value="{{ p.id }}"
+                                data-description="{{ p.purchase_description }}"
+                                data-rate="{{ p.purchase_price }}"
+                                {% if il.product_id == p.id %}selected{% endif %}>
+                          {{ p.name }}
+                        </option>
                       {% endfor %}
                     </select>
                   </td>
@@ -250,17 +251,13 @@
                   <td>
                     <select name="item_customer[]">
                       <option value="">-- Customer --</option>
-                      {% for c in customers %}
-                        <option value="{{ c.id }}" {% if il.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>
-                      {% endfor %}
+                      {% for c in customers %}<option value="{{ c.id }}" {% if il.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>{% endfor %}
                     </select>
                   </td>
                   <td>
                     <select name="item_class[]">
                       <option value="">-- Class --</option>
-                      {% for clz in classes %}
-                        <option value="{{ clz.id }}" {% if il.class_field_id == clz.id %}selected{% endif %}>{{ clz.class_name }}</option>
-                      {% endfor %}
+                      {% for clz in classes %}<option value="{{ clz.id }}" {% if il.class_field_id == clz.id %}selected{% endif %}>{{ clz.class_name }}</option>{% endfor %}
                     </select>
                   </td>
                   <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -270,9 +267,15 @@
                 <tr>
                   <td>1</td>
                   <td>
-                    <select name="item_product[]">
+                    <select name="item_product[]" onchange="fillItemFromProduct(this)">
                       <option value="">-- Select --</option>
-                      {% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+                      {% for p in products %}
+                        <option value="{{ p.id }}"
+                                data-description="{{ p.purchase_description }}"
+                                data-rate="{{ p.purchase_price }}">
+                          {{ p.name }}
+                        </option>
+                      {% endfor %}
                     </select>
                   </td>
                   <td><input type="text" name="item_desc[]"></td>
@@ -359,6 +362,32 @@
     function clearCategoryTable(){ document.querySelector("#categoryTable tbody").innerHTML=""; }
     function clearItemTable(){ document.querySelector("#itemTable tbody").innerHTML=""; }
 
+    // NEW: auto-fill description & rate from selected product (uses purchase fields)
+    function fillItemFromProduct(selectEl){
+      const row = selectEl.closest("tr");
+      const opt = selectEl.options[selectEl.selectedIndex];
+
+      const descInput = row.querySelector('[name="item_desc[]"]');
+      const rateInput = row.querySelector('[name="item_rate[]"]');
+      const qtyInput  = row.querySelector('[name="item_qty[]"]');
+
+      if (opt && opt.value) {
+        const d = opt.getAttribute('data-description') || "";
+        if (!descInput.value) descInput.value = d;
+
+        const r = opt.getAttribute('data-rate') || "";
+        if (!rateInput.value && r !== "") rateInput.value = r;
+
+        if (!qtyInput.value) qtyInput.value = 1;
+
+        calcItemAmount(rateInput);
+      } else {
+        // keep rate if you want; we only clear description & amount
+        descInput.value = "";
+        row.querySelector('[name="item_amount[]"]').value = "";
+      }
+    }
+
     function addCategoryRow() {
       const tb = document.querySelector("#categoryTable tbody");
       const idx = nextIndex(tb);
@@ -398,9 +427,15 @@
       row.innerHTML = `
         <td></td>
         <td>
-          <select name="item_product[]">
+          <select name="item_product[]" onchange="fillItemFromProduct(this)">
             <option value="">-- Select --</option>
-            {% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            {% for p in products %}
+              <option value="{{ p.id }}"
+                      data-description="{{ p.purchase_description }}"
+                      data-rate="{{ p.purchase_price }}">
+                {{ p.name }}
+              </option>
+            {% endfor %}
           </select>
         </td>
         <td><input type="text" name="item_desc[]"></td>
@@ -436,6 +471,13 @@
       document.querySelector('input[name="ref_no"]').value = "";
       alert("A new reference will be generated when you save.");
     }
+
+    // Optional: prefill edit rows on load (keeps user edits intact)
+    document.addEventListener('DOMContentLoaded', function(){
+      document.querySelectorAll('#itemTable tbody select[name="item_product[]"]').forEach(sel => {
+        if (sel.value) fillItemFromProduct(sel);
+      });
+    });
   </script>
 </body>
 </html>

@@ -2,7 +2,6 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 import json
 
-from django.http import HttpResponse
 from openpyxl import Workbook
 from tempfile import NamedTemporaryFile
 from datetime import datetime, timedelta
