@@ -274,15 +274,6 @@ box-sizing: border-box;
       <div class="kpi-body"><canvas id="bankChart"></canvas></div>
     </section>
 
-    <!-- Expenses (donut) -->
-    <section class="kpi-card">
-      <div class="kpi-head">
-        <div class="kpi-title">Expenses</div>
-        <div class="kpi-sub">{{ range_text }}</div>
-      </div>
-      <div class="kpi-body"><canvas id="expChart"></canvas></div>
-    </section>
-
     <!-- Invoices (stacked bar) -->
     <section class="kpi-card">
       <div class="kpi-head">
@@ -295,22 +286,33 @@ box-sizing: border-box;
     </section>
 
     <!-- Outstanding bills (placeholder) -->
-    <section class="kpi-card">
-      <div class="kpi-head">
-        <div class="kpi-title">Outstanding Bills</div>
-        <div class="kpi-sub">Coming soon</div>
-      </div>
-      <div class="kpi-body"><canvas id="billsChart"></canvas></div>
-    </section>
+    <!-- Bills (line) -->
+<section class="kpi-card">
+  <div class="kpi-head">
+    <div class="kpi-title">Bills (Last 30 days)</div>
+    <div class="kpi-sub">{{ range_text }}</div>
+  </div>
+  <div class="kpi-body"><canvas id="billsChart"></canvas></div>
+</section>
 
-    <!-- Profit & Loss (bars) -->
-    <section class="kpi-card">
-      <div class="kpi-head">
-        <div class="kpi-title">Profit &amp; Loss</div>
-        <div class="kpi-sub">{{ range_text }}</div>
-      </div>
-      <div class="kpi-body"><canvas id="plChart"></canvas></div>
-    </section>
+<!-- Expenses line - wide -->
+<section class="kpi-card wide">
+  <div class="kpi-head">
+    <div class="kpi-title">Expenses (Last 30 days)</div>
+    <div class="kpi-sub">{{ range_text }}</div>
+  </div>
+  <div class="kpi-body"><canvas id="expLineChart"></canvas></div>
+</section>
+
+<!-- Profit/Loss line - wide -->
+<section class="kpi-card wide">
+  <div class="kpi-head">
+    <div class="kpi-title">Profit/Loss (Last 30 days)</div>
+    <div class="kpi-sub">{{ range_text }}</div>
+  </div>
+  <div class="kpi-body"><canvas id="plLineChart"></canvas></div>
+</section>
+>
 
     
     <!-- Sales (line) - wide -->
@@ -334,6 +336,10 @@ box-sizing: border-box;
 {{ bank_values|json_script:"bankValuesJson" }}
 {{ inv_amounts|json_script:"invAmountsJson" }}
 {{ pl_summary|json_script:"plJson" }}
+{{ bills_series|json_script:"billsJson" }}
+{{ expenses_series|json_script:"expSeriesJson" }}
+{{ profit_series|json_script:"profitSeriesJson" }}
+
 
 <!-- Load Chart.js BEFORE the chart code -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -344,15 +350,15 @@ Chart.defaults.responsive = true;
 Chart.defaults.maintainAspectRatio = false;    // lets the card control the height
 </script>
 <script>
-document.addEventListener('DOMContentLoaded', function(){
-
-  // read JSON safely (fallbacks avoid null/NaN)
+document.addEventListener('DOMContentLoaded', function () {
+  // Safe JSON reader
   const safeParse = (id, fb) => {
     const el = document.getElementById(id);
     if (!el) return fb;
-    try { const v = JSON.parse(el.textContent); return (v ?? fb); } catch { return fb; }
+    try { return JSON.parse(el.textContent) ?? fb; } catch { return fb; }
   };
 
+  // Existing blobs
   const L  = safeParse("labelsJson", []);
   const S  = safeParse("salesJson", []).map(n => Number(n)||0);
   const EL = safeParse("expLabelsJson", []);
@@ -362,8 +368,20 @@ document.addEventListener('DOMContentLoaded', function(){
   const IA = safeParse("invAmountsJson", {paid:0,unpaid:0,overdue:0});
   const PL = safeParse("plJson", {income:0,expense:0,profit:0});
 
+  // NEW daily series
+  const BS  = safeParse("billsJson", []).map(n => Number(n)||0);        // bills per day
+  const EXS = safeParse("expSeriesJson", []).map(n => Number(n)||0);    // expenses per day
+  const PLS = safeParse("profitSeriesJson", []).map(n => Number(n)||0); // net profit per day (+/-)
+
+  // Split profit series into profit vs loss bars
+  const profitData = PLS.map(v => v > 0 ? v : 0);
+  const lossData   = PLS.map(v => v < 0 ? Math.abs(v) : 0);
+
+  // Chart.js globals
   Chart.defaults.font.family = "'Poppins','Segoe UI',system-ui,-apple-system,Arial";
   Chart.defaults.plugins.legend.position = 'bottom';
+  Chart.defaults.responsive = true;
+  Chart.defaults.maintainAspectRatio = false;
 
   const make = (id, cfg) => {
     const c = document.getElementById(id);
@@ -371,28 +389,47 @@ document.addEventListener('DOMContentLoaded', function(){
     new Chart(c, cfg);
   };
 
-  // Bank donut
+  // Bank donut (unchanged)
   make("bankChart", {
     type: 'doughnut',
     data: { labels: BL, datasets: [{ data: BV }] },
     options: { cutout: '60%' }
   });
 
-  // Sales line
+  // Sales line (unchanged)
   make("salesChart", {
     type: 'line',
-    data: { labels: L, datasets: [{ label: 'Sales', data: S, tension: .35, fill: false }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } } }
+    data: {
+      labels: L,
+      datasets: [{ label: 'Sales', data: S, tension: .35, fill: false }]
+    },
+    options: {
+      plugins:{ legend:{ display:false }},
+      scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } }
+    }
   });
 
-  // Expenses donut
+  // BILLS -> vertical BAR
+  make("billsChart", {
+    type: 'bar',
+    data: {
+      labels: L,
+      datasets: [{ label: 'Bills', data: BS, borderRadius: 6, maxBarThickness: 18 }]
+    },
+    options: {
+      plugins:{ legend:{ display:false }},
+      scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } }
+    }
+  });
+
+  // Expenses donut by account (unchanged)
   make("expChart", {
     type: 'doughnut',
     data: { labels: EL, datasets: [{ data: EV }] },
     options: { cutout: '55%' }
   });
 
-  // Invoices stacked bars
+  // Invoices stacked bars (unchanged)
   make("invChart", {
     type: 'bar',
     data: {
@@ -404,21 +441,56 @@ document.addEventListener('DOMContentLoaded', function(){
       ]
     },
     options: {
-      responsive: true,
-      scales: { x: { stacked: true }, y: { stacked: true, ticks:{ callback:v=>v.toLocaleString() } } }
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, ticks:{ callback:v=>v.toLocaleString() } }
+      }
     }
   });
 
-  // P&L bars
+  // P&L snapshot bars (30-day totals, unchanged)
   make("plChart", {
     type: 'bar',
     data: {
       labels: ['Income','Expenses','Net Profit'],
-      datasets: [{ data: [Number(PL.income)||0, Number(PL.expense)||0, Number(PL.profit)||0] }]
+      datasets: [{ data: [Number(PL.income)||0, Number(PL.expense)||0, Number(PL.profit)||0], borderRadius: 6 }]
     },
     options: { plugins:{legend:{display:false}}, scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } } }
   });
 
+  // EXPENSES -> AREA (line with fill)
+  make("expLineChart", {
+    type: 'line',
+    data: {
+      labels: L,
+      datasets: [{ label: 'Expenses', data: EXS, tension: .35, fill: true }]
+    },
+    options: {
+      plugins:{ legend:{ display:false }},
+      scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } }
+    }
+  });
+
+  // PROFIT/LOSS -> STACKED BAR (profit vs loss)
+  make("plLineChart", {
+    type: 'bar',
+    data: {
+      labels: L,
+      datasets: [
+        { label: 'Profit', data: profitData, borderRadius: 6, maxBarThickness: 18 },
+        { label: 'Loss',   data: lossData,   borderRadius: 6, maxBarThickness: 18 }
+      ]
+    },
+    options: {
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, ticks:{ callback:v=>v.toLocaleString() } }
+      }
+    }
+  });
+
 });
 </script>
+
+
  {% include 'includes/footer.html' %}

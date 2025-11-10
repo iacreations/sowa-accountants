@@ -28,6 +28,7 @@ from django.contrib.auth.decorators import login_required
 from sales.models import Newinvoice  
 from accounts.models import Account,JournalEntry,JournalLine
 from sowaf.models import Newcustomer, Newsupplier
+from expenses.models import Bill
 from . models import Newcustomer, Newsupplier,Newclient,Newemployee,Newasset
 
 # Create your views here.
@@ -47,23 +48,90 @@ def home(request):
     start = today - timedelta(days=29)
     end   = today
 
-    # --- Sales series per day (from invoices.total_due) ---
-    # Build a per-day bucket in Python (SQLite-safe and simple)
+    # ---------------------------
+    # Sales (invoices) per day
+    # ---------------------------
     inv_qs = (
         Newinvoice.objects
         .filter(date_created__gte=start, date_created__lte=end)
         .values("date_created", "total_due")
         .order_by("date_created", "id")
     )
-    day_totals = {}
+    sales_day_totals = {}
     for row in inv_qs:
         d = row["date_created"]
-        day_totals[d] = day_totals.get(d, 0.0) + _to_float(row["total_due"])
+        sales_day_totals[d] = sales_day_totals.get(d, 0.0) + _to_float(row["total_due"])
 
     chart_labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(30)]
-    sales_series = [_to_float(day_totals.get(start + timedelta(days=i), 0.0)) for i in range(30)]
+    label_dates  = [start + timedelta(days=i) for i in range(30)]
+    sales_series = [_to_float(sales_day_totals.get(d, 0.0)) for d in label_dates]
 
-    # --- Expenses donut (last 30 days) ---
+    # ---------------------------
+    # Bills per day (Bill.bill_date / Bill.total_amount)
+    # ---------------------------
+    bills_qs = (
+        Bill.objects
+        .filter(bill_date__gte=start, bill_date__lte=end)
+        .values("bill_date", "total_amount")
+        .order_by("bill_date", "id")
+    )
+    bills_day_totals = {}
+    for row in bills_qs:
+        d = row["bill_date"]
+        bills_day_totals[d] = bills_day_totals.get(d, 0.0) + _to_float(row["total_amount"])
+    bills_series = [_to_float(bills_day_totals.get(d, 0.0)) for d in label_dates]
+
+    # ---------------------------
+    # Expenses per day (from GL)
+    # Use JournalLines so it always reconciles with P&L/Bal Sheet.
+    # Daily expense = sum(debit - credit) for EXPENSE_TYPES
+    # ---------------------------
+    jl_exp_daily = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(entry__date__gte=start, entry__date__lte=end,
+                account__account_type__in=EXPENSE_TYPES)
+        .values("entry__date")
+        .annotate(
+            deb=Coalesce(Sum("debit"),  ZERO_DEC),
+            cre=Coalesce(Sum("credit"), ZERO_DEC),
+        )
+        .order_by("entry__date")
+    )
+    exp_day_map = {row["entry__date"]: _to_float((row["deb"] or 0) - (row["cre"] or 0))
+                   for row in jl_exp_daily}
+    expenses_series = [_to_float(exp_day_map.get(d, 0.0)) for d in label_dates]
+
+    # ---------------------------
+    # Profit/Loss per day (from GL)
+    # Daily income = sum(credit - debit) for INCOME_TYPES
+    # Daily expense = sum(debit - credit) for EXPENSE_TYPES
+    # Daily profit = income - expense
+    # ---------------------------
+    jl_inc_daily = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(entry__date__gte=start, entry__date__lte=end,
+                account__account_type__in=INCOME_TYPES)
+        .values("entry__date")
+        .annotate(
+            deb=Coalesce(Sum("debit"),  ZERO_DEC),
+            cre=Coalesce(Sum("credit"), ZERO_DEC),
+        )
+        .order_by("entry__date")
+    )
+    inc_day_map = {row["entry__date"]: _to_float((row["cre"] or 0) - (row["deb"] or 0))
+                   for row in jl_inc_daily}
+
+    profit_series = []
+    for d in label_dates:
+        daily_income  = _to_float(inc_day_map.get(d, 0.0))
+        daily_expense = _to_float(exp_day_map.get(d, 0.0))
+        profit_series.append(round(daily_income - daily_expense, 2))
+
+    # ---------------------------
+    # Expenses donut (last 30 days)
+    # ---------------------------
     jl_exp = (
         JournalLine.objects
         .select_related("entry","account")
@@ -79,7 +147,9 @@ def home(request):
     exp_labels = [r["account__account_name"] for r in jl_exp]
     exp_values = [_to_float((r["deb"] or 0) - (r["cre"] or 0)) for r in jl_exp]
 
-    # --- Bank balances donut (as of end) ---
+    # ---------------------------
+    # Bank balances donut (as of end)
+    # ---------------------------
     bank_labels, bank_values = [], []
     bank_accounts = Account.objects.filter(
         account_type__in=["Bank", "Cash and Cash Equivalents"]
@@ -93,7 +163,9 @@ def home(request):
         bank_labels.append(acc.account_name or "Bank")
         bank_values.append(bal)
 
-    # --- Invoices: amounts + counts ---
+    # ---------------------------
+    # Invoices: amounts + counts
+    # ---------------------------
     paid_amount_dec = (
         Newinvoice.objects
         .filter(date_created__lte=end)
@@ -107,7 +179,7 @@ def home(request):
     overdue_amount = 0.0
     paid_count = unpaid_count = overdue_count = 0
     for inv in Newinvoice.objects.all().select_related("customer"):
-        bal = (inv.total_due or 0.0) - _to_float(inv.amount_paid)  # amount_paid is Decimal via agg
+        bal = (inv.total_due or 0.0) - _to_float(getattr(inv, "amount_paid", 0.0))
         if bal <= 0.00001:
             paid_count += 1
         elif inv.due_date and inv.due_date < today:
@@ -123,7 +195,9 @@ def home(request):
     }
     inv_counts = {"paid": paid_count, "unpaid": unpaid_count, "over": overdue_count}
 
-    # --- P&L summary (last 30 days) ---
+    # ---------------------------
+    # P&L summary (bars) last 30 days
+    # ---------------------------
     jl_30 = JournalLine.objects.select_related("entry","account").filter(
         entry__date__gte=start, entry__date__lte=end
     )
@@ -141,8 +215,17 @@ def home(request):
 
     context = {
         "range_text": f"{start:%b %d} – {end:%b %d}",
+
+        # Sales (existing)
         "chart_labels": chart_labels,
         "sales_series": sales_series,
+
+        # NEW series
+        "bills_series": bills_series,
+        "expenses_series": expenses_series,
+        "profit_series": profit_series,
+
+        # Donuts / Bars (existing)
         "exp_labels": exp_labels, "exp_values": exp_values,
         "bank_labels": bank_labels, "bank_values": bank_values,
         "inv_amounts": inv_amounts, "inv_counts": inv_counts,
