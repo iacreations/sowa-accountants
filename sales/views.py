@@ -105,7 +105,7 @@ def sales(request):
             "type": "Invoice",
             "no": f"INV-{inv.id:04d}",
             "customer": inv.customer.customer_name if inv.customer_id else "",
-            "memo": (inv.memo or inv.description or "")[:140],
+            "memo": (inv.memo or "")[:140],
             "amount": total,
             "status": status,
             "edit_url":  reverse("sales:edit-invoice", args=[inv.id]),
