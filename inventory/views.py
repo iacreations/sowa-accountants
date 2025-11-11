@@ -183,6 +183,7 @@ def add_products(request):
 #  the edit view 
 
 
+
 def product_edit(request, pk: int):
     """
     Reuse your existing create form template for edit.
@@ -247,10 +248,12 @@ def product_edit(request, pk: int):
                         )
         else:
             # If switching away from Bundle, ensure old bundle lines are removed
-            product.bundleitem_set.all().delete()
+            product.bundle_items.all().delete()
 
         # Save actions (optional)
         action = request.POST.get("save_action")
+        if action == "save&new":
+            return redirect("inventory:add-products")
         if action == "save&new":
             return redirect("inventory:add-products")
         if action == "save&close":

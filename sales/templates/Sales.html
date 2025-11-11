@@ -211,6 +211,7 @@
       <th>SKU</th>
       <th>TYPE</th>
       <th>SALES DESCRIPTION</th>
+      <th>PURCHASE DESCRIPTION</th>
       <th>SALES PRICE</th>
       <th class="action-cell">ACTIONS <i class='bx bxs-down-arrow'></i></th>
     </tr>
@@ -223,6 +224,9 @@
         <td>{{ product.type }}</td>
         <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
           {{ product.sales_description }}
+        </td>
+        <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ product.purchase_description }}
         </td>
         <td class="num">{{ product.sales_price|default:0|floatformat:2|intcomma }}</td>
 
