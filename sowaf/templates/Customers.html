@@ -1,189 +1,218 @@
 {% load static %}
+{% load humanize %}
 {% include 'includes/navbar.html' %}
+
 <style>
-      h1{
-    color: rgb(7, 142, 36);
-  }
-    @media only screen and (max-width: 600px) {
-  #action{
+  h1{ color:#078e24; }
 
-    background-color: #fff;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding:10%;
+  /* Action bar mobile tweaks */
+  @media (max-width:600px){
+    #action{ background:#fff; display:flex; flex-wrap:wrap; padding:10%; }
+    #action button{ display:flex; }
+    #search{ width:50%; }
+    h1{ color:#078e24; font-size:20px; }
+    .button{ width:100px; }
+    #main{ padding:15%; margin-left:-20%; margin-top:70%; margin-right:1%; }
+    #template{ position:fixed; margin-left:70%; }
   }
-  #action button{
-    display: flex;
+
+  /* Dropdown */
+  .dd{position:relative; display:inline-block;}
+  .dd-toggle{background:transparent; border:0; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+  .dd-menu{display:none; position:absolute; right:0; top:100%; background:#fff; border:1px solid #e5e7eb; border-radius:8px; min-width:200px; box-shadow:0 8px 24px rgba(0,0,0,.12); z-index:10;}
+  .dd-menu a{display:block; padding:10px 12px; text-decoration:none; color:inherit;}
+  .dd-menu a:hover{background:#f2f2f2;}
+  .dd.open .dd-menu{display:block;}
+  tr.inactive{opacity:.55;}
+
+  /* Analytics wrapper */
+  .analytics-wrap{
+    background:#fff; border:1px solid #e7e7e7; border-radius:14px;
+    box-shadow:0 8px 22px rgba(0,0,0,.05); padding:14px; margin-bottom:16px;
   }
-     #search{
-    display: flex;
-    width: 50%;
-    margin-top: 0px;
+  .kpi-row{
+    display:grid; grid-template-columns:repeat(4,minmax(160px,1fr));
+    gap:10px; margin-bottom:4px;
   }
-  h1{
-    color: rgb(7, 142, 36);
-    font-size: 20px;
+  .kpi{
+    border-radius:12px; padding:12px 14px; color:#fff;
+    box-shadow:0 8px 16px rgba(0,0,0,.08);
   }
-  .button{
-    width: 100px;
+  .kpi .label{font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.3px; opacity:.95;}
+  .kpi .value{font-weight:900; font-size:18px; line-height:1.15; margin-top:2px;}
+  .kpi .sub{font-size:12px; opacity:.92; margin-top:2px;}
+
+  /* Themed backgrounds (former bar colors) */
+  .k-unbilled{ background:#2563eb; }  /* blue */
+  .k-overdue { background:#f59e0b; }  /* orange */
+  .k-open    { background:#94a3b8; }  /* slate/gray */
+  .k-recent  { background:#22c55e; }  /* green */
+
+  /* Clickable rows */
+  .clickable-row{cursor:pointer;}
+  .clickable-row:hover{background:#f9fff9;}
+
+  /* Desktop spacing */
+  @media (min-width:1024px) and (max-width:1600px){
+    #main{ margin-top:15%; }
   }
-  #main{
-    padding: 15%;
-    margin-left: -20%;
-    margin-top: 70%;
-    margin-right: 1%;
-  }
-  #template{
-    position: fixed;
-    margin-left:70%;
-  }
-}
-/* dropdown code  */
-/* Minimal, scoped dropdown styles */
-.dd { position: relative; display: inline-block; }
-.dd-toggle { background: transparent; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.dd-menu {
-  display: none; position: absolute; right: 0; top: 100%;
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-  min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 10;
-}
-.dd-menu a { display: block; padding: 10px 12px; text-decoration: none; color: inherit; }
-.dd-menu a:hover { background: #f2f2f2; }
-.dd.open .dd-menu { display: block; }
-tr.inactive { opacity: 0.55; }
-/* Laptops & small desktops */
-@media only screen and (min-width: 1024px) and (max-width: 1600px) {
-#main{
-  margin-top: 15%;
-}
-}
 </style>
+
 {% include 'includes/sidebar.html' %}
-    <div class="action" id="action">
-      <h3 style="color: #39B54B; font-weight: 600;">CUSTOMER</h3>
-      <form class="search_bar" id="search" method="get" action="{% url 'sowaf:customers' %}" style="width: 20%;">
-  <input type="text" name="q" placeholder="Search customers" value="{{ q|default:'' }}">
-</form>
 
-      <a href="{% url 'sowaf:add-customer' %}" style="text-decoration: none;">
-         <button class="button">
-          <span class="button_text">ADD NEW</span>
-          <span class="button_icon">
-            <i class='bx bx-folder-plus'></i>
-          </span>
-        </button>
-        </a>
-        <div>
-       <form action="{% url 'sowaf:import-customers' %}" method="POST" enctype="multipart/form-data" style="display: flex;">
-         {% csrf_token %}
-        <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display: none;" id="excelInput" onchange="this.form.submit()" />
-        <label for="excelInput" class="button" style="cursor: pointer;">
-         <span class="button_text">IMPORT</span>
-        <span class="button_icon">
-        <i class='bx bx-import'></i>
-        </span>
-       </label>
-         </form>
-       </div>
-      <a href="{% url 'sowaf:add-customer' %}" style="text-decoration: none;">
-         <button class="button">
-          <span class="button_text">EXPORT</span>
-          <span class="button_icon">
-            <i class='bx bx-folder-plus'></i>
-          </span>
-        </button>
-      </a>
-      <button class="button">
-          <span id="customize" class="button_text">CUSTOMIZE</span>
-          <span id="customize" class="button_icon">
-            <i class='bx bxs-customize' ></i>
-          </span>
-        </button>
-          <!-- <span>
-            <i class='bx bx-printer'></i>
-            <i class='bx bx-customize'></i>
-            <i class='bx bx-cog' ></i>
-          </span> -->
+<div class="action" id="action">
+  <h3 style="color:#39B54B;font-weight:600;">CUSTOMER</h3>
+
+  <form class="search_bar" id="search" method="get" action="{% url 'sowaf:customers' %}" style="width:20%;">
+    <input type="text" name="q" placeholder="Search customers" value="{{ q|default:'' }}">
+  </form>
+
+  <a href="{% url 'sowaf:add-customer' %}" style="text-decoration:none;">
+    <button class="button">
+      <span class="button_text">ADD NEW</span>
+      <span class="button_icon"><i class='bx bx-folder-plus'></i></span>
+    </button>
+  </a>
+
+  <div>
+    <form action="{% url 'sowaf:import-customers' %}" method="POST" enctype="multipart/form-data" style="display:flex;">
+      {% csrf_token %}
+      <input type="file" name="excel_file" accept=".xlsx,.xls,.csv" required style="display:none;" id="excelInput" onchange="this.form.submit()" />
+      <label for="excelInput" class="button" style="cursor:pointer;">
+        <span class="button_text">IMPORT</span>
+        <span class="button_icon"><i class='bx bx-import'></i></span>
+      </label>
+    </form>
+  </div>
+
+  <a href="{% url 'sowaf:add-customer' %}" style="text-decoration:none;">
+    <button class="button">
+      <span class="button_text">EXPORT</span>
+      <span class="button_icon"><i class='bx bx-folder-plus'></i></span>
+    </button>
+  </a>
+
+  <button class="button">
+    <span id="customize" class="button_text">CUSTOMIZE</span>
+    <span id="customize" class="button_icon"><i class='bx bxs-customize'></i></span>
+  </button>
+</div>
+
+<div class="main_body" id="main" style="margin-top:12%;">
+
+  <!-- Analytics cards only -->
+  <div class="analytics-wrap">
+    <div class="kpi-row">
+      <div class="kpi k-unbilled">
+        <div class="label">Unbilled</div>
+        <div class="value">Ush{{ analytics.amount_unbilled|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ analytics.count_unbilled|default:0 }} invoices</div>
+      </div>
+      <div class="kpi k-overdue">
+        <div class="label">Overdue</div>
+        <div class="value">Ush{{ analytics.amount_overdue|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ analytics.count_overdue|default:0 }} invoices</div>
+      </div>
+      <div class="kpi k-open">
+        <div class="label">Open</div>
+        <div class="value">Ush{{ analytics.amount_open|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ analytics.count_open|default:0 }} invoices</div>
+      </div>
+      <div class="kpi k-recent">
+        <div class="label">Recently paid</div>
+        <div class="value">Ush{{ analytics.amount_recent|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ analytics.count_recent|default:0 }} payments</div>
+      </div>
     </div>
-    <div class="main_body" id="main" style="margin-top: 12%;">
-      <table class="content-table">
-  <thead>
-    <tr>
-      <th>PROFILE ICON</th>
-      <th>NAME</th>
-      <th>COMPANY NAME</th>
-      <th>OPEN BALANCE</th>
-      <th>ACTIONS <i class='bx bxs-down-arrow'></i></th>
-    </tr>
-  </thead>
-  <tbody>
-{% for customer in customers %}
-<tr class="{% if not customer.is_active %}inactive{% endif %}">
-  <td>
-    {% if customer.logo %}
-      <img src="{{ customer.logo.url }}" alt="picture" style="width:40px;height:40px;border-radius:50%;">
-    {% else %}
-      <i class='bx bx-user-circle'></i>
-    {% endif %}
-  </td>
+  </div>
 
-  <td>{{ customer.customer_name }}</td>
-  <td>{{ customer.company_name }}</td>
-  <td>{{ customer.opening_balance }}</td>
+  <!-- Customer list -->
+  <table class="content-table">
+    <thead>
+      <tr>
+        <th>PROFILE ICON</th>
+        <th>NAME</th>
+        <th>COMPANY NAME</th>
+        <th>OPEN BALANCE</th>
+        <th>ACTIONS <i class='bx bxs-down-arrow'></i></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for customer in customers %}
+      {# change 'sowaf:customer-detail' to your actual detail route name #}
+      <tr class="clickable-row {% if not customer.is_active %}inactive{% endif %}"
+          data-href="{% url 'sowaf:customer-detail' customer.id %}">
 
-  <!-- Actions dropdown -->
-  <td>
-    <div class="dd">
-      <button type="button" class="dd-toggle">
-          <a href="{% url 'sowaf:edit-customer' customer.id %}" style="color: #39B54B;">Edit</a> <i class='bx bxs-down-arrow' style="color: #39B54B;"></i>
-      </button>
+        <td>
+          {% if customer.logo %}
+            <img src="{{ customer.logo.url }}" alt="picture" style="width:40px;height:40px;border-radius:50%;">
+          {% else %}
+            <i class='bx bx-user-circle'></i>
+          {% endif %}
+        </td>
 
-      {% if customer.is_active %}
-        <div class="dd-menu">
-          <a href="">Create task</a>
-          <a href="">Create invoice</a>
-        <a href="">Create sales receipt</a>
-        <a href="">Create charge</a>
-        <a href="">Create time activity</a>
-          <a href="{% url 'sowaf:make-inactive' customer.id %}">Make inactive</a>
-        </div>
-      {% else %}
-        <div class="dd-menu">
-          <a href="{% url 'sowaf:make-active' customer.id %}">Make active</a>
-        </div>
-      {% endif %}
-    </div>
-  </td>
-</tr>
-{% empty %}
-<tr>
-  <td colspan="5">No customers available.</td>
-</tr>
-{% endfor %}
+        <td>
+          <a href="{% url 'sowaf:customer-detail' customer.id %}" style="color:#111; text-decoration:none;">
+            {{ customer.customer_name }}
+          </a>
+        </td>
 
-</tbody>
-</table>
+        <td>{{ customer.company_name }}</td>
+        <td>Ush{{ customer.opening_balance|default:0|floatformat:2|intcomma }}</td>
 
-      <a href="{% url 'sowaf:import_customers_template' %}" style="text-decoration: none; float:right;" id="template">
-        <button class="button">
-          <span class="button_text">Template</span>
-        </button>
-      </a>
-    </div>
-    <script>
-document.addEventListener('click', function (e) {
-  // Close any open dropdowns when clicking outside
-  document.querySelectorAll('.dd.open').forEach(dd => {
-    if (!dd.contains(e.target)) dd.classList.remove('open');
+        <td>
+          <div class="dd">
+            <button type="button" class="dd-toggle">
+              <a href="{% url 'sowaf:edit-customer' customer.id %}" style="color:#39B54B;">Edit</a>
+              <i class='bx bxs-down-arrow' style="color:#39B54B;"></i>
+            </button>
+
+            {% if customer.is_active %}
+              <div class="dd-menu">
+                <a href="#">Create task</a>
+                <a href="{% url 'sales:add-invoice' %}?customer_id={{ customer.id }}">Create invoice</a>
+                <a href="{% url 'sales:add-receipt' %}?customer_id={{ customer.id }}">Create sales receipt</a>
+                <a href="#">Create charge</a>
+                <a href="#">Create time activity</a>
+                <a href="{% url 'sowaf:make-inactive' customer.id %}">Make inactive</a>
+              </div>
+            {% else %}
+              <div class="dd-menu">
+                <a href="{% url 'sowaf:make-active' customer.id %}">Make active</a>
+              </div>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5">No customers available.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <a href="{% url 'sowaf:import_customers_template' %}" style="text-decoration:none; float:right;" id="template">
+    <button class="button"><span class="button_text">Template</span></button>
+  </a>
+</div>
+
+<script>
+/* close dropdowns when clicking outside */
+document.addEventListener('click', function(e){
+  document.querySelectorAll('.dd.open').forEach(dd=>{
+    if(!dd.contains(e.target)) dd.classList.remove('open');
   });
-
-  // Toggle the clicked one
   const toggle = e.target.closest('.dd-toggle');
-  if (toggle) {
-    const dd = toggle.closest('.dd');
-    dd.classList.toggle('open');
-  }
+  if (toggle){ toggle.closest('.dd').classList.toggle('open'); }
+});
+
+/* make entire row clickable (but ignore clicks on links/buttons inside) */
+document.querySelectorAll('.clickable-row').forEach(tr=>{
+  tr.addEventListener('click', function(e){
+    const isInteractive = e.target.closest('a,button,.dd,.dd-toggle,.dd-menu');
+    if (isInteractive) return;
+    const href = this.dataset.href;
+    if(href) window.location.href = href;
+  });
 });
 </script>
 

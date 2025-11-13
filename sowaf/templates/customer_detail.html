@@ -1,0 +1,108 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .cust-card{background:#fff;border:1px solid #e7e7e7;border-radius:14px;padding:16px;box-shadow:0 8px 18px rgba(0,0,0,.05);}
+  .green{color:#39B54B}
+  .tabbar{display:flex;gap:14px;border-bottom:1px solid #e7e7e7;margin-top:14px;}
+  .tabbar a{padding:10px 12px;text-decoration:none;color:#111;border-bottom:2px solid transparent;font-weight:600}
+  .tabbar a.active{color:#39B54B;border-color:#39B54B}
+  .two-col{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-top:12px;}
+  @media(max-width:900px){.two-col{grid-template-columns:1fr}}
+  .badge{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700;color:#475569}
+</style>
+
+<div style="margin:12% 16px 24px 16px;">
+  <h2 class="green" style="margin-bottom:8px;">{{ customer.customer_name }}</h2>
+
+  <div class="two-col">
+    <!-- Left: identity & tabs -->
+    <div class="cust-card">
+      <div style="display:flex;align-items:center;gap:12px;">
+        {% if customer.logo %}
+          <img src="{{ customer.logo.url }}" style="width:56px;height:56px;border-radius:50%;">
+        {% else %}
+          <i class='bx bx-user-circle' style="font-size:56px;color:#39B54B;"></i>
+        {% endif %}
+        <div>
+          <div style="font-weight:800;">{{ customer.company_name|default:"" }}</div>
+          <div style="font-size:12px;color:#6b7280;">
+            {{ customer.email|default:"" }} • {{ customer.phone_number|default:"" }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabbar">
+        <a href="?tab=transactions" class="{% if tab == 'transactions' %}active{% endif %}">Transaction List</a>
+<a href="?tab=statements"   class="{% if tab == 'statements'   %}active{% endif %}">Statements</a>
+<a href="?tab=recurring"    class="{% if tab == 'recurring'    %}active{% endif %}">Recurring Transactions</a>
+<a href="?tab=projects"     class="{% if tab == 'projects'     %}active{% endif %}">Projects</a>
+<a href="?tab=details"      class="{% if tab == 'details'      %}active{% endif %}">Customer Details</a>
+<a href="?tab=notes"        class="{% if tab == 'notes'        %}active{% endif %}">Notes</a>
+<a href="?tab=tasks"        class="{% if tab == 'tasks'        %}active{% endif %}">Tasks</a>
+
+      </div>
+
+      <!-- Tab content -->
+      <div style="padding-top:12px;">
+        {% if tab == 'transactions' %}
+          {% if invoices %}
+          <table class="content-table">
+            <thead>
+              <tr>
+                <th>Date</th><th>No.</th><th>Type</th><th>Memo</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for inv in invoices %}
+              <tr>
+                <td>{{ inv.date_created|date:"Y-m-d" }}</td>
+                <td>#{{ inv.id }}</td>
+                <td><span class="badge">Invoice</span></td>
+                <td>{{ inv.memo|default:"" }}</td>
+                <td style="text-align:right;">{{ inv.total_due|floatformat:2|intcomma }}</td>
+                <td style="text-align:right;">{{ inv.paid|floatformat:2|intcomma }}</td>
+                <td style="text-align:right;">{{ inv.balance|floatformat:2|intcomma }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+            <div style="color:#6b7280;">No transactions yet.</div>
+          {% endif %}
+        {% elif tab == 'statements' %}
+          <div style="color:#6b7280;">Statements UI goes here (render the generated statement PDFs or a generator action).</div>
+        {% elif tab == 'recurring' %}
+          <div style="color:#6b7280;">Recurring transactions for this customer.</div>
+        {% elif tab == 'projects' %}
+          <div style="color:#6b7280;">Projects linked to this customer.</div>
+        {% elif tab == 'details' %}
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
+            <div><strong>Email:</strong> {{ customer.email|default:"—" }}</div>
+            <div><strong>Phone:</strong> {{ customer.phone_number|default:"—" }}</div>
+            <div><strong>City:</strong> {{ customer.city|default:"—" }}</div>
+            <div><strong>Country:</strong> {{ customer.country|default:"—" }}</div>
+            <div style="grid-column:1/-1;"><strong>Notes:</strong> {{ customer.notes|default:"—" }}</div>
+          </div>
+        {% elif tab == 'notes' %}
+          <div style="color:#6b7280;">Notes composer/list for this customer.</div>
+        {% elif tab == 'tasks' %}
+          <div style="color:#6b7280;">Task list for this customer.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Right: financial summary -->
+    <div class="cust-card">
+      <div style="font-weight:800;margin-bottom:8px;">Financial summary</div>
+      <div style="display:grid;row-gap:8px;">
+        <div>Open balance <div style="float:right;font-weight:800;">{{ open_balance|floatformat:2|intcomma }}</div></div>
+        <div>Overdue payment <div style="float:right;font-weight:800;color:#ef4444;">{{ overdue_balance|floatformat:2|intcomma }}</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

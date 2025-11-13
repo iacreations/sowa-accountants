@@ -65,6 +65,54 @@
 }
 
 }
+  /* Sales Activities navbar (scoped) */
+  .sa-wrap{padding:8px 0}
+  .sa-nav{
+    background:#39B54B; color:#fff; border-radius:14px;
+    padding:10px; box-shadow:0 8px 22px rgba(0,0,0,.08);
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .sa-item{
+    display:inline-flex; align-items:center; gap:8px;
+    padding:10px 14px; border-radius:999px; font-weight:700;
+    text-decoration:none; color:#0b3518; background:#e8fbef;
+    border:1px solid #c8f0d6; transition:transform .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  .sa-item:hover{ transform:translateY(-1px); box-shadow:0 10px 18px rgba(0,0,0,.10); background:#f5fff8; }
+  .sa-item i{ font-size:18px }
+  .sa-item.active{ background:#fff; border-color:#fff; color:#13873a }
+
+  .sa-spacer{ flex:1 1 auto }
+  .sa-new{
+    position:relative;
+  }
+  .sa-new-btn{
+    background:#0c8f3a; color:#fff; border:1px solid #0a7a32;
+    border-radius:10px; padding:10px 14px; font-weight:800; display:inline-flex; gap:8px; align-items:center;
+  }
+  .sa-menu{
+    display:none; position:absolute; right:0; top:110%;
+    background:#fff; color:#111; border:1px solid #e6e6e6; border-radius:12px;
+    box-shadow:0 14px 28px rgba(0,0,0,.12); min-width:210px; overflow:hidden; z-index:20;
+  }
+  .sa-menu a{ display:block; padding:10px 12px; text-decoration:none; color:#111; }
+  .sa-menu a:hover{ background:#f6fef8 }
+  .sa-new.open .sa-menu{ display:block }
+
+  /* little info rail under the navbar (optional) */
+  .sa-rail{
+    display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;
+  }
+  .sa-chip{
+    background:#fff; border:1px solid #e8ecef; color:#104b2a;
+    padding:8px 12px; border-radius:10px; font-weight:700;
+  }
+
+  @media (max-width: 900px){
+    .sa-nav{ overflow:auto; scrollbar-width:none; }
+    .sa-nav::-webkit-scrollbar{ display:none; }
+  }
+
 </style>
 {% include 'includes/sidebar.html' %}
 <a href="{% url 'sales:payments_list' %}">Payments list</a>
@@ -189,18 +237,59 @@
       <input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
           <label for="tab2" class="tabs_label">Sales Activities</label>
            <div class="tab-content" id="sales-activities">
-            <div class="sales-overview" id="salesOverview">
-              <div id="Overview">
-                <div class="customer">Customer</div>
-                <div class="invoice">Invoice</div>
-                <div class="recurring-invoice">Recurring invoice</div>
-                <div class="sales-receipts">Sales Receipts</div>
-                <div class="receive-payment"><a href="{% url 'sales:payments_list' %}">Receive payment</a></div>
-                <div class="bank-deposit">Bank Deposit</div>
-                <div class="create-statement">Create Statement</div>
-              </div>
-            </div>
-          </div>
+  <div class="sa-wrap">
+    <!-- Green navbar -->
+    <nav class="sa-nav">
+      <a class="sa-item" href="{% url 'sowaf:customers' %}">
+        <i class='bx bx-user-voice'></i> Customers
+      </a>
+
+      <a class="sa-item" href="{% url 'sales:add-invoice' %}">
+        <i class='bx bx-file'></i> Invoice
+      </a>
+
+      <a class="sa-item" href="#">
+        <i class='bx bx-refresh'></i> Recurring invoice
+      </a>
+
+      <a class="sa-item" href="{% url 'sales:add-receipt' %}">
+        <i class='bx bx-receipt'></i> Sales receipts
+      </a>
+
+      <a class="sa-item" href="{% url 'sales:receive-payment' %}">
+        <i class='bx bx-credit-card'></i> Receive payment
+      </a>
+
+      <a class="sa-item" href="#">
+        <i class='bx bx-trending-up'></i> Bank deposit
+      </a>
+
+      <a class="sa-item" href="#">
+        <i class='bx bx-spreadsheet'></i> Create statement
+      </a>
+
+      <div class="sa-spacer"></div>
+
+      <!-- New dropdown (keeps to the right) -->
+      <div class="sa-new" id="saNew">
+        <div class="sa-menu">
+          <a href="{% url 'sales:add-invoice' %}"><i class='bx bx-file'></i> Create Invoice</a>
+          <a href="{% url 'sales:add-receipt' %}"><i class='bx bx-receipt'></i> Create Sales Receipt</a>
+          <a href="{% url 'sales:receive-payment' %}"><i class='bx bx-credit-card'></i> Receive Payment</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Optional: small info rail below the navbar (you can remove if you prefer) -->
+    <div class="sa-rail">
+      <span class="sa-chip">Quick links</span>
+      <span class="sa-chip">Invoices • Overdue: {{ inv_analytics.over_count|default:0 }}</span>
+      <span class="sa-chip">Unpaid Invoices: {{ inv_analytics.unpaid_count|default:0 }}</span>
+      <span class="sa-chip">Paid Invoices: {{ inv_analytics.paid_count|default:0 }}</span>
+    </div>
+  </div>
+</div>
+
             <input type="radio" class="tabs_radio" name="tabs-example" id="tab3">
             <label for="tab3" class="tabs_label">Products and Services</label>
               <div class="tab-content">

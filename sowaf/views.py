@@ -13,7 +13,7 @@ from datetime import timedelta, date
 from decimal import Decimal
 from django.utils import timezone
 from django.shortcuts import render
-from django.db.models import Sum, Value, F, Q, DecimalField
+from django.db.models import Sum, Value, F, Q, DecimalField,ExpressionWrapper
 from django.db.models.functions import Coalesce, Cast, TruncDate
 from django.core.files import File
 from django.conf import settings
@@ -25,7 +25,7 @@ from django.db.models import Sum, F, Value
 from django.db.models.functions import Coalesce
 from sales.views import _invoice_analytics 
 from django.contrib.auth.decorators import login_required
-from sales.models import Newinvoice  
+from sales.models import Newinvoice,Payment,PaymentInvoice 
 from accounts.models import Account,JournalEntry,JournalLine
 from sowaf.models import Newcustomer, Newsupplier
 from expenses.models import Bill
@@ -33,10 +33,14 @@ from . models import Newcustomer, Newsupplier,Newclient,Newemployee,Newasset
 
 # Create your views here.
 # Constants / helpers
+ZERO = Decimal("0.00")
 INCOME_TYPES  = {"income", "other income"}
 EXPENSE_TYPES = {"expense", "other expense", "cost of goods sold"}
 BANK_TYPES    = {"bank", "cash and cash equivalents"}
 ZERO_DEC      = Value(Decimal("0.00"), output_field=DecimalField(max_digits=18, decimal_places=2))
+
+DEC = DecimalField(max_digits=18, decimal_places=2)
+ZERO_DEC = Value(Decimal("0.00"), output_field=DEC)
 def _to_float(x):
     try:
         return float(x or 0)
@@ -527,16 +531,156 @@ def import_assets(request):
         return redirect('sowaf:assets')
 
 # customer view
+def _dec(x):
+    try:
+        return Decimal(str(x or "0"))
+    except Exception:
+        return ZERO
+
 def customers(request):
     q = (request.GET.get("q") or "").strip()
-    customers = Newcustomer.objects.all()
+    customers_qs = Newcustomer.objects.all()
     if q:
-        customers = customers.filter(
+        customers_qs = customers_qs.filter(
             Q(customer_name__icontains=q) |
             Q(company_name__icontains=q)
         )
-    return render(request, "Customers.html", {"customers": customers, "q": q})
 
+    # --- Analytics (last 30 days) computed in Python to avoid mixed types ---
+    today = timezone.localdate()
+    start = today - timedelta(days=30)
+
+    # Pull invoices you care about
+    inv_qs = (
+        Newinvoice.objects
+        .filter(date_created__gte=start, date_created__lte=today)
+        .select_related("customer")
+    )
+
+    amount_unbilled = Decimal("0.00")   # if you don't have "draft/unbilled", this can stay 0
+    count_unbilled  = 0
+
+    amount_overdue = Decimal("0.00")
+    count_overdue  = 0
+
+    amount_open = Decimal("0.00")
+    count_open  = 0
+
+    # If you have a Payments/Receipt model, compute recent paid; else leave 0
+    amount_recent = Decimal("0.00")
+    count_recent  = 0
+
+    # Example: iterate invoices and compute balances like you do on Home
+    for inv in inv_qs:
+        total_due   = Decimal(inv.total_due or 0)
+        amount_paid = Decimal(getattr(inv, "amount_paid", 0) or 0)  # adapt if your field differs
+        balance     = max(total_due - amount_paid, Decimal("0.00"))
+
+        # Unbilled example (only if you have a draft flag/status)
+        if getattr(inv, "status", "") in {"draft", "unbilled"}:
+            amount_unbilled += total_due
+            count_unbilled  += 1
+            continue  # usually draft won't also be "open/overdue"
+
+        if balance > 0 and inv.due_date and inv.due_date < today:
+            amount_overdue += balance
+            count_overdue  += 1
+        elif balance > 0:
+            amount_open += balance
+            count_open  += 1
+
+    # Recent payments (last 30 days) — adapt to your payments model/fields if present
+    try:
+        pay_qs = Payment.objects.filter(payment_date__gte=start, payment_date__lte=today)  # <-- your model
+        for p in pay_qs:
+            amount_recent += Decimal(p.amount or 0)
+            count_recent  += 1
+    except NameError:
+        # No Payment model available yet
+        pass
+
+    total_for_pct = amount_unbilled + amount_overdue + amount_open + amount_recent
+    def pct(x):
+        return round(float((x / total_for_pct) * Decimal("100")) if total_for_pct > 0 else 0.0, 2)
+
+    analytics = {
+        "amount_unbilled": amount_unbilled,
+        "amount_overdue":  amount_overdue,
+        "amount_open":     amount_open,
+        "amount_recent":   amount_recent,
+
+        "count_unbilled":  count_unbilled,
+        "count_overdue":   count_overdue,
+        "count_open":      count_open,
+        "count_recent":    count_recent,
+
+        "pct_unbilled":    pct(amount_unbilled),
+        "pct_overdue":     pct(amount_overdue),
+        "pct_open":        pct(amount_open),
+        "pct_recent":      pct(amount_recent),
+    }
+
+    return render(request, "Customers.html", {
+        "customers": customers_qs,
+        "q": q,
+        "analytics": analytics,
+    })
+def _cast(field_name):
+    return Cast(F(field_name), DEC)
+
+
+def customer_detail(request, pk):
+    customer = get_object_or_404(Newcustomer, pk=pk)
+    today = timezone.localdate()
+    recent_start = today - timedelta(days=30)
+
+    # Base invoices for this customer, annotated with total_due (Decimal) and total paid (from payments_applied)
+    inv_base = (
+        Newinvoice.objects
+        .filter(customer=customer)
+        .annotate(
+            total_due_c = Coalesce(Cast(F("total_due"), DEC), ZERO),
+            paid_c      = Coalesce(Sum(Cast(F("payments_applied__amount_paid"), DEC)), ZERO),
+        )
+    ).annotate(
+        balance = ExpressionWrapper(F("total_due_c") - F("paid_c"), output_field=DEC)
+    )
+
+    # Unbilled: no separate concept in your schema -> zeros
+    amount_unbilled = Decimal("0.00")
+    count_unbilled  = 0
+
+    # Overdue: due_date < today and balance > 0
+    overdue_qs = inv_base.filter(due_date__lt=today, balance__gt=0)
+    amount_overdue = overdue_qs.aggregate(v=Coalesce(Sum("balance"), ZERO))["v"] or Decimal("0.00")
+    count_overdue  = overdue_qs.count()
+
+    # Open (includes overdue): balance > 0
+    open_qs = inv_base.filter(balance__gt=0)
+    amount_open = open_qs.aggregate(v=Coalesce(Sum("balance"), ZERO))["v"] or Decimal("0.00")
+    count_open  = open_qs.count()
+
+    # Recently paid (last 30 days) — sum of amounts applied on payments for this customer
+    pay_qs = Payment.objects.filter(customer=customer, payment_date__gte=recent_start)
+    amount_recent = pay_qs.aggregate(
+        v=Coalesce(Sum(Cast(F("applied_invoices__amount_paid"), DEC)), ZERO)
+    )["v"] or Decimal("0.00")
+    count_recent = pay_qs.count()
+    tab = request.GET.get("tab", "transactions")
+    context = {
+        "customer": customer,
+        "analytics": {
+            "amount_unbilled": amount_unbilled, "count_unbilled": count_unbilled,
+            "amount_overdue": amount_overdue,   "count_overdue": count_overdue,
+            "amount_open": amount_open,         "count_open": count_open,
+            "amount_recent": amount_recent,     "count_recent": count_recent,
+        },
+        # tables for the QuickBooks-style tabs (you can render these under your tabbed navbar)
+        "open_invoices": open_qs.select_related("customer").order_by("-due_date")[:50],
+        "recent_payments": pay_qs.select_related("customer").order_by("-payment_date")[:50],
+        "tab": tab,
+    }
+    return render(request, "customer_detail.html", context)
 # making a customer active and inactive
 def make_inactive_customer(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)

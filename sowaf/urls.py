@@ -16,6 +16,7 @@ urlpatterns = [
     
     # customer urls
     path('customers/', views.customers, name='customers'),
+    path("customers/<int:pk>/", views.customer_detail, name="customer-detail"),
     path('customers/add/', views.add_customer, name='add-customer'),
     path('customers/edit/<str:pk>/', views.edit_customer, name='edit-customer'),
     path('customers/import/import-customers', views.import_customers, name='import-customers'),
