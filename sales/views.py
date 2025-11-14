@@ -17,9 +17,11 @@ from django.db.models.functions import Coalesce, Cast
 from django.core.files import File
 from django.conf import settings
 from django.contrib import messages
+from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 from .models import Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,SalesReceipt,SalesReceiptLine
 from sowaf.models import Newcustomer
+from .models import Statement, StatementLine
 from django.http import JsonResponse
 from django.db.models import Sum, F, Value
 from django.utils.dateparse import parse_date
@@ -1480,3 +1482,260 @@ def receipt_print(request, pk: int):
     }
     return render(request, "receipt_print.html", context)
 # end
+
+
+# working on the statements
+def _dec(x):
+    try:
+        return Decimal(str(x or "0"))
+    except Exception:
+        return Decimal("0.00")
+
+
+def _customer_opening_balance(customer_id, start_date):
+    """
+    Opening balance = (all invoice totals before start) - (all credits before start).
+    Credits = payments applied to those invoices + sales receipts amounts.
+    """
+    inv_total = (
+        Newinvoice.objects
+        .filter(customer_id=customer_id, date_created__lt=start_date)
+        .aggregate(total=Coalesce(Sum(Cast("total_due", DecimalField(max_digits=18, decimal_places=2))),
+                                  Value(Decimal("0.00"))))["total"]
+        or Decimal("0.00")
+    )
+
+    paid_total = (
+        PaymentInvoice.objects
+        .filter(invoice__customer_id=customer_id, payment__payment_date__lt=start_date)
+        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["total"]
+        or Decimal("0.00")
+    )
+
+    # Treat Sales Receipts as immediate credits to A/R
+    receipts_total = (
+        SalesReceipt.objects
+        .filter(customer_id=customer_id, receipt_date__lt=start_date)
+        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["total"]
+        or Decimal("0.00")
+    )
+
+    return _dec(inv_total) - _dec(paid_total) - _dec(receipts_total)
+
+
+def _period_rows(customer_id, start_date, end_date):
+    """
+    Build period activity rows across invoices, payments (applied), and sales receipts.
+    Amount sign convention: +invoice total, -payment amount, -receipt amount.
+    """
+    rows = []
+
+    # Invoices in range
+    inv_qs = (
+        Newinvoice.objects
+        .filter(customer_id=customer_id, date_created__gte=start_date, date_created__lte=end_date)
+        .annotate(total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)))
+        .order_by("date_created", "id")
+    )
+    for inv in inv_qs:
+        rows.append({
+            "date": inv.date_created,
+            "kind": "invoice",
+            "ref": f"INV-{inv.id:04d}",
+            "memo": (inv.memo or "")[:180] if hasattr(inv, "memo") else "",
+            "amount": _dec(inv.total_due_dec),
+            "source_type": "invoice",
+            "source_id": inv.id,
+        })
+
+    # Payments (use applied part only) in range
+    pay_lines = (
+        PaymentInvoice.objects
+        .filter(invoice__customer_id=customer_id, payment__payment_date__gte=start_date, payment__payment_date__lte=end_date)
+        .select_related("payment")
+        .order_by("payment__payment_date", "id")
+    )
+    for pli in pay_lines:
+        p = pli.payment
+        rows.append({
+            "date": p.payment_date,
+            "kind": "payment",
+            "ref": p.reference_no or f"PAY-{p.id:04d}",
+            "memo": (p.memo or "")[:180],
+            "amount": -_dec(pli.amount_paid),
+            "source_type": "payment",
+            "source_id": p.id,
+        })
+
+    # Sales Receipts in range (reduce A/R)
+    rec_qs = (
+        SalesReceipt.objects
+        .filter(customer_id=customer_id, receipt_date__gte=start_date, receipt_date__lte=end_date)
+        .order_by("receipt_date", "id")
+    )
+    for r in rec_qs:
+        rows.append({
+            "date": r.receipt_date,
+            "kind": "sales_receipt",
+            "ref": r.reference_no or f"RCPT-{r.id:04d}",
+            "memo": (r.memo or "")[:180],
+            "amount": -_dec(r.amount_paid),
+            "source_type": "sales_receipt",
+            "source_id": r.id,
+        })
+
+    rows.sort(key=lambda x: (x["date"], x["source_type"], x["source_id"]))
+    return rows
+
+
+def _filter_by_type(rows, statement_type, customer_id, start_date):
+    """
+    Adapts the period rows for the selected statement type.
+    """
+    if statement_type == Statement.StatementType.OPEN_ITEM:
+        # Only invoices that still have balance as of today
+        today = timezone.now().date()
+        inv_open = (
+            Newinvoice.objects
+            .filter(customer_id=customer_id)
+            .annotate(
+                total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
+                total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+            )
+            .annotate(outstanding=F("total_due_dec") - F("total_paid"))
+            .filter(outstanding__gt=0)
+        )
+        ids = set(inv_open.values_list("id", flat=True))
+        return [r for r in rows if r["kind"] == "invoice" and r["source_id"] in ids]
+
+    # Balance Forward shows only a single BFWD line + period activity (which we already have)
+    # We’ll add the BFWD line in the save/preview builder; here we return as is.
+    return rows
+
+
+@require_http_methods(["GET", "POST"])
+
+@require_http_methods(["GET", "POST"])
+def statement_new(request):
+    customer_id = request.GET.get("customer_id") or request.POST.get("customer_id")
+    customer = get_object_or_404(Newcustomer, pk=int(customer_id)) if customer_id else None
+
+    today = timezone.now().date()
+    default_start = today - timedelta(days=30)
+    default_end = today
+
+    # Form fields (GET defaults)
+    statement_type = (request.GET.get("type") or request.POST.get("statement_type") or Statement.StatementType.TRANSACTION)
+    statement_date = request.POST.get("statement_date") or today.isoformat()
+    start_date = request.POST.get("start_date") or default_start.isoformat()
+    end_date = request.POST.get("end_date") or default_end.isoformat()
+    email_to = request.POST.get("email_to") or (customer.email if customer else "")
+
+    # Build preview data
+    rows = []
+    opening_balance = Decimal("0.00")
+    if customer:
+        sd = timezone.datetime.fromisoformat(start_date).date()
+        ed = timezone.datetime.fromisoformat(end_date).date()
+        opening_balance = _customer_opening_balance(customer.id, sd)
+        rows = _period_rows(customer.id, sd, ed)
+        rows = _filter_by_type(rows, statement_type, customer.id, sd)
+
+    # Compute running + (optional) Balance Forward line
+    preview_lines = []
+    run = opening_balance
+    if statement_type in (Statement.StatementType.TRANSACTION, Statement.StatementType.BAL_FWD):
+        # Opening or Balance Forward header
+        preview_lines.append({
+            "date": start_date,
+            "kind": "opening_balance" if statement_type == Statement.StatementType.TRANSACTION else "balance_forward",
+            "ref": "",
+            "memo": "Opening Balance" if statement_type == Statement.StatementType.TRANSACTION else "Balance Forward",
+            "amount": Decimal("0.00") if statement_type == Statement.StatementType.TRANSACTION else opening_balance,
+        })
+        if statement_type == Statement.StatementType.BAL_FWD:
+            run += opening_balance
+
+    elif statement_type == Statement.StatementType.OPEN_ITEM:
+        # No opening line for Open Item format
+        pass
+
+    # Add period lines
+    for r in rows:
+        # For Transaction statement we show opening balance but do not change it (QB style)
+        amt = r["amount"]
+        if statement_type != Statement.StatementType.TRANSACTION:
+            run += amt
+        preview_lines.append({
+            **r,
+            "running_balance": run,
+        })
+
+    closing_balance = run if statement_type != Statement.StatementType.TRANSACTION else opening_balance + sum((r["amount"] for r in rows), Decimal("0"))
+
+    if request.method == "POST":
+        if not customer:
+            return redirect(request.path)
+
+        st = Statement.objects.create(
+            customer=customer,
+            statement_date=statement_date,
+            start_date=start_date,
+            end_date=end_date,
+            statement_type=statement_type,
+            email_to=email_to or None,
+            opening_balance=opening_balance,
+            closing_balance=closing_balance,
+            memo=(request.POST.get("memo") or "").strip(),
+        )
+
+        # Persist snapshot lines
+        run_save = opening_balance if statement_type != Statement.StatementType.TRANSACTION else opening_balance
+        if statement_type in (Statement.StatementType.TRANSACTION, Statement.StatementType.BAL_FWD):
+            StatementLine.objects.create(
+                statement=st,
+                date=start_date,
+                kind=StatementLine.LineKind.OPENING if statement_type == Statement.StatementType.TRANSACTION else StatementLine.LineKind.BAL_FWD,
+                ref_no="",
+                memo="Opening Balance" if statement_type == Statement.StatementType.TRANSACTION else "Balance Forward",
+                amount=Decimal("0.00") if statement_type == Statement.StatementType.TRANSACTION else opening_balance,
+                running_balance=run_save if statement_type == Statement.StatementType.BAL_FWD else opening_balance,
+            )
+        for r in rows:
+            if statement_type != Statement.StatementType.TRANSACTION:
+                run_save += r["amount"]
+            StatementLine.objects.create(
+                statement=st,
+                date=r["date"],
+                kind={
+                    "invoice": StatementLine.LineKind.INVOICE,
+                    "payment": StatementLine.LineKind.PAYMENT,
+                    "sales_receipt": StatementLine.LineKind.SALES_RECEIPT,
+                }[r["kind"]],
+                ref_no=r["ref"],
+                memo=r["memo"],
+                amount=r["amount"],
+                running_balance=run_save if statement_type != Statement.StatementType.TRANSACTION else None,
+                source_type=r["source_type"],
+                source_id=r["source_id"],
+            )
+        return redirect("sales:statement-detail", pk=st.pk)
+
+    return render(request, "statement_form.html", {
+        "customer": customer,
+        "statement_type": statement_type,
+        "statement_date": statement_date,
+        "start_date": start_date,
+        "end_date": end_date,
+        "email_to": email_to,
+        "opening_balance": opening_balance,
+        "closing_balance": closing_balance,
+        "preview_lines": preview_lines,
+    })
+
+
+
+
+def statement_detail(request, pk):
+    st = get_object_or_404(Statement.objects.select_related("customer").prefetch_related("lines"), pk=pk)
+    return render(request, "statement_detail.html", {"st": st})

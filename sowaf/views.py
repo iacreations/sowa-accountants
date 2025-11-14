@@ -1,9 +1,10 @@
-from django.shortcuts import render
+from django.urls import reverse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse
 from openpyxl import Workbook
 from tempfile import NamedTemporaryFile
 from datetime import datetime, timedelta
+from django.urls import reverse, NoReverseMatch
 from django.utils import timezone
 import openpyxl
 import csv
@@ -13,7 +14,7 @@ from datetime import timedelta, date
 from decimal import Decimal
 from django.utils import timezone
 from django.shortcuts import render
-from django.db.models import Sum, Value, F, Q, DecimalField,ExpressionWrapper
+from django.db.models import Sum, Value, F, Q, DecimalField,ExpressionWrapper,Count 
 from django.db.models.functions import Coalesce, Cast, TruncDate
 from django.core.files import File
 from django.conf import settings
@@ -21,11 +22,12 @@ from django.contrib import messages
 from datetime import timedelta
 from decimal import Decimal
 from django.utils import timezone
-from django.db.models import Sum, F, Value
-from django.db.models.functions import Coalesce
+from django.db.models import Sum, F, Value, When,Case
+from django.db.models import OuterRef, Subquery
+from django.db.models.functions import Coalesce,Cast
 from sales.views import _invoice_analytics 
 from django.contrib.auth.decorators import login_required
-from sales.models import Newinvoice,Payment,PaymentInvoice 
+from sales.models import Newinvoice,Payment,PaymentInvoice,SalesReceipt
 from accounts.models import Account,JournalEntry,JournalLine
 from sowaf.models import Newcustomer, Newsupplier
 from expenses.models import Bill
@@ -46,6 +48,22 @@ def _to_float(x):
         return float(x or 0)
     except Exception:
         return 0.0
+
+def status_for_invoice(inv, total: Decimal, paid: Decimal, balance: Decimal) -> str:
+    """
+    Simple, consistent status for an invoice.
+    total/paid/balance are Decimals precomputed by the caller.
+    """
+    today = timezone.now().date()
+    if balance <= 0:
+        return "Paid"
+    # overdue if due_date exists and is in the past
+    due = getattr(inv, "due_date", None)
+    if due and due < today:
+        return "Overdue"
+    if paid > 0:
+        return "Partially paid"
+    return "Open"
 
 def home(request):
     today = timezone.localdate()
@@ -537,87 +555,129 @@ def _dec(x):
     except Exception:
         return ZERO
 
+
 def customers(request):
     q = (request.GET.get("q") or "").strip()
-    customers_qs = Newcustomer.objects.all()
-    if q:
-        customers_qs = customers_qs.filter(
-            Q(customer_name__icontains=q) |
-            Q(company_name__icontains=q)
-        )
 
-    # --- Analytics (last 30 days) computed in Python to avoid mixed types ---
-    today = timezone.localdate()
-    start = today - timedelta(days=30)
-
-    # Pull invoices you care about
-    inv_qs = (
-        Newinvoice.objects
-        .filter(date_created__gte=start, date_created__lte=today)
-        .select_related("customer")
+    # ---------- Correlated subqueries ----------
+    # total paid per invoice (scalar subquery)
+    paid_per_invoice_sq = (
+        PaymentInvoice.objects
+        .filter(invoice_id=OuterRef("pk"))
+        .values("invoice_id")
+        .annotate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
+        .values("total")[:1]
     )
 
-    amount_unbilled = Decimal("0.00")   # if you don't have "draft/unbilled", this can stay 0
-    count_unbilled  = 0
+    # invoices annotated with due (Decimal), paid (Subquery), outstanding (ExpressionWrapper)
+    inv_all = (
+        Newinvoice.objects
+        .annotate(
+            total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
+            paid=Coalesce(Subquery(paid_per_invoice_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
+                          Value(Decimal("0.00")))
+        )
+        .annotate(
+            raw_outstanding=ExpressionWrapper(F("total_due_dec") - F("paid"),
+                                              output_field=DecimalField(max_digits=18, decimal_places=2)),
+            outstanding=Case(
+                When(raw_outstanding__gt=0, then=F("raw_outstanding")),
+                default=Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            )
+        )
+    )
 
-    amount_overdue = Decimal("0.00")
-    count_overdue  = 0
+    # per-customer open balance (sum of outstanding for that customer) as Subquery
+    per_customer_open_sq = (
+        inv_all.filter(customer_id=OuterRef("pk"))
+        .values("customer_id")
+        .annotate(sum_outstanding=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))))
+        .values("sum_outstanding")[:1]
+    )
 
-    amount_open = Decimal("0.00")
-    count_open  = 0
+    # ---------- Base customers queryset with open_balance annotation ----------
+    customers_qs = (
+        Newcustomer.objects
+        .annotate(
+            open_balance=Coalesce(
+                Subquery(per_customer_open_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
+                Value(Decimal("0.00"))
+            )
+        )
+    )
+    if q:
+        customers_qs = customers_qs.filter(
+            Q(customer_name__icontains=q) | Q(company_name__icontains=q)
+        )
 
-    # If you have a Payments/Receipt model, compute recent paid; else leave 0
-    amount_recent = Decimal("0.00")
-    count_recent  = 0
+    # ---------- Dashboard analytics (all computed from inv_all; no nested aggregates) ----------
+    today = timezone.now().date()
+    cutoff = today - timedelta(days=30)
 
-    # Example: iterate invoices and compute balances like you do on Home
-    for inv in inv_qs:
-        total_due   = Decimal(inv.total_due or 0)
-        amount_paid = Decimal(getattr(inv, "amount_paid", 0) or 0)  # adapt if your field differs
-        balance     = max(total_due - amount_paid, Decimal("0.00"))
+    # open = sum of outstanding where > 0
+    open_agg = inv_all.filter(outstanding__gt=0).aggregate(
+        amount=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))),
+        count=Count("id")
+    )
 
-        # Unbilled example (only if you have a draft flag/status)
-        if getattr(inv, "status", "") in {"draft", "unbilled"}:
-            amount_unbilled += total_due
-            count_unbilled  += 1
-            continue  # usually draft won't also be "open/overdue"
+    # overdue = outstanding where due_date < today
+    overdue_agg = inv_all.filter(outstanding__gt=0, due_date__lt=today).aggregate(
+        amount=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))),
+        count=Count("id")
+    )
 
-        if balance > 0 and inv.due_date and inv.due_date < today:
-            amount_overdue += balance
-            count_overdue  += 1
-        elif balance > 0:
-            amount_open += balance
-            count_open  += 1
+    # unbilled (if you don’t track estimates/drafts, keep zeros)
+    unbilled_amount = Decimal("0.00")
+    unbilled_count = 0
 
-    # Recent payments (last 30 days) — adapt to your payments model/fields if present
-    try:
-        pay_qs = Payment.objects.filter(payment_date__gte=start, payment_date__lte=today)  # <-- your model
-        for p in pay_qs:
-            amount_recent += Decimal(p.amount or 0)
-            count_recent  += 1
-    except NameError:
-        # No Payment model available yet
-        pass
+    # recent payments = (applied payments in last 30d) + (cash sales receipts paid in last 30d)
+    recent_paid_from_payments = (
+        PaymentInvoice.objects
+        .filter(payment__payment_date__gte=cutoff)
+        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
+        ["total"]
+    ) or Decimal("0.00")
 
-    total_for_pct = amount_unbilled + amount_overdue + amount_open + amount_recent
+    recent_paid_from_receipts = (
+        SalesReceipt.objects
+        .filter(receipt_date__gte=cutoff)
+        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
+        ["total"]
+    ) or Decimal("0.00")
+
+    amount_recent = recent_paid_from_payments + recent_paid_from_receipts
+    recent_payments_count = Payment.objects.filter(payment_date__gte=cutoff).count()
+    recent_receipts_count = SalesReceipt.objects.filter(receipt_date__gte=cutoff).count()
+    count_recent = recent_payments_count + recent_receipts_count
+
+    total_for_pct = (
+        (unbilled_amount or Decimal("0")) +
+        (overdue_agg["amount"] or Decimal("0")) +
+        (open_agg["amount"] or Decimal("0")) +
+        (amount_recent or Decimal("0"))
+    ) or Decimal("1")
+
     def pct(x):
-        return round(float((x / total_for_pct) * Decimal("100")) if total_for_pct > 0 else 0.0, 2)
+        return float((x or Decimal("0")) * Decimal("100") / total_for_pct)
 
     analytics = {
-        "amount_unbilled": amount_unbilled,
-        "amount_overdue":  amount_overdue,
-        "amount_open":     amount_open,
-        "amount_recent":   amount_recent,
+        "amount_unbilled": unbilled_amount,
+        "count_unbilled": unbilled_count,
 
-        "count_unbilled":  count_unbilled,
-        "count_overdue":   count_overdue,
-        "count_open":      count_open,
-        "count_recent":    count_recent,
+        "amount_overdue": overdue_agg["amount"] or Decimal("0"),
+        "count_overdue": int(overdue_agg["count"] or 0),
 
-        "pct_unbilled":    pct(amount_unbilled),
-        "pct_overdue":     pct(amount_overdue),
-        "pct_open":        pct(amount_open),
-        "pct_recent":      pct(amount_recent),
+        "amount_open": open_agg["amount"] or Decimal("0"),
+        "count_open": int(open_agg["count"] or 0),
+
+        "amount_recent": amount_recent,
+        "count_recent": count_recent,
+
+        "pct_unbilled": pct(unbilled_amount),
+        "pct_overdue": pct(overdue_agg["amount"]),
+        "pct_open": pct(open_agg["amount"]),
+        "pct_recent": pct(amount_recent),
     }
 
     return render(request, "Customers.html", {
@@ -625,60 +685,152 @@ def customers(request):
         "q": q,
         "analytics": analytics,
     })
+
 def _cast(field_name):
     return Cast(F(field_name), DEC)
-
+def _safe_url(pattern_name, *args):
+    try:
+        return reverse(pattern_name, args=args)
+    except NoReverseMatch:
+        return "#"
 
 def customer_detail(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)
-    today = timezone.localdate()
-    recent_start = today - timedelta(days=30)
+    tab = request.GET.get("tab", "transactions")
 
-    # Base invoices for this customer, annotated with total_due (Decimal) and total paid (from payments_applied)
-    inv_base = (
+    inv_qs_base = (
         Newinvoice.objects
         .filter(customer=customer)
         .annotate(
-            total_due_c = Coalesce(Cast(F("total_due"), DEC), ZERO),
-            paid_c      = Coalesce(Sum(Cast(F("payments_applied__amount_paid"), DEC)), ZERO),
+            total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
+            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00")))
         )
-    ).annotate(
-        balance = ExpressionWrapper(F("total_due_c") - F("paid_c"), output_field=DEC)
     )
 
-    # Unbilled: no separate concept in your schema -> zeros
-    amount_unbilled = Decimal("0.00")
-    count_unbilled  = 0
+    # Open/Overdue balances (as you had)
+    from django.utils.timezone import now
+    today = now().date()
+    open_balance = sum(
+        (row.total_due_dec or Decimal("0.00")) - (row.total_paid or Decimal("0.00"))
+        for row in inv_qs_base
+    )
+    overdue_balance = sum(
+        (row.total_due_dec or Decimal("0.00")) - (row.total_paid or Decimal("0.00"))
+        for row in inv_qs_base.filter(due_date__lt=today)
+    )
+    count_invoices = inv_qs_base.count()
 
-    # Overdue: due_date < today and balance > 0
-    overdue_qs = inv_base.filter(due_date__lt=today, balance__gt=0)
-    amount_overdue = overdue_qs.aggregate(v=Coalesce(Sum("balance"), ZERO))["v"] or Decimal("0.00")
-    count_overdue  = overdue_qs.count()
+    # ---------- transactions (existing code, unchanged) ----------
+    transactions_rows = []
+    inv_qs = inv_qs_base.select_related("customer").order_by("-date_created", "-id")
 
-    # Open (includes overdue): balance > 0
-    open_qs = inv_base.filter(balance__gt=0)
-    amount_open = open_qs.aggregate(v=Coalesce(Sum("balance"), ZERO))["v"] or Decimal("0.00")
-    count_open  = open_qs.count()
+    def _fallback_status(inv, total, paid, bal):
+        if bal <= 0:
+            return "Paid"
+        if getattr(inv, "due_date", None) and inv.due_date < today:
+            return "Overdue"
+        return "Open"
 
-    # Recently paid (last 30 days) — sum of amounts applied on payments for this customer
-    pay_qs = Payment.objects.filter(customer=customer, payment_date__gte=recent_start)
-    amount_recent = pay_qs.aggregate(
-        v=Coalesce(Sum(Cast(F("applied_invoices__amount_paid"), DEC)), ZERO)
-    )["v"] or Decimal("0.00")
-    count_recent = pay_qs.count()
-    tab = request.GET.get("tab", "transactions")
+    for inv in inv_qs:
+        total = inv.total_due_dec or Decimal("0.00")
+        paid  = inv.total_paid or Decimal("0.00")
+        bal   = max(total - paid, Decimal("0.00"))
+        try:
+            status = status_for_invoice(inv, total, paid, bal)
+        except NameError:
+            status = _fallback_status(inv, total, paid, bal)
+
+        transactions_rows.append({
+            "id": inv.id,
+            "date": getattr(inv, "date_created", None),
+            "type": "Invoice",
+            "no": f"INV-{inv.id:04d}",
+            "customer": customer.customer_name,
+            "memo": (inv.memo or "")[:140],
+            "amount": total,
+            "status": status,
+            "edit_url":  reverse("sales:edit-invoice", args=[inv.id]),
+            "view_url":  reverse("sales:invoice-detail", args=[inv.id]),
+            "print_url": reverse("sales:invoice-print", args=[inv.id]),
+        })
+
+    pay_qs = (
+        Payment.objects
+        .filter(customer=customer)
+        .annotate(applied_total=Coalesce(Sum("applied_invoices__amount_paid"), Value(Decimal("0.00"))))
+        .order_by("-payment_date", "-id")
+    )
+    for p in pay_qs:
+        transactions_rows.append({
+            "id": p.id,
+            "date": p.payment_date,
+            "type": "Payment",
+            "no": (p.reference_no or f"{p.id:04d}"),
+            "customer": customer.customer_name,
+            "memo": (p.memo or "")[:140],
+            "amount": p.applied_total or Decimal("0.00"),
+            "status": "Closed" if (p.applied_total or 0) > 0 else "Unapplied",
+            "edit_url":  reverse("sales:payment-edit", args=[p.id]),
+            "view_url":  reverse("sales:payment-detail", args=[p.id]),
+            "print_url": reverse("sales:payment-print", args=[p.id]),
+        })
+
+    try:
+        sr_qs = SalesReceipt.objects.filter(customer=customer).order_by("-receipt_date", "-id")
+        for r in sr_qs:
+            amount = Decimal(str(r.total_amount or "0"))
+            transactions_rows.append({
+                "id": r.id,
+                "date": getattr(r, "receipt_date", None),
+                "type": "Sales Receipt",
+                "no": (r.reference_no or f"SR-{r.id:04d}"),
+                "customer": customer.customer_name,
+                "memo": (r.memo or "")[:140],
+                "amount": amount,
+                "status": "Closed",
+                "edit_url":  _safe_url("sales:receipt-edit", r.id),
+                "view_url":  _safe_url("sales:receipt-detail", r.id),
+                "print_url": _safe_url("sales:receipt-print", r.id),
+            })
+    except NameError:
+        pass
+
+    transactions_rows.sort(key=lambda r: (r["date"] or today, r["type"], r["id"]), reverse=True)
+
+    # ---------- NEW: statements for this customer ----------
+    statements_rows = []
+    try:
+        from sales.models import Statement  # if not already imported
+        st_qs = Statement.objects.filter(customer=customer).order_by("-statement_date", "-id")
+        for st in st_qs:
+            # use get_*_display when choices exist
+            st_type = getattr(st, "get_statement_type_display", None)
+            st_type = st_type() if callable(st_type) else st.statement_type
+
+            statements_rows.append({
+                "id": st.id,
+                "date": st.statement_date,
+                "no": f"ST-{st.id:04d}",
+                "type": st_type,
+                "start": st.start_date,
+                "end":   st.end_date,
+                "balance": st.closing_balance or Decimal("0.00"),
+                "view_url":  _safe_url("sales:statement-detail", st.id),
+                "print_url": _safe_url("sales:statement-print", st.id),
+                "send_url":  _safe_url("sales:statement-send", st.id),
+            })
+    except Exception:
+        # If the Statement model or urls aren’t present yet, just keep the tab empty
+        statements_rows = []
+
     context = {
         "customer": customer,
-        "analytics": {
-            "amount_unbilled": amount_unbilled, "count_unbilled": count_unbilled,
-            "amount_overdue": amount_overdue,   "count_overdue": count_overdue,
-            "amount_open": amount_open,         "count_open": count_open,
-            "amount_recent": amount_recent,     "count_recent": count_recent,
-        },
-        # tables for the QuickBooks-style tabs (you can render these under your tabbed navbar)
-        "open_invoices": open_qs.select_related("customer").order_by("-due_date")[:50],
-        "recent_payments": pay_qs.select_related("customer").order_by("-payment_date")[:50],
         "tab": tab,
+        "open_balance": open_balance,
+        "overdue_balance": overdue_balance,
+        "count_invoices": count_invoices,
+        "transactions_rows": transactions_rows,
+        "statements_rows": statements_rows,   # <-- pass to template
     }
     return render(request, "customer_detail.html", context)
 # making a customer active and inactive
@@ -714,7 +866,7 @@ def add_customer(request):
         mobile_number =request.POST.get('mobilenum')
         website =request.POST.get('website')
         tin_number =request.POST.get('tin')
-        opening_balance =request.POST.get('balance')
+        # opening_balance =request.POST.get('balance')
         registration_date_str = request.POST.get('today')
         registration_date = None
         if registration_date_str:
@@ -731,7 +883,7 @@ def add_customer(request):
         country =request.POST.get('country')
         notes =request.POST.get('notes')
         attachments =request.FILES.get('attachments')
-        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,opening_balance=opening_balance,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,notes=notes,attachments=attachments)
+        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,notes=notes,attachments=attachments)
         new_customer.save()
         # adding save actions
         save_action = request.POST.get('save_action')
@@ -756,7 +908,7 @@ def edit_customer(request, pk):
         customer.mobile_number = request.POST.get('mobilenum')
         customer.website = request.POST.get('website',customer.website)
         customer.tin_number = request.POST.get('tin',customer.tin_number)
-        customer.opening_balance = request.POST.get('balance',customer.opening_balance)
+        # customer.opening_balance = request.POST.get('balance',customer.opening_balance)
         registration_date_str = request.POST.get('today')
         if registration_date_str:
             try:

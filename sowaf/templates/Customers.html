@@ -158,7 +158,8 @@
         </td>
 
         <td>{{ customer.company_name }}</td>
-        <td>Ush{{ customer.opening_balance|default:0|floatformat:2|intcomma }}</td>
+        <td>Ush{{ customer.open_balance|default:0|floatformat:2|intcomma }}</td>
+
 
         <td>
           <div class="dd">

@@ -1,0 +1,27 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+<div class="wrap" style="max-width:1000px;margin-left: 20%; margin-top: 7%;">
+  <h2 style="color:#39B54B">Statement #{{ st.id }} — {{ st.customer.customer_name }}</h2>
+  <div class="muted">Type: {{ st.get_statement_type_display }} • Period: {{ st.start_date }} → {{ st.end_date }} • Dated: {{ st.statement_date }}</div>
+  <hr>
+  <table class="content-table" style="width:100%">
+    <thead>
+      <tr><th>Date</th><th>Type</th><th>No.</th><th>Memo</th><th style="text-align:right">Amount</th><th style="text-align:right">Running</th></tr>
+    </thead>
+    <tbody>
+      {% for ln in st.lines.all %}
+        <tr>
+          <td>{{ ln.date|date:"Y-m-d" }}</td>
+          <td>{{ ln.get_kind_display }}</td>
+          <td>{{ ln.ref_no }}</td>
+          <td>{{ ln.memo }}</td>
+          <td style="text-align:right">{{ ln.amount|floatformat:2|intcomma }}</td>
+          <td style="text-align:right">{{ ln.running_balance|floatformat:2|intcomma }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><strong>Closing balance:</strong> Ush{{ st.closing_balance|floatformat:2|intcomma }}</p>
+</div>
+{% include 'includes/footer.html' %}

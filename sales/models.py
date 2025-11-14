@@ -159,3 +159,65 @@ class SalesReceiptLine(models.Model):
 
     def __str__(self):
         return f"SR#{self.receipt_id} - {self.description or (self.product and self.product.name) or 'Line'}"
+
+# customer statements
+
+class Statement(models.Model):
+    class StatementType(models.TextChoices):
+        TRANSACTION = "transaction", "Transaction Statement"
+        OPEN_ITEM = "open_item", "Open Item"
+        BAL_FWD = "balance_forward", "Balance Forward"
+
+    customer = models.ForeignKey(Newcustomer, on_delete=models.CASCADE, related_name="statements")
+
+    statement_date = models.DateField(default=timezone.now)
+    start_date = models.DateField()
+    end_date = models.DateField()
+
+    statement_type = models.CharField(
+        max_length=32,
+        choices=StatementType.choices,
+        default=StatementType.TRANSACTION,
+    )
+
+    email_to = models.EmailField(blank=True, null=True)
+
+    # Totals captured at save time (snapshot, not live)
+    opening_balance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0.00"))
+    closing_balance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0.00"))
+
+    memo = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Statement #{self.pk} • {self.customer.customer_name} • {self.statement_date}"
+
+
+class StatementLine(models.Model):
+    class LineKind(models.TextChoices):
+        OPENING = "opening_balance", "Opening Balance"
+        INVOICE = "invoice", "Invoice"
+        PAYMENT = "payment", "Payment"
+        SALES_RECEIPT = "sales_receipt", "Sales Receipt"
+        BAL_FWD = "balance_forward", "Balance Forward"   # used by Balance Forward format
+
+    statement = models.ForeignKey(Statement, on_delete=models.CASCADE, related_name="lines")
+    date = models.DateField()
+    kind = models.CharField(max_length=32, choices=LineKind.choices)
+    ref_no = models.CharField(max_length=64, blank=True)
+    memo = models.CharField(max_length=255, blank=True)
+
+    # Positive = charge, Negative = credit
+    amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0.00"))
+    running_balance = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True, default=Decimal("0.00"))
+
+    # Optional link back to source objects
+    source_type = models.CharField(max_length=32, blank=True)
+    source_id = models.IntegerField(blank=True, null=True)
+
+    class Meta:
+        ordering = ["date", "id"]
+
+    def __str__(self):
+        return f"{self.date} • {self.kind} • {self.amount}"

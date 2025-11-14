@@ -3,106 +3,312 @@
 {% include 'includes/sidebar.html' %}
 
 <style>
-  .cust-card{background:#fff;border:1px solid #e7e7e7;border-radius:14px;padding:16px;box-shadow:0 8px 18px rgba(0,0,0,.05);}
-  .green{color:#39B54B}
-  .tabbar{display:flex;gap:14px;border-bottom:1px solid #e7e7e7;margin-top:14px;}
-  .tabbar a{padding:10px 12px;text-decoration:none;color:#111;border-bottom:2px solid transparent;font-weight:600}
-  .tabbar a.active{color:#39B54B;border-color:#39B54B}
-  .two-col{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-top:12px;}
-  @media(max-width:900px){.two-col{grid-template-columns:1fr}}
-  .badge{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700;color:#475569}
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2ea242;
+    --ink:#0f172a;
+    --muted:#64748b;
+    --card:#ffffff;
+    --stroke:#e6e9ee;
+    --soft:#f6fbf7;
+    --shadow:0 12px 28px rgba(16,24,40,.06);
+  }
+
+  /* Page frame */
+  .wrap{max-width:1200px;padding:0 20px; margin-left: 18%;margin-top: 7%;}
+
+  /* HERO (eye–catching top) */
+  .hero{
+    position:relative; overflow:hidden; border-radius:18px;
+    background: radial-gradient(1200px 300px at -10% -20%, #bff5c9 0%, transparent 60%),
+                linear-gradient(135deg, #f0fff4 0%, #e8fff0 45%, #e6fff6 100%);
+    border:1px solid var(--stroke);
+    box-shadow:var(--shadow);
+  }
+  .hero-grid{
+    display:grid; grid-template-columns:1fr 320px; gap:20px; align-items:stretch;
+  }
+  @media(max-width:1000px){ .hero-grid{grid-template-columns:1fr} }
+
+  /* Identity card */
+  .id-card{padding:20px}
+  .id-row{display:flex; gap:16px; align-items:center}
+  .avatar{width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid #d9f7e1;background:#fff}
+  .avatar-icon{font-size:64px;color:var(--brand)}
+  .name{font-weight:900;color:var(--ink); font-size:26px}
+  .meta{color:var(--muted);font-size:13px}
+
+  /* Stat pills (under hero title) */
+  .pills{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+  .pill{
+    background:#fff;border:1px solid var(--stroke);box-shadow:0 2px 8px rgba(2,6,23,.06);
+    border-radius:999px;padding:8px 12px;font-weight:700;font-size:12px;color:#0b1220;display:flex;align-items:center;gap:8px
+  }
+  .pill .dot{width:8px;height:8px;border-radius:999px}
+  .dot-open{background:#22c55e}
+  .dot-overdue{background:#ef4444}
+  .dot-inv{background:#38bdf8}
+  .dot-paid{background:#a78bfa}
+
+  /* Quick actions bar */
+  .actions{display:flex;flex-wrap:wrap; gap:10px; margin-top:16px}
+  .btn{
+    background:var(--brand); color:#fff; border:0; border-radius:12px; padding:10px 14px;
+    display:inline-flex; align-items:center; gap:8px; font-weight:800; cursor:pointer;
+    box-shadow:0 6px 14px rgba(57,181,75,.25); transition:transform .06s ease;
+    text-decoration:none;
+  }
+  .btn:hover{transform:translateY(-1px); background:var(--brand-600)}
+  .btn.outline{
+    background:#fff;color:var(--brand);border:1px solid #c8efd3;box-shadow:none;
+  }
+
+  /* Financial summary (right) */
+  .summary{
+    background:#ffffffaa; backdrop-filter:saturate(150%) blur(4px);
+    border-left:1px dashed #cde9d3; padding:20px;
+  }
+  .summary h4{margin:0 0 12px;font-weight:900;color:#0b1727}
+  .sum-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed #e9f2ea}
+  .sum-row:last-child{border-bottom:0}
+  .val{font-weight:900}
+  .danger{color:#ef4444}
+
+  /* Tabs (sticky feel) */
+  .tabs{
+    background:var(--card); margin-top:18px; border-radius:14px; border:1px solid var(--stroke);
+    box-shadow:var(--shadow);
+  }
+  .tabbar{
+    position:sticky; top:64px; z-index:3; background:#fff; border-bottom:1px solid var(--stroke);
+    border-top-left-radius:14px; border-top-right-radius:14px; padding:0 14px;
+    display:flex; gap:6px; overflow:auto; scrollbar-width:none;
+  }
+  .tabbar a{
+    padding:12px 14px; text-decoration:none; color:#0f172a; border-bottom:2px solid transparent;
+    font-weight:800; white-space:nowrap; border-radius:10px 10px 0 0;
+  }
+  .tabbar a.active{color:var(--brand); border-color:var(--brand)}
+
+  .panel{padding:16px}
+
+  /* Table polish */
+  .content-table thead th{background:#f8fdfa; color:#0f172a}
+  .content-table tbody tr:hover{background:#f9fffb}
+  .num{text-align:right}
+
+  /* Chips in table */
+  .badge{
+    background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px;
+    font-size:12px;font-weight:800;color:#475569
+  }
+
+  /* new */
+  .action-cell{white-space:nowrap}
+  .row-actions{display:inline-flex;align-items:center;gap:10px}
+  .edit-link{color:#39B54B;font-weight:800;text-decoration:none}
+  .menu-wrap{position:relative;display:inline-block}
+  /* .kebab{background:#f0fdf4;border:1px solid #cceedd;border-radius:8px;padding:4px 8px;cursor:pointer} */
+  .flyout{display:none;position:absolute;right:0;top:110%;background:#fff;border:1px solid #e6e6e6;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.08);min-width:150px;overflow:hidden;z-index:5}
+  .menu-wrap:focus-within .flyout,.menu-wrap:hover .flyout{display:block}
+  .flyout a{display:block;padding:8px 12px;text-decoration:none;color:#111}
+  .flyout a:hover{background:#f6fef8}
 </style>
 
-<div style="margin:12% 16px 24px 16px;">
-  <h2 class="green" style="margin-bottom:8px;">{{ customer.customer_name }}</h2>
+<div class="wrap">
 
-  <div class="two-col">
-    <!-- Left: identity & tabs -->
-    <div class="cust-card">
-      <div style="display:flex;align-items:center;gap:12px;">
-        {% if customer.logo %}
-          <img src="{{ customer.logo.url }}" style="width:56px;height:56px;border-radius:50%;">
-        {% else %}
-          <i class='bx bx-user-circle' style="font-size:56px;color:#39B54B;"></i>
-        {% endif %}
-        <div>
-          <div style="font-weight:800;">{{ customer.company_name|default:"" }}</div>
-          <div style="font-size:12px;color:#6b7280;">
-            {{ customer.email|default:"" }} • {{ customer.phone_number|default:"" }}
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-grid">
+
+      <!-- left: identity, stats, actions -->
+      <div class="id-card">
+        <div class="id-row">
+          {% if customer.logo %}
+            <img src="{{ customer.logo.url }}" class="avatar" alt="logo">
+          {% else %}
+            <i class='bx bx-user-circle avatar-icon'></i>
+          {% endif %}
+          <div>
+            <div class="name" style="color: #39B54B;">{{ customer.customer_name }}</div>
+            <div class="meta">
+              {{ customer.company_name|default:"" }}
+              {% if customer.company_name and customer.email %} • {% endif %}
+              {{ customer.email|default:"" }}
+              {% if customer.phone_number %} • {{ customer.phone_number }}{% endif %}
+            </div>
           </div>
+        </div>
+
+        <!-- stat pills -->
+        <div class="pills">
+          <span class="pill">
+            <span class="dot dot-open"></span> Open balance
+            <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
+          </span>
+          <span class="pill">
+            <span class="dot dot-overdue"></span> Overdue
+            <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
+          </span>
+          <span class="pill">
+            <span class="dot dot-inv"></span> Invoices
+            <span class="val">{{ count_invoices|default:0 }}</span>
+          </span>
+          <span class="pill">
+            <span class="dot dot-paid"></span> Status
+            <span class="val">
+              {% if overdue_balance|default:0 > 0 %}Attention{% else %}Good standing{% endif %}
+            </span>
+          </span>
+        </div>
+
+        <!-- quick actions -->
+        <div class="actions">
+          <a class="btn" href="{% url 'sales:add-invoice' %}?customer_id={{ customer.id }}"><i class='bx bx-receipt'></i> New Invoice</a>
+          <a class="btn outline" href="{% url 'sales:receive-payment' %}?customer_id={{ customer.id }}"><i class='bx bx-dollar'></i> Receive Payment</a>
+          <a class="btn outline" href="{% url 'sales:statement-new' %}?customer_id={{ customer.id }}"><i class='bx bx-file-find'></i> Create statement</a>
         </div>
       </div>
 
-      <!-- Tabs -->
-      <div class="tabbar">
-        <a href="?tab=transactions" class="{% if tab == 'transactions' %}active{% endif %}">Transaction List</a>
-<a href="?tab=statements"   class="{% if tab == 'statements'   %}active{% endif %}">Statements</a>
-<a href="?tab=recurring"    class="{% if tab == 'recurring'    %}active{% endif %}">Recurring Transactions</a>
-<a href="?tab=projects"     class="{% if tab == 'projects'     %}active{% endif %}">Projects</a>
-<a href="?tab=details"      class="{% if tab == 'details'      %}active{% endif %}">Customer Details</a>
-<a href="?tab=notes"        class="{% if tab == 'notes'        %}active{% endif %}">Notes</a>
-<a href="?tab=tasks"        class="{% if tab == 'tasks'        %}active{% endif %}">Tasks</a>
+      <!-- right: financial summary -->
+      <aside class="summary">
+        <h4>Financial summary</h4>
+        <div class="sum-row">
+          <span>Open balance</span>
+          <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
+        </div>
+        <div class="sum-row">
+          <span>Overdue payment</span>
+          <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
+        </div>
+      </aside>
 
-      </div>
+    </div>
+  </section>
 
-      <!-- Tab content -->
-      <div style="padding-top:12px;">
-        {% if tab == 'transactions' %}
-          {% if invoices %}
+  <!-- TABS + CONTENT -->
+  <section class="tabs">
+    <nav class="tabbar">
+      <a href="?tab=transactions" class="{% if tab == 'transactions' %}active{% endif %}">Transaction List</a>
+      <a href="?tab=statements"   class="{% if tab == 'statements'   %}active{% endif %}">Statements</a>
+      <a href="?tab=details"      class="{% if tab == 'details'      %}active{% endif %}">Customer Details</a>
+      <a href="?tab=tasks"        class="{% if tab == 'tasks'        %}active{% endif %}">Tasks</a>
+    </nav>
+
+    <div class="panel">
+      {% if tab == 'transactions' %}
+        {% if transactions_rows %}
           <table class="content-table">
             <thead>
               <tr>
-                <th>Date</th><th>No.</th><th>Type</th><th>Memo</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>No.</th>
+                <th>Customer</th>
+                <th>Memo</th>
+                <th style="text-align:right;">Amount</th>
+                <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {% for inv in invoices %}
-              <tr>
-                <td>{{ inv.date_created|date:"Y-m-d" }}</td>
-                <td>#{{ inv.id }}</td>
-                <td><span class="badge">Invoice</span></td>
-                <td>{{ inv.memo|default:"" }}</td>
-                <td style="text-align:right;">{{ inv.total_due|floatformat:2|intcomma }}</td>
-                <td style="text-align:right;">{{ inv.paid|floatformat:2|intcomma }}</td>
-                <td style="text-align:right;">{{ inv.balance|floatformat:2|intcomma }}</td>
+              {% for r in transactions_rows %}
+              <tr onclick="window.location='{{ r.view_url }}'" style="cursor:pointer">
+                <td>{{ r.date|date:"Y-m-d" }}</td>
+                <td>
+                  {% if r.type == "Invoice" %}
+                    <span class="pill pill-brown">Invoice</span>
+                  {% elif r.type == "Payment" %}
+                    <span class="pill pill-blue">Payment</span>
+                  {% else %}
+                    <span class="pill pill-orange">Sales Receipt</span>
+                  {% endif %}
+                </td>
+                <td>{{ r.no }}</td>
+                <td>{{ r.customer }}</td>
+                <td>{{ r.memo }}</td>
+                <td class="num">{{ r.amount|floatformat:2|intcomma }}</td>
+                <td><span class="status-chip">{{ r.status }}</span></td>
+                <td class="action-cell">
+                  <div class="row-actions" onclick="event.stopPropagation()">
+                    <a class="edit-link" href="{{ r.edit_url }}">Edit</a>
+                    <div class="menu-wrap" tabindex="-1">
+                      <strong class="kebab" aria-haspopup="true" style="border:none">▾</strong>
+                      <div class="flyout" role="menu">
+                        <a role="menuitem" href="{{ r.view_url }}">View</a>
+                        <a role="menuitem" href="{{ r.print_url }}">Print</a>
+                      </div>
+                    </div>
+                  </div>
+                </td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
-          {% else %}
-            <div style="color:#6b7280;">No transactions yet.</div>
-          {% endif %}
-        {% elif tab == 'statements' %}
-          <div style="color:#6b7280;">Statements UI goes here (render the generated statement PDFs or a generator action).</div>
-        {% elif tab == 'recurring' %}
-          <div style="color:#6b7280;">Recurring transactions for this customer.</div>
-        {% elif tab == 'projects' %}
-          <div style="color:#6b7280;">Projects linked to this customer.</div>
-        {% elif tab == 'details' %}
-          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
-            <div><strong>Email:</strong> {{ customer.email|default:"—" }}</div>
-            <div><strong>Phone:</strong> {{ customer.phone_number|default:"—" }}</div>
-            <div><strong>City:</strong> {{ customer.city|default:"—" }}</div>
-            <div><strong>Country:</strong> {{ customer.country|default:"—" }}</div>
-            <div style="grid-column:1/-1;"><strong>Notes:</strong> {{ customer.notes|default:"—" }}</div>
-          </div>
-        {% elif tab == 'notes' %}
-          <div style="color:#6b7280;">Notes composer/list for this customer.</div>
-        {% elif tab == 'tasks' %}
-          <div style="color:#6b7280;">Task list for this customer.</div>
+        {% else %}
+          <div style="color:#6b7280;">No transactions yet.</div>
         {% endif %}
-      </div>
-    </div>
 
-    <!-- Right: financial summary -->
-    <div class="cust-card">
-      <div style="font-weight:800;margin-bottom:8px;">Financial summary</div>
-      <div style="display:grid;row-gap:8px;">
-        <div>Open balance <div style="float:right;font-weight:800;">{{ open_balance|floatformat:2|intcomma }}</div></div>
-        <div>Overdue payment <div style="float:right;font-weight:800;color:#ef4444;">{{ overdue_balance|floatformat:2|intcomma }}</div></div>
-      </div>
+      {% elif tab == 'statements' %}
+        {% if statements_rows %}
+          <table class="content-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>No.</th>
+                <th>Statement Type</th>
+                <th>Start date</th>
+                <th>End date</th>
+                <th style="text-align:right;">Balance</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in statements_rows %}
+              <tr onclick="window.location='{{ r.view_url }}'" style="cursor:pointer">
+                <td>{{ r.date|date:"Y-m-d" }}</td>
+                <td>{{ r.no }}</td>
+                <td>{{ r.type }}</td>
+                <td>{{ r.start|date:"Y-m-d" }}</td>
+                <td>{{ r.end|date:"Y-m-d" }}</td>
+                <td class="num">{{ r.balance|floatformat:2|intcomma }}</td>
+                <td class="action-cell">
+                  <div class="row-actions" onclick="event.stopPropagation()">
+                    <a class="edit-link" href="{{ r.view_url }}">View</a>
+                    <div class="menu-wrap" tabindex="-1">
+                      <strong class="kebab" aria-haspopup="true" style="border:none">▾</strong>
+                      <div class="flyout" role="menu">
+                        <a role="menuitem" href="{{ r.view_url }}">Open</a>
+                        <a role="menuitem" href="{{ r.print_url }}">Print</a>
+                        <a role="menuitem" href="{{ r.send_url }}">Send</a>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div style="color:#6b7280;">No statements yet.</div>
+        {% endif %}
+
+      {% elif tab == 'details' %}
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;">
+          <div><strong>Company:</strong> {{ customer.company_name|default:"—" }}</div>
+          <div><strong>Email:</strong> {{ customer.email|default:"—" }}</div>
+          <div><strong>Phone:</strong> {{ customer.phone_number|default:"—" }}</div>
+          <div><strong>City:</strong> {{ customer.city|default:"—" }}</div>
+          <div><strong>Country:</strong> {{ customer.country|default:"—" }}</div>
+          <div style="grid-column:1/-1"><strong>Notes:</strong> {{ customer.notes|default:"—" }}</div>
+        </div>
+
+      {% elif tab == 'tasks' %}
+        <div class="muted">Task list for this customer.</div>
+      {% endif %}
     </div>
-  </div>
+  </section>
+
 </div>
 
 {% include 'includes/footer.html' %}

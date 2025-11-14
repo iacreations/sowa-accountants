@@ -31,4 +31,8 @@ urlpatterns = [
     path("receive-payment/outstanding.json", views.outstanding_invoices_api, name="outstanding_invoices_api"),
     # payment print
     path("payments/<int:pk>/print/", views.payment_print, name="payment-print"),
+    
+    # statements
+    path("statements/new/", views.statement_new, name="statement-new"),
+    path("statements/<int:pk>/", views.statement_detail, name="statement-detail"),
 ]

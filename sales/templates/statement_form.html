@@ -1,0 +1,219 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2b9a3f;
+    --ink:#0b1324;
+    --muted:#6b7280;
+    --card:#fff;
+    --stroke:#e7e7e7;
+    --soft:#f6fbf7;
+    --shadow:0 14px 32px rgba(10, 24, 40, .08);
+  }
+
+  .wrap{max-width:1140px;margin-left:19%;padding:0 16px; margin-top: 8%;}
+
+  /* HERO */
+  .hero{
+    border:1px solid var(--stroke); border-radius:18px; overflow:hidden;
+    background:
+      radial-gradient(900px 320px at -15% -30%, #bff5c9 0%, transparent 60%),
+      linear-gradient(135deg,#f0fff4 0%,#ebfff4 45%,#e9fffb 100%);
+    box-shadow:var(--shadow);
+  }
+  .hero-grid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:stretch}
+  @media(max-width:1020px){.hero-grid{grid-template-columns:1fr}}
+
+  .id-card{padding:18px 18px 8px 18px}
+  .id-row{display:flex;gap:14px;align-items:center}
+  .avatar{width:56px;height:56px;border-radius:50%;background:#fff;border:2px solid #d9f7e1;display:grid;place-items:center;font-weight:900;color:var(--brand)}
+  .name{font-weight:900;font-size:26px;color:var(--brand)}
+  .meta{color:var(--muted);font-size:13px}
+
+  .chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+  .chip{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--stroke);
+        border-radius:999px;padding:6px 10px;font-weight:800;font-size:12px;box-shadow:0 2px 8px rgba(2,6,23,.06)}
+  .chip .dot{width:8px;height:8px;border-radius:999px}
+  .d1{background:#22c55e}.d2{background:#ef4444}.d3{background:#60a5fa}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .btn{background:var(--brand);color:#fff;border:0;border-radius:12px;padding:10px 14px;font-weight:900;display:inline-flex;gap:8px;align-items:center;text-decoration:none}
+  .btn:hover{background:var(--brand-600)}
+  .btn.ghost{background:#fff;color:var(--brand);border:1px solid #cdebd5}
+  .btn.muted{background:#11111108;color:#0b3518;border:1px solid #e1efe6}
+
+  /* Summary rail */
+  .summary{background:#ffffffb8;backdrop-filter:saturate(150%) blur(4px);padding:18px;border-left:1px dashed #cde9d3}
+  .sum-title{font-weight:900;font-size:22px;margin:0 0 8px;color:#102030}
+  .sum-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #e9f2ea}
+  .sum-row:last-child{border-bottom:0}
+  .num{font-weight:900}
+  .danger{color:#ef4444}
+
+  /* CARD + FORM */
+  .card{background:#fff;border:1px solid var(--stroke);border-radius:16px;box-shadow:var(--shadow)}
+  .panel{padding:16px}
+  .controls{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .controls label{font-size:12px;font-weight:800;color:#304055}
+  .controls input,.controls select{width:100%;padding:10px 12px;border:1px solid #e6e9ee;border-radius:10px;background:#fff}
+
+  /* TABLE */
+  .table-wrap{margin-top:12px;border:1px solid var(--stroke);border-radius:14px;overflow:hidden}
+  table{width:100%;border-collapse:separate;border-spacing:0}
+  thead th{background:#f8fdfa;text-align:left;padding:12px 12px;border-bottom:1px solid #eef2f7;font-weight:900;color:#0b1727}
+  tbody td{padding:12px 12px;border-bottom:1px solid #f0f3f7;color:#112}
+  tbody tr:hover{background:#f9fffb}
+  .align-r{text-align:right}
+  .pill{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:800;color:#475569}
+
+  /* Footer action bar */
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+
+  /* Small help text */
+  .help{color:#6b7280;font-size:12px;margin-top:8px}
+</style>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-grid">
+      <!-- Left -->
+      <div class="id-card">
+        <div class="id-row">
+          <div class="avatar">
+            {% if customer and customer.customer_name %}{{ customer.customer_name|first|upper }}{% else %}<i class='bx bx-user'></i>{% endif %}
+          </div>
+          <div>
+            <div class="name">Create Statement</div>
+            <div class="meta">
+              {% if customer %}
+                {{ customer.customer_name }} • {{ customer.email|default:"" }}
+              {% else %}
+                Select a customer from the Customers page
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="panel" style="padding-left:0;padding-right:0">
+          <form method="post" id="statementForm">
+            {% csrf_token %}
+            {% if customer %}<input type="hidden" name="customer_id" value="{{ customer.id }}">{% endif %}
+            <div class="controls">
+              <div>
+                <label>Statement date</label>
+                <input type="date" name="statement_date" value="{{ statement_date }}">
+              </div>
+              <div>
+                <label>Start date</label>
+                <input type="date" name="start_date" value="{{ start_date }}">
+              </div>
+              <div>
+                <label>End date</label>
+                <input type="date" name="end_date" value="{{ end_date }}">
+              </div>
+              <div>
+                <label>Statement type</label>
+                <select name="statement_type">
+                  <option value="transaction" {% if statement_type == 'transaction' %}selected{% endif %}>Transaction Statement</option>
+                  <option value="open_item" {% if statement_type == 'open_item' %}selected{% endif %}>Open Item</option>
+                  <option value="balance_forward" {% if statement_type == 'balance_forward' %}selected{% endif %}>Balance Forward</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="controls" style="grid-template-columns:2fr 1fr;">
+              <div>
+                <label>Email to</label>
+                <input type="email" name="email_to" value="{{ email_to }}" placeholder="customer@company.com">
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <div class="toolbar">
+                  <button type="submit" class="btn">Save</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Chips under header -->
+            <div class="chips">
+              <span class="chip"><span class="dot d1"></span> Start {{ start_date }}</span>
+              <span class="chip"><span class="dot d2"></span> End {{ end_date }}</span>
+              <span class="chip"><span class="dot d3"></span> {{ statement_type|title }}</span>
+            </div>
+
+            <!-- Table -->
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:120px">Date</th>
+                    <th style="width:150px">Type</th>
+                    <th style="width:150px">No.</th>
+                    <th>Memo</th>
+                    <th class="align-r" style="width:160px">Amount</th>
+                    <th class="align-r" style="width:180px">Running Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in preview_lines %}
+                    <tr>
+                      <td>{{ r.date|date:"Y-m-d" }}</td>
+                      <td>
+                        {% if r.kind == 'invoice' %}<span class="pill">Invoice</span>
+                        {% elif r.kind == 'payment' %}<span class="pill">Payment</span>
+                        {% elif r.kind == 'sales_receipt' %}<span class="pill">Sales Receipt</span>
+                        {% elif r.kind == 'balance_forward' %}<span class="pill">Balance Forward</span>
+                        {% else %}<span class="pill">Opening</span>{% endif %}
+                      </td>
+                      <td>{{ r.ref }}</td>
+                      <td>{{ r.memo }}</td>
+                      <td class="align-r">{{ r.amount|floatformat:2|intcomma }}</td>
+                      <td class="align-r">
+                        {% if r.running_balance is not None %}
+                          {{ r.running_balance|floatformat:2|intcomma }}
+                        {% else %}—{% endif %}
+                      </td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="6" style="color:#6b7280">No activity in this period.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="actions">
+              <button class="btn" type="submit">Save</button>
+              <a class="btn muted" href="javascript:location.reload()">Refresh preview</a>
+              <a class="btn ghost" href="javascript:window.print()"><i class='bx bx-printer'></i> Print / Preview</a>
+            </div>
+            <p class="help">* Positive = customer owes you. Negative = you owe customer (credit).</p>
+          </form>
+        </div>
+      </div>
+
+      <!-- Right summary -->
+      <aside class="summary">
+        <h3 class="sum-title">Summary</h3>
+        <div class="sum-row">
+          <span>Opening balance</span>
+          <span class="num">Ush{{ opening_balance|floatformat:2|intcomma }}</span>
+        </div>
+        <div class="sum-row">
+          <span>Closing balance</span>
+          <span class="num {% if closing_balance|default:0 < 0 %}danger{% endif %}">
+            Ush{{ closing_balance|floatformat:2|intcomma }}
+          </span>
+        </div>
+        <div class="help" style="margin-top:10px">Positive = customer owes you. Negative = credit in customer’s favor.</div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+{% include 'includes/footer.html' %}
