@@ -51,7 +51,8 @@ urlpatterns = [
     path('templates/suppliers/', views.download_suppliers_template, name='import_suppliers_template'),
     path("suppliers/<int:pk>/make-inactive/", views.make_inactive_supplier, name="make-inactive-supplier"),
     path("suppliers/<int:pk>/make-active/", views.make_active_supplier, name="make-active-supplier"),
-
+    path("suppliers/<int:pk>/", views.supplier_detail, name="supplier-detail"),
+    
 
     # tasks url
     path('tasks/', views.tasks, name='tasks'),

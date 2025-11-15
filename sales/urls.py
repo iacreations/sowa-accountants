@@ -35,4 +35,6 @@ urlpatterns = [
     # statements
     path("statements/new/", views.statement_new, name="statement-new"),
     path("statements/<int:pk>/", views.statement_detail, name="statement-detail"),
+    path("statements/<int:pk>/export.xlsx", views.statement_export_excel, name="statement-export-excel"),
+    path("statements/<int:pk>/export.pdf",   views.statement_export_pdf,   name="statement-export-pdf"),
 ]

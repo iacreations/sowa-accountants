@@ -30,7 +30,7 @@ from django.contrib.auth.decorators import login_required
 from sales.models import Newinvoice,Payment,PaymentInvoice,SalesReceipt
 from accounts.models import Account,JournalEntry,JournalLine
 from sowaf.models import Newcustomer, Newsupplier
-from expenses.models import Bill
+from expenses.models import Bill,Expense,Cheque
 from . models import Newcustomer, Newsupplier,Newclient,Newemployee,Newasset
 
 # Create your views here.
@@ -1684,6 +1684,108 @@ def add_supplier(request):
         elif save_action == 'save&close':
             return redirect('sowaf:suppliers')
     return render(request, 'suppliers_entry_form.html', {})
+
+# supplier detail page 
+def supplier_detail(request, pk):
+    supplier = get_object_or_404(Newsupplier, pk=pk)
+    tab = request.GET.get("tab", "transactions")
+
+    # ---- Aggregates for banners/summary ----
+    today = timezone.now().date()
+
+    bills_qs = Bill.objects.filter(supplier=supplier).annotate(
+        total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2))
+    )
+
+    expenses_qs = Expense.objects.filter(payee_supplier=supplier).annotate(
+        total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2))
+    )
+
+    cheques_qs = Cheque.objects.filter(payee_supplier=supplier).annotate(
+        total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2))
+    )
+
+    bills_total = bills_qs.aggregate(
+        t=Coalesce(Sum("total_amount_dec"), Value(Decimal("0.00")))
+    )["t"] or Decimal("0.00")
+
+    paid_total = (
+        (expenses_qs.aggregate(t=Coalesce(Sum("total_amount_dec"), Value(Decimal("0.00"))))["t"] or Decimal("0.00"))
+        + (cheques_qs.aggregate(t=Coalesce(Sum("total_amount_dec"), Value(Decimal("0.00"))))["t"] or Decimal("0.00"))
+    )
+
+    # open balance ≈ total bills - payments/cheques (floor at 0)
+    open_balance = bills_total - paid_total
+    if open_balance < 0:
+        open_balance = Decimal("0.00")
+
+    overdue_bills_total = bills_qs.filter(due_date__lt=today).aggregate(
+        t=Coalesce(Sum("total_amount_dec"), Value(Decimal("0.00")))
+    )["t"] or Decimal("0.00")
+
+    count_bills = bills_qs.count()
+
+    # ---- Transaction rows (Bills + Expenses + Cheques) ----
+    rows = []
+
+    for b in bills_qs.order_by("-bill_date", "-id"):
+        rows.append({
+            "id": b.id,
+            "date": getattr(b, "bill_date", None),
+            "type": "Bill",
+            "no": b.bill_no or f"BILL-{b.id:04d}",
+            "party": supplier.company_name or supplier.contact_person or "",
+            "memo": (getattr(b, "memo", "") or "")[:140],
+            "amount": b.total_amount_dec or Decimal("0.00"),
+            "status": getattr(b, "status", "Open") or "Open",
+            "edit_url":  reverse("expenses:bill-edit", args=[b.id]),
+            "view_url":  reverse("expenses:bill-edit", args=[b.id]),   # change if you have a detail route
+            "print_url": "#",
+        })
+
+    for e in expenses_qs.order_by("-payment_date", "-id"):
+        rows.append({
+            "id": e.id,
+            "date": getattr(e, "payment_date", None),
+            "type": "Expense",
+            "no": getattr(e, "ref_no", "") or f"EXP-{e.id:04d}",
+            "party": supplier.company_name or supplier.contact_person or "",
+            "memo": (getattr(e, "memo", "") or "")[:140],
+            "amount": e.total_amount_dec or Decimal("0.00"),
+            "status": "Paid",
+            "edit_url":  reverse("expenses:expense-edit", args=[e.id]),
+            "view_url":  reverse("expenses:expense-edit", args=[e.id]),
+            "print_url": "#",
+        })
+
+    for c in cheques_qs.order_by("-payment_date", "-id"):
+        rows.append({
+            "id": c.id,
+            "date": getattr(c, "payment_date", None),
+            "type": "Cheque",
+            "no": getattr(c, "cheque_no", "") or f"CHQ-{c.id:04d}",
+            "party": supplier.company_name or supplier.contact_person or "",
+            "memo": (getattr(c, "memo", "") or "")[:140],
+            "amount": c.total_amount_dec or Decimal("0.00"),
+            "status": "Paid",
+            "edit_url":  reverse("expenses:cheque-edit", args=[c.id]),
+            "view_url":  reverse("expenses:cheque-edit", args=[c.id]),
+            "print_url": "#",
+        })
+
+    # sort combined rows desc by date, then by type/id
+    rows.sort(key=lambda r: (r["date"] or today, r["type"], r["id"]), reverse=True)
+
+    context = {
+        "supplier": supplier,
+        "tab": tab,
+        "open_balance": open_balance,
+        "overdue_balance": overdue_bills_total,
+        "count_bills": count_bills,
+        "transactions_rows": rows,
+    }
+    return render(request, "supplier_detail.html", context)
+
 # editing supplier information
 def edit_supplier(request, pk):
     supplier = get_object_or_404(Newsupplier, pk=pk)

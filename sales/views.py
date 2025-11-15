@@ -1,5 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse
+from django.http import HttpResponse, Http404
+from django.template.loader import render_to_string
 from openpyxl import Workbook
 from tempfile import NamedTemporaryFile
 from datetime import date, timedelta, datetime
@@ -1739,3 +1741,117 @@ def statement_new(request):
 def statement_detail(request, pk):
     st = get_object_or_404(Statement.objects.select_related("customer").prefetch_related("lines"), pk=pk)
     return render(request, "statement_detail.html", {"st": st})
+
+# ----- Excel export (openpyxl) -----
+def statement_export_excel(request, pk: int):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+    except Exception as e:
+        raise Http404("openpyxl is required for Excel export. pip install openpyxl") from e
+
+    st = get_object_or_404(Statement, pk=pk)
+    lines = (
+        StatementLine.objects
+        .filter(statement=st)
+        .order_by("date", "id")
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Statement"
+
+    # Header block
+    ws["A1"] = "Customer"
+    ws["B1"] = getattr(st.customer, "customer_name", "") or getattr(st.customer, "company_name", "")
+    ws["A2"] = "Statement Date"
+    ws["B2"] = str(st.statement_date)
+    ws["A3"] = "Period"
+    ws["B3"] = f"{st.start_date} — {st.end_date}"
+    ws["A4"] = "Type"
+    ws["B4"] = st.get_statement_type_display()
+    ws["A5"] = "Opening Balance"
+    ws["B5"] = float(st.opening_balance or Decimal("0"))
+    ws["A6"] = "Closing Balance"
+    ws["B6"] = float(st.closing_balance or Decimal("0"))
+
+    start_row = 8
+    headers = ["Date", "Type", "No.", "Memo", "Amount", "Running Balance"]
+    for c, h in enumerate(headers, 1):
+        ws.cell(row=start_row, column=c, value=h)
+
+    # Rows
+    r = start_row + 1
+    def kind_label(line: StatementLine):
+        return line.get_kind_display()
+
+    for ln in lines:
+        ws.cell(row=r, column=1, value=str(ln.date) if ln.date else "")
+        ws.cell(row=r, column=2, value=kind_label(ln))
+        ws.cell(row=r, column=3, value=ln.ref_no or "")
+        ws.cell(row=r, column=4, value=ln.memo or "")
+        ws.cell(row=r, column=5, value=float(ln.amount or Decimal("0")))
+        # For TRANSACTION format you may have NULL running_balance; write blank instead of error
+        ws.cell(row=r, column=6, value=float(ln.running_balance) if ln.running_balance is not None else "")
+        r += 1
+
+    # Nice column widths
+    widths = [14, 18, 12, 46, 16, 18]
+    for idx, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+
+    # Response
+    fname = f"Statement_{st.customer_id}_{st.id}.xlsx"
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    wb.save(resp)
+    return resp
+
+
+# ----- PDF export (WeasyPrint) -----
+
+def statement_export_pdf(request, pk: int):
+    st = get_object_or_404(Statement, pk=pk)
+    lines = (
+        StatementLine.objects
+        .filter(statement=st)
+        .order_by("date", "id")
+    )
+    context = {
+        "statement": st,
+        "customer": getattr(st, "customer", None),
+        "lines": lines,
+        "generated_at": timezone.now(),
+        "BASE_URL": request.build_absolute_uri("/"),
+    }
+
+    html = render_to_string("statement_pdf.html", context)
+
+    # Try WeasyPrint (if installed with GTK/Pango on Windows), else fallback to xhtml2pdf
+    try:
+        from weasyprint import HTML, CSS  # lazy import
+        pdf_bytes = HTML(
+            string=html, base_url=request.build_absolute_uri("/")
+        ).write_pdf(stylesheets=[CSS(string="""
+            @page { size: A4; margin: 18mm; }
+            body { font-family: Arial, Segoe UI, Roboto, sans-serif; font-size: 12px; color: #0b1220; }
+            h1 { font-size: 18px; margin: 0 0 6px; }
+            .muted { color:#64748b; }
+            table { width:100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border:1px solid #e6e9ee; padding: 6px 8px; }
+            thead th { background:#f8fdfa; text-align:left; }
+            tfoot td { font-weight: 700; }
+            .num { text-align: right; }
+        """)])
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    except Exception:
+        # Pure-Python fallback (works on Windows without native deps)
+        from xhtml2pdf import pisa   # pip install xhtml2pdf
+        resp = HttpResponse(content_type="application/pdf")
+        pisa.CreatePDF(html, dest=resp, link_callback=lambda uri, rel: uri)
+
+    fname = f"Statement_{st.customer_id}_{st.id}.pdf"
+    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    return resp

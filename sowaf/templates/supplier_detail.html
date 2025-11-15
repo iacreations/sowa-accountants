@@ -14,10 +14,7 @@
     --shadow:0 12px 28px rgba(16,24,40,.06);
   }
 
-  /* Page frame */
   .wrap{max-width:1200px;padding:0 20px; margin-left: 18%;margin-top: 7%;}
-
-  /* HERO (eye–catching top) */
   .hero{
     position:relative; overflow:hidden; border-radius:18px;
     background: radial-gradient(1200px 300px at -10% -20%, #bff5c9 0%, transparent 60%),
@@ -25,12 +22,9 @@
     border:1px solid var(--stroke);
     box-shadow:var(--shadow);
   }
-  .hero-grid{
-    display:grid; grid-template-columns:1fr 320px; gap:20px; align-items:stretch;
-  }
+  .hero-grid{ display:grid; grid-template-columns:1fr 320px; gap:20px; align-items:stretch; }
   @media(max-width:1000px){ .hero-grid{grid-template-columns:1fr} }
 
-  /* Identity card */
   .id-card{padding:20px}
   .id-row{display:flex; gap:16px; align-items:center}
   .avatar{width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid #d9f7e1;background:#fff}
@@ -38,7 +32,6 @@
   .name{font-weight:900;color:var(--ink); font-size:26px}
   .meta{color:var(--muted);font-size:13px}
 
-  /* Stat pills (under hero title) */
   .pills{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
   .pill{
     background:#fff;border:1px solid var(--stroke);box-shadow:0 2px 8px rgba(2,6,23,.06);
@@ -50,7 +43,6 @@
   .dot-inv{background:#38bdf8}
   .dot-paid{background:#a78bfa}
 
-  /* Quick actions bar */
   .actions{display:flex;flex-wrap:wrap; gap:10px; margin-top:16px}
   .btn{
     background:var(--brand); color:#fff; border:0; border-radius:12px; padding:10px 14px;
@@ -59,11 +51,8 @@
     text-decoration:none;
   }
   .btn:hover{transform:translateY(-1px); background:var(--brand-600)}
-  .btn.outline{
-    background:#fff;color:var(--brand);border:1px solid #c8efd3;box-shadow:none;
-  }
+  .btn.outline{ background:#fff;color:var(--brand);border:1px solid #c8efd3;box-shadow:none; }
 
-  /* Financial summary (right) */
   .summary{
     background:#ffffffaa; backdrop-filter:saturate(150%) blur(4px);
     border-left:1px dashed #cde9d3; padding:20px;
@@ -74,7 +63,6 @@
   .val{font-weight:900}
   .danger{color:#ef4444}
 
-  /* Tabs (sticky feel) */
   .tabs{
     background:var(--card); margin-top:18px; border-radius:14px; border:1px solid var(--stroke);
     box-shadow:var(--shadow);
@@ -89,26 +77,21 @@
     font-weight:800; white-space:nowrap; border-radius:10px 10px 0 0;
   }
   .tabbar a.active{color:var(--brand); border-color:var(--brand)}
-
   .panel{padding:16px}
 
-  /* Table polish */
   .content-table thead th{background:#f8fdfa; color:#0f172a}
   .content-table tbody tr:hover{background:#f9fffb}
   .num{text-align:right}
 
-  /* Chips in table */
   .badge{
     background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 8px;
     font-size:12px;font-weight:800;color:#475569
   }
 
-  /* new */
   .action-cell{white-space:nowrap}
   .row-actions{display:inline-flex;align-items:center;gap:10px}
   .edit-link{color:#39B54B;font-weight:800;text-decoration:none}
   .menu-wrap{position:relative;display:inline-block}
-  /* .kebab{background:#f0fdf4;border:1px solid #cceedd;border-radius:8px;padding:4px 8px;cursor:pointer} */
   .flyout{display:none;position:absolute;right:0;top:110%;background:#fff;border:1px solid #e6e6e6;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.08);min-width:150px;overflow:hidden;z-index:5}
   .menu-wrap:focus-within .flyout,.menu-wrap:hover .flyout{display:block}
   .flyout a{display:block;padding:8px 12px;text-decoration:none;color:#111}
@@ -124,18 +107,20 @@
       <!-- left: identity, stats, actions -->
       <div class="id-card">
         <div class="id-row">
-          {% if customer.logo %}
-            <img src="{{ customer.logo.url }}" class="avatar" alt="logo">
+          {% if supplier.logo %}
+            <img src="{{ supplier.logo.url }}" class="avatar" alt="logo">
           {% else %}
             <i class='bx bx-user-circle avatar-icon'></i>
           {% endif %}
           <div>
-            <div class="name" style="color: #39B54B;">{{ customer.customer_name }}</div>
+            <div class="name" style="color:#39B54B;">
+              {{ supplier.company_name|default:supplier.contact_person }}
+            </div>
             <div class="meta">
-              {{ customer.company_name|default:"" }}
-              {% if customer.company_name and customer.email %} • {% endif %}
-              {{ customer.email|default:"" }}
-              {% if customer.phone_number %} • {{ customer.phone_number }}{% endif %}
+              {% if supplier.contact_person %}{{ supplier.contact_person }}{% endif %}
+              {% if supplier.contact_person and supplier.email %} • {% endif %}
+              {{ supplier.email|default:"" }}
+              {% if supplier.contact %} • {{ supplier.contact }}{% endif %}
             </div>
           </div>
         </div>
@@ -147,26 +132,26 @@
             <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
-            <span class="dot dot-overdue"></span> Overdue
+            <span class="dot dot-overdue"></span> Overdue bills
             <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
-            <span class="dot dot-inv"></span> Invoices
-            <span class="val">{{ count_invoices|default:0 }}</span>
+            <span class="dot dot-inv"></span> Bills
+            <span class="val">{{ count_bills|default:0 }}</span>
           </span>
           <span class="pill">
             <span class="dot dot-paid"></span> Status
             <span class="val">
-              {% if overdue_balance|default:0 > 0 %}Attention{% else %}Good standing{% endif %}
+              {% if open_balance|default:0 > 0 %}Payable{% else %}Clear{% endif %}
             </span>
           </span>
         </div>
 
-        <!-- quick actions -->
+        <!-- quick actions (supplier side) -->
         <div class="actions">
-          <a class="btn" href="{% url 'sales:add-invoice' %}?customer_id={{ customer.id }}"><i class='bx bx-receipt'></i> New Invoice</a>
-          <a class="btn outline" href="{% url 'sales:receive-payment' %}?customer_id={{ customer.id }}"><i class='bx bx-dollar'></i> Receive Payment</a>
-          <a class="btn outline" href="{% url 'sales:statement-new' %}?customer_id={{ customer.id }}"><i class='bx bx-file-find'></i> Create statement</a>
+          <a class="btn" href="{% url 'expenses:add-bill' %}?supplier_id={{ supplier.id }}"><i class='bx bx-file'></i> New Bill</a>
+          <a class="btn outline" href="{% url 'expenses:add-expense' %}?supplier_id={{ supplier.id }}"><i class='bx bx-receipt'></i> New Expense</a>
+          <a class="btn outline" href="{% url 'expenses:add-cheque' %}?supplier_id={{ supplier.id }}"><i class='bx bx-credit-card'></i> Write Cheque</a>
         </div>
       </div>
 
@@ -178,7 +163,7 @@
           <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
         </div>
         <div class="sum-row">
-          <span>Overdue payment</span>
+          <span>Overdue bills</span>
           <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
         </div>
       </aside>
@@ -190,8 +175,7 @@
   <section class="tabs">
     <nav class="tabbar">
       <a href="?tab=transactions" class="{% if tab == 'transactions' %}active{% endif %}">Transaction List</a>
-      <a href="?tab=statements"   class="{% if tab == 'statements'   %}active{% endif %}">Statements</a>
-      <a href="?tab=details"      class="{% if tab == 'details'      %}active{% endif %}">Customer Details</a>
+      <a href="?tab=details"      class="{% if tab == 'details'      %}active{% endif %}">Supplier Details</a>
       <a href="?tab=tasks"        class="{% if tab == 'tasks'        %}active{% endif %}">Tasks</a>
     </nav>
 
@@ -204,7 +188,7 @@
                 <th>Date</th>
                 <th>Type</th>
                 <th>No.</th>
-                <th>Customer</th>
+                <th>Supplier</th>
                 <th>Memo</th>
                 <th style="text-align:right;">Amount</th>
                 <th>Status</th>
@@ -216,16 +200,16 @@
               <tr onclick="window.location='{{ r.view_url }}'" style="cursor:pointer">
                 <td>{{ r.date|date:"Y-m-d" }}</td>
                 <td>
-                  {% if r.type == "Invoice" %}
-                    <span class="pill pill-brown">Invoice</span>
-                  {% elif r.type == "Payment" %}
-                    <span class="pill pill-blue">Payment</span>
+                  {% if r.type == "Bill" %}
+                    <span class="pill pill-brown">Bill</span>
+                  {% elif r.type == "Expense" %}
+                    <span class="pill pill-blue">Expense</span>
                   {% else %}
-                    <span class="pill pill-orange">Sales Receipt</span>
+                    <span class="pill pill-orange">Cheque</span>
                   {% endif %}
                 </td>
                 <td>{{ r.no }}</td>
-                <td>{{ r.customer }}</td>
+                <td>{{ r.party }}</td>
                 <td>{{ r.memo }}</td>
                 <td class="num">{{ r.amount|floatformat:2|intcomma }}</td>
                 <td><span class="status-chip">{{ r.status }}</span></td>
@@ -249,67 +233,22 @@
           <div style="color:#6b7280;">No transactions yet.</div>
         {% endif %}
 
-      {% elif tab == 'statements' %}
-        {% if statements_rows %}
-          <table class="content-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>No.</th>
-                <th>Statement Type</th>
-                <th>Start date</th>
-                <th>End date</th>
-                <th style="text-align:right;">Balance</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for r in statements_rows %}
-              <tr onclick="window.location='{{ r.view_url }}'" style="cursor:pointer">
-                <td>{{ r.date|date:"Y-m-d" }}</td>
-                <td>{{ r.no }}</td>
-                <td>{{ r.type }}</td>
-                <td>{{ r.start|date:"Y-m-d" }}</td>
-                <td>{{ r.end|date:"Y-m-d" }}</td>
-                <td class="num">{{ r.balance|floatformat:2|intcomma }}</td>
-                <td class="action-cell">
-                  <div class="row-actions" onclick="event.stopPropagation()">
-                    <a class="edit-link" href="{{ r.view_url }}">View</a>
-                    <div class="menu-wrap" tabindex="-1">
-                      <strong class="kebab" aria-haspopup="true" style="border:none">▾</strong>
-                      <div class="flyout" role="menu">
-                        <a role="menuitem" href="{{ r.view_url }}">Open</a>
-                        <a role="menuitem" href="{{ r.print_url }}">Print</a>
-                        <a role="menuitem" href="{{ r.send_url }}">Send</a>
-                        
-  <a role="menuitem" href="{% url 'sales:statement-export-excel' r.id %}">Export Excel</a>
-  <a role="menuitem" href="{% url 'sales:statement-export-pdf' r.id %}">Export PDF</a>
-
-
-                      </div>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        {% else %}
-          <div style="color:#6b7280;">No statements yet.</div>
-        {% endif %}
-
       {% elif tab == 'details' %}
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;">
-          <div><strong>Company:</strong> {{ customer.company_name|default:"—" }}</div>
-          <div><strong>Email:</strong> {{ customer.email|default:"—" }}</div>
-          <div><strong>Phone:</strong> {{ customer.phone_number|default:"—" }}</div>
-          <div><strong>City:</strong> {{ customer.city|default:"—" }}</div>
-          <div><strong>Country:</strong> {{ customer.country|default:"—" }}</div>
-          <div style="grid-column:1/-1"><strong>Notes:</strong> {{ customer.notes|default:"—" }}</div>
+          <div><strong>Company:</strong> {{ supplier.company_name|default:"—" }}</div>
+          <div><strong>Email:</strong> {{ supplier.email|default:"—" }}</div>
+          <div><strong>Phone:</strong> {{ supplier.contact|default:"—" }}</div>
+          <div><strong>City:</strong> {{ supplier.city|default:"—" }}</div>
+          <div><strong>Country:</strong> {{ supplier.country|default:"—" }}</div>
+          <div><strong>Contact person:</strong> {{ supplier.contact_person|default:"—" }}</div>
+          <div><strong>Payment terms:</strong> {{ supplier.payment_terms|default:"—" }}</div>
+          <div><strong>Currency:</strong> {{ supplier.currency|default:"—" }}</div>
+          <div style="grid-column:1/-1"><strong>Website:</strong> {{ supplier.website|default:"—" }}</div>
+          <div style="grid-column:1/-1"><strong>Address:</strong> {{ supplier.address1|default:"" }} {{ supplier.address2|default:"" }}</div>
         </div>
 
       {% elif tab == 'tasks' %}
-        <div class="muted">Task list for this customer.</div>
+        <div class="muted">Task list for this supplier.</div>
       {% endif %}
     </div>
   </section>

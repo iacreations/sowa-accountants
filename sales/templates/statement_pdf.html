@@ -1,0 +1,59 @@
+{% load humanize %}
+
+<div>
+  <h1>Statement</h1>
+  <div class="muted">
+    {{ customer.customer_name|default:customer.company_name }} •
+    Type: {{ statement.get_statement_type_display }} •
+    Period: {{ statement.start_date }} — {{ statement.end_date }} •
+    Statement date: {{ statement.statement_date }}
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>No.</th>
+        <th>Memo</th>
+        <th class="num">Amount</th>
+        <th class="num">Running balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{ statement.start_date }}</td>
+        <td>Opening</td>
+        <td></td>
+        <td>Opening Balance</td>
+        <td class="num">0.00</td>
+        <td class="num">{{ statement.opening_balance|floatformat:2|intcomma }}</td>
+      </tr>
+
+      {% for ln in lines %}
+        <tr>
+          <td>{{ ln.date }}</td>
+          <td>{{ ln.get_kind_display }}</td>
+          <td>{{ ln.ref_no }}</td>
+          <td>{{ ln.memo }}</td>
+          <td class="num">{{ ln.amount|floatformat:2|intcomma }}</td>
+          <td class="num">
+            {% if ln.running_balance is not None %}
+              {{ ln.running_balance|floatformat:2|intcomma }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="5">Closing balance</td>
+        <td class="num">{{ statement.closing_balance|floatformat:2|intcomma }}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <p class="muted" style="margin-top:10px;">
+    * Positive = customer owes you. Negative = you owe customer (credit).
+  </p>
+</div>
