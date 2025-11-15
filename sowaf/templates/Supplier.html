@@ -2,182 +2,199 @@
 {% load humanize %}
 {% include 'includes/navbar.html' %}
 <style>
-      h1{
-    color: rgb(7, 142, 36);
-  }
-    @media only screen and (max-width: 600px) {
-  #action{
+  h1{ color: rgb(7, 142, 36); }
 
-    background-color: #fff;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding:10%;
-    justify-content: center;
+  @media only screen and (max-width: 600px) {
+    #action{ background-color:#fff; display:flex; flex-direction:row; flex-wrap:wrap; padding:10%; justify-content:center; }
+    #action button{ display:flex; }
+    #search{ display:flex; width:50%; margin-top:0; }
+    h1{ color: rgb(7,142,36); font-size:20px; }
+    .button{ width:100px; }
+    #main{ padding:15%; margin-left:-20%; margin-top:65%; }
+    #template{ position:fixed; margin-top:-3%; margin-left:70%; }
   }
-  #action button{
-    display: flex;
-  }
-     #search{
-    display: flex;
-    width: 50%;
-    margin-top: 0px;
-  }
-  h1{
-    color: rgb(7, 142, 36);
-    font-size: 20px;
-  }
-  .button{
-    width: 100px;
-  }
-  #main{
-    padding: 15%;
-    margin-left: -20%;
-    margin-top: 65%;
-  }
-  #template{
-    position: fixed;
-    margin-top:-3%;
-    margin-left:70%;
-  }
-}
-/* make inactives look faint (optional) */
-tr.inactive { opacity: 0.55; }
 
-/* minimal dropdown styles, scoped to .dd */
-.dd { position: relative; display: inline-block; }
-.dd-toggle { background: transparent; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.dd-menu {
-  display: none; position: absolute; right: 0; top: 100%;
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-  min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 10;
-}
-.dd-menu a { display: block; padding: 10px 12px; text-decoration: none; color: inherit; }
-.dd-menu a:hover { background: #f2f2f2; }
-.dd.open .dd-menu { display: block; }
-/* Laptops & small desktops */
-@media only screen and (min-width: 1024px) and (max-width: 1600px) {
-#main{
-  margin-top: 18%;
-}
-html, body {
-  overflow: hidden;  /* no scrollbars at all */
-}
-}
+  /* existing */
+  tr.inactive { opacity: 0.55; }
+  .dd { position: relative; display: inline-block; }
+  .dd-toggle { background: transparent; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .dd-menu { display:none; position:absolute; right:0; top:100%; background:#fff; border:1px solid #e5e7eb; border-radius:8px; min-width:200px; box-shadow:0 8px 24px rgba(0,0,0,.12); z-index:10; }
+  .dd-menu a { display:block; padding:10px 12px; text-decoration:none; color:inherit; }
+  .dd-menu a:hover { background:#f2f2f2; }
+  .dd.open .dd-menu { display:block; }
+
+  /* Laptops & small desktops */
+  @media only screen and (min-width: 1024px) and (max-width: 1600px) {
+    #main{ margin-top:18%; }
+    html, body { overflow:hidden; }
+  }
+
+  /* ------ Small additions (no changes to your existing styles) ------ */
+
+  /* KPI banners (mirrors the style used on Customers page) */
+ .analytics-wrap{
+    background:#fff; border:1px solid #e7e7e7; border-radius:14px;
+    box-shadow:0 8px 22px rgba(0,0,0,.05); padding:14px; margin-bottom:16px; top: 0;
+  }
+  .kpi-row{ display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; }
+  .kpi{ border-radius:12px; padding:12px 14px; color:#fff; box-shadow:0 8px 16px rgba(0,0,0,.08); }
+  .kpi .label{ font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.3px; opacity:.95; }
+  .kpi .value{ font-weight:900; font-size:18px; line-height:1.15; margin-top:2px; }
+  .kpi .sub{ font-size:12px; opacity:.92; margin-top:2px; }
+  .k-unbilled{ background:#3b82f6; }  /* blue */
+  .k-overdue { background:#f59e0b; }  /* orange */
+  .k-open    { background:#94a3b8; }  /* slate/gray */
+  .k-recent  { background:#22c55e; }  /* green */
+
+  /* Clickable rows */
+  .clickable-row{ cursor:pointer; }
+  .clickable-row:hover{ background:#f9fff9; }
 </style>
 {% include 'includes/sidebar.html' %}
-    <div class="action" id="action">
-      <h3 style="color: #39B54B; font-weight: 600;">SUPPLIERS</h3>
-      <div class="search_bar" id="search" style="width: 20%;">
-        <input type="text" placeholder="Search Suppliers" />
-      </div>
-      <a href="{% url 'sowaf:add-supplier' %}" style="text-decoration: none;" class="my-4">
-         <button class="button">
-          <span class="button_text">ADD NEW</span>
-          <span class="button_icon">
-            <i class='bx bx-folder-plus'></i>
-          </span>
-        </button>
-        </a>
 
-        <div>
-       <form action="{% url 'sowaf:import-suppliers' %}" method="POST" enctype="multipart/form-data" style="display: flex;">
-         {% csrf_token %}
-        <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display: none;" id="excelInput" onchange="this.form.submit()" />
-        <label for="excelInput" class="button" style="cursor: pointer;">
-         <span class="button_text">IMPORT</span>
-        <span class="button_icon">
-        <i class='bx bx-import'></i>
-        </span>
-       </label>
-         </form>
-       </div>
-        <button class="button">
-          <span class="button_text">EXPORT</span>
-          <span class="button_icon">
-            <i class='bx bx-export' ></i>
-          </span>
-        </button>
-        <button class="button">
-          <span id="customize" class="button_text">CUSTOMIZE</span>
-          <span id="customize" class="button_icon">
-            <i class='bx bxs-customize' ></i>
-          </span>
-        </button>
+<div class="action" id="action">
+  <h3 style="color:#39B54B; font-weight:600;">SUPPLIERS</h3>
+
+  <div class="search_bar" id="search" style="width:20%;">
+    <input type="text" placeholder="Search Suppliers" />
+  </div>
+
+  <a href="{% url 'sowaf:add-supplier' %}" style="text-decoration:none;" class="my-4">
+    <button class="button">
+      <span class="button_text">ADD NEW</span>
+      <span class="button_icon"><i class='bx bx-folder-plus'></i></span>
+    </button>
+  </a>
+
+  <div>
+    <form action="{% url 'sowaf:import-suppliers' %}" method="POST" enctype="multipart/form-data" style="display:flex;">
+      {% csrf_token %}
+      <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display:none;" id="excelInput" onchange="this.form.submit()" />
+      <label for="excelInput" class="button" style="cursor:pointer;">
+        <span class="button_text">IMPORT</span>
+        <span class="button_icon"><i class='bx bx-import'></i></span>
+      </label>
+    </form>
+  </div>
+
+  <button class="button">
+    <span class="button_text">EXPORT</span>
+    <span class="button_icon"><i class='bx bx-export'></i></span>
+  </button>
+
+  <button class="button">
+    <span id="customize" class="button_text">CUSTOMIZE</span>
+    <span id="customize" class="button_icon"><i class='bx bxs-customize'></i></span>
+  </button>
+</div>
+<div class="main_body" id="main">
+<!-- KPI banners (values provided by view as 'supp_kpis') -->
+<div class="analytics-wrap">
+  <div class="kpi-row">
+    <div class="kpi k-unbilled">
+      <div class="label">Unbilled last 365 days</div>
+      <div class="value">Ush{{ supp_kpis.unbilled_amount|default:0|floatformat:2|intcomma }}</div>
+      <div class="sub">{{ supp_kpis.unbilled_count|default:0 }} purchase orders</div>
     </div>
-    <div class="main_body" id="main">
-      <table class="content-table">
-        <thead>
-  <tr>
-    <th>LOGO</th>
-    <th>SUPPLIER</th>
-    <th>COMPANY NAME</th>
-    <th>PHONE</th>
-    <th>EMAIL</th>
-    <th>OPEN BALANCE</th>
-    <th>ACTION <i class='bx bxs-down-arrow'></i></th>
-  </tr>
-</thead>
-<tbody>
-  {% for supplier in suppliers %}
-  <tr class="{% if supplier.is_active is not None and not supplier.is_active %}inactive{% endif %}">
-    <td>
-      {% if supplier.logo %}
-        <img src="{{ supplier.logo.url }}" alt="picture" style="width: 40px; height: 40px; border-radius: 50%;">
-      {% else %}
-        <i class='bx bx-user-circle'></i>
-      {% endif %}
-    </td>
-
-    <td>{{ supplier.contact_person }}</td>
-    <td>{{ supplier.company_name }}</td>
-    <td>{{ supplier.contact }}</td>
-    <td>{{ supplier.email }}</td>
-    <td>{{ supplier.open_balance }}</td>
-
-    <!-- ACTIONS DROPDOWN -->
-    <td>
-    <div class="dd">
-      <button type="button" class="dd-toggle">
-          <a href="{% url 'sowaf:edit-supplier' supplier.id %}" style="color: #39B54B;">Edit</a> <i class='bx bxs-down-arrow' style="color: #39B54B;"></i>
-      </button>
-
-      {% if supplier.is_active %}
-        <div class="dd-menu">
-          <a href="">Retired</a>
-          <a href="{% url 'sowaf:make-inactive-supplier' supplier.id %}">Make inactive</a>
-        </div>
-      {% else %}
-        <div class="dd-menu">
-          <a href="{% url 'sowaf:make-active-supplier' supplier.id %}">Make active</a>
-        </div>
-      {% endif %}
+    <div class="kpi k-overdue">
+      <div class="label">Unpaid last 365 days</div>
+      <div class="value">Ush{{ supp_kpis.unpaid_amount|default:0|floatformat:2|intcomma }}</div>
+      <div class="sub">{{ supp_kpis.unpaid_count|default:0 }} overdue</div>
     </div>
-  </td>
-  </tr>
-  {% empty %}
-  <tr>
-    <td colspan="7">No supplier available.</td>
-  </tr>
-  {% endfor %}
-</tbody>
+    <div class="kpi k-open">
+      <div class="label">Open bills</div>
+      <div class="value">Ush{{ supp_kpis.open_bills_amount|default:0|floatformat:2|intcomma }}</div>
+      <div class="sub">{{ supp_kpis.open_bills_count|default:0 }} open</div>
+    </div>
+    <div class="kpi k-recent">
+      <div class="label">Paid last 30 days</div>
+      <div class="value">Ush{{ supp_kpis.paid_30_amount|default:0|floatformat:2|intcomma }}</div>
+      <div class="sub">{{ supp_kpis.paid_30_count|default:0 }} payments</div>
+    </div>
+  </div>
+</div>
+
+
+  <table class="content-table">
+    <thead>
+      <tr>
+        <th>LOGO</th>
+        <th>SUPPLIER</th>
+        <th>COMPANY NAME</th>
+        <th>PHONE</th>
+        <th>EMAIL</th>
+        <th>OPEN BALANCE</th>
+        <th>ACTION <i class='bx bxs-down-arrow'></i></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for supplier in suppliers %}
+      <tr class="clickable-row {% if supplier.is_active is not None and not supplier.is_active %}inactive{% endif %}"
+          data-href="{% url 'sowaf:supplier-detail' supplier.id %}">
+        <td>
+          {% if supplier.logo %}
+            <img src="{{ supplier.logo.url }}" alt="picture" style="width:40px;height:40px;border-radius:50%;">
+          {% else %}
+            <i class='bx bx-user-circle'></i>
+          {% endif %}
+        </td>
+
+        <td>{{ supplier.contact_person }}</td>
+        <td>{{ supplier.company_name }}</td>
+        <td>{{ supplier.contact }}</td>
+        <td>{{ supplier.email }}</td>
+        <td>{{ supplier.open_balance }}</td>
+
+        <td>
+          <div class="dd" onclick="event.stopPropagation()">
+            <button type="button" class="dd-toggle">
+              <a href="{% url 'sowaf:edit-supplier' supplier.id %}" style="color:#39B54B;">Edit</a>
+              <i class='bx bxs-down-arrow' style="color:#39B54B;"></i>
+            </button>
+
+            {% if supplier.is_active %}
+              <div class="dd-menu">
+                <a href="">Retired</a>
+                <a href="{% url 'sowaf:make-inactive-supplier' supplier.id %}">Make inactive</a>
+              </div>
+            {% else %}
+              <div class="dd-menu">
+                <a href="{% url 'sowaf:make-active-supplier' supplier.id %}">Make active</a>
+              </div>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7">No supplier available.</td></tr>
+      {% endfor %}
+    </tbody>
   </table>
-       <a href="{% url 'sowaf:import_suppliers_template' %}" style="text-decoration: none; float:right;" id="template">
-        <button class="button">
-          <span class="button_text">Template</span>
-        </button>
-      </a>
-    </div>
-    <script>
-document.addEventListener('click', function (e) {
-  // close others if clicking outside
-  document.querySelectorAll('.dd.open').forEach(dd => {
-    if (!dd.contains(e.target)) dd.classList.remove('open');
+
+  <a href="{% url 'sowaf:import_suppliers_template' %}" style="text-decoration:none; float:right;" id="template">
+    <button class="button"><span class="button_text">Template</span></button>
+  </a>
+</div>
+
+<script>
+  // dropdowns
+  document.addEventListener('click', function (e) {
+    document.querySelectorAll('.dd.open').forEach(dd => {
+      if (!dd.contains(e.target)) dd.classList.remove('open');
+    });
+    const toggle = e.target.closest('.dd-toggle');
+    if (toggle) toggle.closest('.dd').classList.toggle('open');
   });
-  // toggle clicked dropdown
-  const toggle = e.target.closest('.dd-toggle');
-  if (toggle) toggle.closest('.dd').classList.toggle('open');
-});
+
+  // make table rows clickable (ignore inner links/buttons/menus)
+  document.querySelectorAll('.clickable-row').forEach(tr=>{
+    tr.addEventListener('click', function(e){
+      const interactive = e.target.closest('a,button,.dd,.dd-toggle,.dd-menu');
+      if (interactive) return;
+      const href = this.dataset.href;
+      if (href) window.location.href = href;
+    });
+  });
 </script>
 
- {% include 'includes/footer.html' %}
+{% include 'includes/footer.html' %}
