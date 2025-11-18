@@ -43,7 +43,6 @@
   color: #39B54B;
 }
 
-
 /* modal */
 #customizeModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); justify-content:center; align-items:center; z-index:999; }
 .modal-card { background:#fff; padding:20px; border-radius:12px; width:420px; max-width:90%; box-shadow:0 8px 24px rgba(0,0,0,.2); }
@@ -53,33 +52,52 @@
 .btn-outline { background:#fff; border:1px solid #ddd; }
 .btn-primary { background:#39B54B; color:#fff; }
 
+/* child indent */
 .child-row .indent {
- margin-left: 20px;
+  margin-left: 20px;
   padding-left: 5px;
-  border-left: 4px dashed #39B54B; /* guide line */
+  border-left: 4px dashed #39B54B;
   font-style: italic;
-  color: #39B54B; /* softer text */
-
+  color: #39B54B;
 }
 
+/* Level-1 heading row */
+.level1-row td {
+  background:#e9fbef;
+  font-weight:800;
+  color:#0f5132;
+  text-transform:uppercase;
+}
+
+/* empty text inside category */
+.empty-row td {
+  font-style:italic;
+  color:#6b7280;
+  background:#f9fff9;
+}
 </style>
 
 {% include 'includes/sidebar.html' %}
 
 <div class="main_body" id="main_body" style="margin-top: 5%;">
-  <h1 class="text-success text-center">Chart Of Accounts</h1>
-  <hr>
-<button type="button" id="customizeBtn" class="button ms-auto">
-          ⚙ Customize
-</button>
+  <div class="d-flex align-items-center justify-content-between mb-2">
+    <div>
+      <h1 class="text-success">Chart Of Accounts</h1>
+      <p class="text-muted" style="margin-bottom:0">
+        Organise and manage your accounts by category and sub-account.
+      </p>
+    </div>
+
+    <button type="button" id="customizeBtn" class="button">
+      ⚙ Customize
+    </button>
+  </div>
+
   <!-- top mini menu -->
-  <div class="text-center">
+  <div class="text-center mb-3">
     <ul class="d-flex" style="list-style:none; justify-content:center; gap:16px; padding-left:0;">
       <li><a href="#" class="text-secondary" style="text-decoration:none;">Import</a></li>
       <li><a href="{% url 'accounts:add-account' %}" class="text-secondary" style="text-decoration:none;">Add account</a></li>
-      <li>
-       
-      </li>
     </ul>
   </div>
 
@@ -87,14 +105,16 @@
 
   <!-- tabs -->
   <div class="tabs">
-<a href="?status=active" class="tab {% if status == 'active' %}active{% endif %}">
-  Active <span class="badge">{{ active_count }}</span>
-</a>
-<a href="?status=inactive" class="tab {% if status == 'inactive' %}active{% endif %}">
-  Inactive <span class="badge">{{ inactive_count }}</span>
-</a>
-<a href="?status=all" class="tab {% if status == 'all' %}active{% endif %}">All <span class="badge">{{ all_count }}</span></a>
-</div>
+    <a href="?status=active" class="tab {% if status == 'active' %}active{% endif %}">
+      Active <span class="badge">{{ active_count }}</span>
+    </a>
+    <a href="?status=inactive" class="tab {% if status == 'inactive' %}active{% endif %}">
+      Inactive <span class="badge">{{ inactive_count }}</span>
+    </a>
+    <a href="?status=all" class="tab {% if status == 'all' %}active{% endif %}">
+      All <span class="badge">{{ all_count }}</span>
+    </a>
+  </div>
 
   <!-- table -->
   <table class="content-table">
@@ -104,60 +124,49 @@
         <th data-col="opening_balance" style="text-transform:uppercase;">Open Balance</th>
         <th data-col="as_of"           style="text-transform:uppercase;">Date</th>
         <th data-col="account_number"  style="text-transform:uppercase;">Account Number</th>
-        <th data-col="account_type"    style="text-transform:uppercase;">Account Type</th>
+        <!-- account_type removed -->
         <th data-col="detail_type"     style="text-transform:uppercase;">Detail Type</th>
         <th data-col="description"     style="text-transform:uppercase;">Description</th>
         <th data-col="actions"         style="text-transform:uppercase;">Actions <i class='bx bxs-down-arrow'></i></th>
       </tr>
     </thead>
- <tbody>
-  {% for coa in coas %}
-    {% if not coa.parent %} {# Only show parent accounts at top level #}
-      <tr class="parent-row {% if not coa.is_active %}inactive-row{% endif %}">
-        <td>{{ coa.account_name }}</td>
-        <td>{{ coa.opening_balance|intcomma }}</td>
-        <td>{{ coa.as_of|date:"d/m/Y" }}</td>
-        <td>{{ coa.account_number }}</td>
-        <td>{{ coa.account_type }}</td>
-        <td>{{ coa.detail_type }}</td>
-        <td>{{ coa.description }}</td>
-        <td class="action-cell">
-          <div class="action-wrapper">
-            <a href="#" class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit</a>
-            <div class="dropdown">
-              <i class='bx bx-chevron-down'></i>
-              <div class="dropdown-menu">
-                {% if coa.is_active %}
-                  <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
-                {% else %}
-                  <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
-                {% endif %}
-              </div>
-            </div>
-          </div>
-        </td>
-      </tr>
 
-      {# Now render child accounts indented #}
-      {% for child in coa.children.all %}
-        <tr class="child-row {% if not child.is_active %}inactive-row{% endif %}">
-          <td><span class="indent">{{ child.account_name }}</span></td>
-          <td>{{ child.opening_balance|intcomma }}</td>
-          <td>{{ child.as_of|date:"d/m/Y" }}</td>
-          <td>{{ child.account_number }}</td>
-          <td>{{ child.account_type }}</td>
-          <td>{{ child.detail_type }}</td>
-          <td>{{ child.description }}</td>
+    <tbody>
+  {% for section in level1_sections %}
+    <!-- Level 1 heading row (one per category, not repeated per account) -->
+    <tr class="section-row">
+      <!-- use <th> so column hide/show JS (which targets td) doesn't break it -->
+      <th colspan="8" style="background:#e9fbef; color:#0f5132; text-transform:uppercase; letter-spacing:.04em;">
+        {{ section.label }}
+      </th>
+    </tr>
+
+    {% if section.accounts %}
+      {% for coa in section.accounts %}
+        <tr class="{% if not coa.is_active %}inactive-row{% endif %}">
+          <td>
+            {% if coa.parent %}
+              <span class="indent">{{ coa.account_name }}</span>
+            {% else %}
+              {{ coa.account_name }}
+            {% endif %}
+          </td>
+          <td>{{ coa.opening_balance|intcomma }}</td>
+          <td>{{ coa.as_of|date:"d/m/Y" }}</td>
+          <td>{{ coa.account_number }}</td>
+          <td>{{ coa.account_type }}</td>
+          <td>{{ coa.detail_type }}</td>
+          <td>{{ coa.description }}</td>
           <td class="action-cell">
             <div class="action-wrapper">
-              <a href="#" class="edit-link {% if not child.is_active %}disabled{% endif %}">Edit</a>
+              <a href="#" class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit</a>
               <div class="dropdown">
                 <i class='bx bx-chevron-down'></i>
                 <div class="dropdown-menu">
-                  {% if child.is_active %}
-                    <a href="{% url 'accounts:deactivate-account' child.id %}">Make inactive</a>
+                  {% if coa.is_active %}
+                    <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
                   {% else %}
-                    <a href="{% url 'accounts:activate-account' child.id %}">Activate</a>
+                    <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
                   {% endif %}
                 </div>
               </div>
@@ -165,13 +174,17 @@
           </td>
         </tr>
       {% endfor %}
+    {% else %}
+      <!-- structure visible even when empty -->
+      <tr class="empty-row">
+        <td colspan="8" style="font-style:italic; color:#6b7280; padding:10px 18px;">
+          No accounts under this category yet.
+        </td>
+      </tr>
     {% endif %}
-  {% empty %}
-    <tr><td colspan="8">No accounts available.</td></tr>
   {% endfor %}
 </tbody>
-
-</table>
+ </table>
 
   <!-- Customize Modal -->
   <div id="customizeModal">
@@ -182,7 +195,7 @@
         <label><input type="checkbox" class="col-toggle" data-col="opening_balance" checked> Opening Balance</label><br>
         <label><input type="checkbox" class="col-toggle" data-col="as_of"           checked> Date</label><br>
         <label><input type="checkbox" class="col-toggle" data-col="account_number"  checked> Account Number</label><br>
-        <label><input type="checkbox" class="col-toggle" data-col="account_type"    checked> Account Type</label><br>
+        <!-- account_type option removed -->
         <label><input type="checkbox" class="col-toggle" data-col="detail_type"     checked> Detail Type</label><br>
         <label><input type="checkbox" class="col-toggle" data-col="description"     checked> Description</label><br>
         <label><input type="checkbox" class="col-toggle" data-col="actions"         checked> Actions</label><br>
@@ -225,7 +238,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function applyAllPrefs() {
-    // set checkbox state and apply column visibility
     document.querySelectorAll(".col-toggle").forEach(cb => {
       const col = cb.dataset.col;
       const value = (savedPrefs[col] !== undefined) ? savedPrefs[col] : true;
@@ -242,26 +254,17 @@ document.addEventListener("DOMContentLoaded", () => {
         "X-CSRFToken": "{{ csrf_token }}",
       },
       body: JSON.stringify({ preferences: savedPrefs }),
-    }).catch(()=>{ /* ignore network hiccups silently */ });
+    }).catch(()=>{});
   }
 
-  // ===== Init
+  // Init
   applyAllPrefs();
 
-  // ===== Events
   openBtn.addEventListener("click", () => { modal.style.display = "flex"; });
   closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") modal.style.display = "none"; });
 
-  // close on overlay click
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) modal.style.display = "none";
-  });
-  // close on Escape
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") modal.style.display = "none";
-  });
-
-  // checkbox changes
   document.querySelectorAll(".col-toggle").forEach(cb => {
     cb.addEventListener("change", function() {
       const col = this.dataset.col;
@@ -271,7 +274,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // select all
   selectAll.addEventListener("click", () => {
     document.querySelectorAll(".col-toggle").forEach(cb => {
       cb.checked = true;

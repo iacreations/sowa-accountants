@@ -26,6 +26,7 @@ urlpatterns = [
     path('expenses/', include('expenses.urls')),  # expenses
     path('accounts/', include('accounts.urls')),
     path('inventory/', include('inventory.urls')),
+    path('sowa_settings/', include('sowa_settings.urls')),
     path('admin/', admin.site.urls),
 ]
 if settings.DEBUG:

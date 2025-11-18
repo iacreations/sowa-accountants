@@ -15,73 +15,185 @@
     <title>YoAccountant</title>
     <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
     <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
-  <style>
-    @media only screen and (max-width: 600px) {
-  .search_bar{
-    display: none;
-  }
-  .logo_item{
-  padding: 5px;
-  margin: 3%;
-  }
-    
-  #iconDropdown {
-    display: block;
-    background-color: rgb(7, 142, 36);
-    border-radius: 20px;
-  }
-  #iconDropdown #btn{
-    float: left;
-    color: rgb(7, 142, 36);
-    
-  }
-  #dropdownMenu{
-    background-color: rgb(7, 142, 36);
-    color: white;
-    float: left;
-  }
-  #action{
-    width: 50%;
-  }
-}
-  </style>
-    
+    <style>
+      @media only screen and (max-width: 600px) {
+        .search_bar{
+          display: none;
+        }
+        .logo_item{
+          padding: 5px;
+          margin: 3%;
+        }
+        
+        #iconDropdown {
+          display: block;
+          background-color: rgb(7, 142, 36);
+          border-radius: 20px;
+        }
+        #iconDropdown #btn{
+          float: left;
+          color: rgb(7, 142, 36);
+        }
+        #dropdownMenu{
+          background-color: rgb(7, 142, 36);
+          color: white;
+          float: left;
+        }
+        #action{
+          width: 50%;
+        }
+      }
+
+      /* Settings Center overlay (QuickBooks style) */
+      .settings-center-overlay{
+        display:none;
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.35);
+        z-index:9999;
+        justify-content:center;
+        align-items:center;
+      }
+      .settings-center-panel{
+        background:#ffffff;
+        border-radius:12px;
+        max-width:900px;
+        width:92%;
+        padding:18px 20px 20px;
+        box-shadow:0 12px 32px rgba(0,0,0,.25);
+      }
+      .settings-center-header{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:10px;
+      }
+      .settings-center-header h3{
+        margin:0;
+        font-size:18px;
+        font-weight:700;
+      }
+      .settings-center-close{
+        border:0;
+        background:transparent;
+        cursor:pointer;
+        font-size:20px;
+      }
+      .settings-center-grid{
+        display:grid;
+        grid-template-columns:1.2fr 1.2fr 1.2fr 1.1fr;
+        gap:18px;
+        margin-top:10px;
+      }
+      .settings-center-col-title{
+        font-size:12px;
+        text-transform:uppercase;
+        letter-spacing:.08em;
+        color:#6b7280;
+        margin-bottom:6px;
+      }
+      .settings-link{
+        display:block;
+        padding:6px 0;
+        font-size:14px;
+        color:#111827;
+        text-decoration:none;
+      }
+      .settings-link:hover{
+        color:#39B54B;
+      }
+    </style>
   </head>
   <body>
     <!-- navbar -->
     <nav class="navbar w3-row-padding">
       <div class="logo_item">
         <i class="bx bx-menu" id="sidebarOpen"></i>
-        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt=""></i>YoAccountant
+        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt="">
+        YoAccountant
       </div>
 
       <div class="search_bar">
         <input type="text" placeholder="Search" />
       </div>
 
- <!-- icons on drop down in small screens -->
+      <!-- icons on drop down in small screens -->
+      <div class="dropdown" id="iconDropdown">
+        <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+          <i class='bx bx-menu'></i>
+        </button>
+        <div class="dropdown-menu" id="dropdownMenu">
+          <i class="bi bi-grid"></i>
+          <i class='bx bx-sun' id="darkLight"></i>
+          <a href="javascript:void(0);" onclick="openSettingsCenter()"><i class='bx bx-cog'></i></a>
+          <i class='bx bx-bell'></i>
+          <i class='bx bx-user-circle'></i>
+          <i class='bx bxs-down-arrow'></i>
+        </div>
+      </div>
 
-
-  <div class="dropdown" id="iconDropdown">
-    <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
-      <i class='bx bx-menu'></i>
-    </button>
-    <div class="dropdown-menu" id="dropdownMenu">
-      <i class="bi bi-grid"></i>
-      <i class='bx bx-sun' id="darkLight"></i>
-      <i class='bx bx-cog'></i>
-      <i class='bx bx-bell'></i>
-      <i class='bx bx-user-circle'></i>
-      <i class='bx bxs-down-arrow'></i>
-    </div>
-  </div>
-
-  <div class="navbar_content" id="icons">
-    <i class="bi bi-grid"></i>
-    <i class='bx bx-sun' id="darkLight"></i>
-    <i class='bx bx-cog'></i>
-    <i class='bx bx-bell'></i>
-    <i class='bx bx-user-circle'></i>
-    <i class='bx bxs-down-arrow'></i>
-  </div>
+      <div class="navbar_content" id="icons">
+        <i class="bi bi-grid"></i>
+        <i class='bx bx-sun' id="darkLight"></i>
+        <a href="javascript:void(0);" onclick="openSettingsCenter()"><i class='bx bx-cog'></i></a>
+        <i class='bx bx-bell'></i>
+        <i class='bx bx-user-circle'></i>
+        <i class='bx bxs-down-arrow'></i>
+      </div>
     </nav>
+
+    <!-- SETTINGS CENTER OVERLAY -->
+    <div class="settings-center-overlay" id="settingsCenterOverlay">
+      <div class="settings-center-panel">
+        <div class="settings-center-header">
+          <h3>Settings</h3>
+          <button class="settings-center-close" onclick="closeSettingsCenter()">×</button>
+        </div>
+
+        <div class="settings-center-grid">
+          <div>
+            <div class="settings-center-col-title">Settings</div>
+            <!-- For now we only have Company settings -->
+            <a href="{% url 'sowa_settings:settings' %}" class="settings-link" onclick="closeSettingsCenter()">
+              Company settings
+            </a>
+          </div>
+
+          <div>
+            <div class="settings-center-col-title">Lists</div>
+            <!-- future: products, tax codes, etc -->
+          </div>
+
+          <div>
+            <div class="settings-center-col-title">Tools</div>
+            <!-- future: import data, audit log, etc -->
+          </div>
+
+          <div>
+            <div class="settings-center-col-title">Your company</div>
+            <!-- future: subscriptions, feedback, etc -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function openSettingsCenter(){
+        var el = document.getElementById("settingsCenterOverlay");
+        if (el) el.style.display = "flex";
+      }
+      function closeSettingsCenter(){
+        var el = document.getElementById("settingsCenterOverlay");
+        if (el) el.style.display = "none";
+      }
+      // close when clicking outside panel
+      document.addEventListener("click", function(e){
+        var overlay = document.getElementById("settingsCenterOverlay");
+        if (!overlay) return;
+        if (e.target === overlay){
+          closeSettingsCenter();
+        }
+      });
+    </script>
+  </body>
+</html>

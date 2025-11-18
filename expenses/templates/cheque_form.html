@@ -56,11 +56,12 @@
         <div class="form-grid">
           <div class="form-group">
             <label>Payee</label>
-            <select name="payee_supplier">
+            <select name="payee_supplier"  id="supplier-select">
               <option value="">— Choose supplier —</option>
               {% for s in suppliers %}
                 <option value="{{ s.id }}">{{ s.company_name }}</option>
               {% endfor %}
+              <option value="add_new">➕ Add New</option>
             </select>
             <small>Or enter name:</small>
             <input type="text" name="payee_name" placeholder="Free text (optional)">
@@ -164,6 +165,22 @@
   </div>
 
   <script>
+
+// open Add supplier in new tab if chosen
+  (function(){
+    const addCustomerUrl = "{% url 'sowaf:add-supplier' %}";
+    const sel = document.getElementById('supplier-select');
+    if (sel){
+      sel.addEventListener('change', function(){
+        if (this.value === 'add_new'){
+          window.open(addCustomerUrl, '_blank', 'noopener');
+          this.value = '';
+        }
+      });
+    }
+  })();
+
+  
     document.querySelectorAll(".collapsible").forEach(btn => {
       btn.addEventListener("click", () => btn.nextElementSibling.classList.toggle("active"));
     });

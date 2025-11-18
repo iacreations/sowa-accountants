@@ -41,7 +41,8 @@
   </style>
 </head>
 <body>
-  <div class="container" id="billForm">
+  <a href="{% url 'expenses:bills-list' %}" class="btn btn-lg" style="color: #39B54B;">← Back to Bill lists</a>
+  <div class="container" id="billForm" style="margin-top: 5%;">
     <h2 class="title">{% if bill %}Edit Bill{% else %}Bill Form{% endif %}</h2>
 
     <form method="post" enctype="multipart/form-data"
@@ -54,14 +55,16 @@
           <div class="form-group">
             <label>Supplier</label>
             <!-- ForeignKey supplier: pass supplier id -->
-            <select name="supplier_id">
+            <select name="supplier_id" id="supplier-select">
               <option value="">-- Select Supplier --</option>
               {% for s in suppliers %}
                 <option value="{{ s.id }}" {% if bill and bill.supplier_id == s.id %}selected{% endif %}>
                   {{ s.company_name }}
                 </option>
               {% endfor %}
+              <option value="add_new">➕ Add New</option>
             </select>
+
           </div>
 
           <div class="form-group">
@@ -346,11 +349,9 @@
       </div>
 
       <!-- Footer -->
-      <div class="footer">
-        <a href="{% url 'expenses:bills-list' %}">
-          <button class="btn btn-cancel button" type="button">Cancel</button>
-        </a>
-       
+      <div class="footer">        
+ <a href="{% url 'expenses:bills-list' %}"><button class="btn btn-cancel" type="button" style="background-color: #39B54B; color: white;" >Cancel</button></a>
+
         <div class="dropdown">
           <button type="button" class="btn btn-green" id="saveMenuBtn">Save ▼</button>
           <div class="dropdown-menu" id="saveMenu">
@@ -364,6 +365,21 @@
   </div>
 
   <script>
+// open Add supplier in new tab if chosen
+  (function(){
+    const addCustomerUrl = "{% url 'sowaf:add-supplier' %}";
+    const sel = document.getElementById('supplier-select');
+    if (sel){
+      sel.addEventListener('change', function(){
+        if (this.value === 'add_new'){
+          window.open(addCustomerUrl, '_blank', 'noopener');
+          this.value = '';
+        }
+      });
+    }
+  })();
+
+    
     // Collapsible sections
     document.querySelectorAll(".collapsible").forEach(btn => {
       btn.addEventListener("click", () => {

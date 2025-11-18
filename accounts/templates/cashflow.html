@@ -34,72 +34,84 @@
   </style>
 </head>
 <body>
-         <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back to Reports </a>
+  <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> &lt; Back to Reports </a>
 
-<div class="wrap">
-  <h1 class="text-center my-5">Statement of Cash Flows</h1>
+  <div class="wrap">
 
-  <form class="filters me-auto" method="get">
-    <label>From</label>
-    <input type="date" name="from" value="{{ dfrom|date:'Y-m-d' }}">
-    <label>To</label>
-    <input type="date" name="to" value="{{ dto|date:'Y-m-d' }}">
-    <button class="btn" type="submit">Run</button>
-    <a class="btn ghost" href="?">Clear</a>
-  </form>
+    <div class="text-center my-4">
+      <div class="muted">{{ company_name }}</div>
+      <h1 class="text-center my-2">Statement of Cash Flows</h1>
+      <div class="muted">
+        For the period
+        {% if dfrom %}{{ dfrom|date:"d/m/Y" }}{% else %}None{% endif %}
+        – {% if dto %}{{ dto|date:"d/m/Y" }}{% else %}None{% endif %}
+      </div>
+      <div class="muted">
+        Reporting Currency: {{ reporting_currency }}
+      </div>
+    </div>
 
-  <div class="card">
-    <h3>Cash Flows from Operating Activities</h3>
-    <table>
-      <tbody>
-        <tr><td>Net Profit</td><td class="num">{{ net_profit|floatformat:2|intcomma }}</td></tr>
-        <tr><td>Change in Accounts Receivable</td><td class="num">{{ delta_ar|floatformat:2|intcomma }}</td></tr>
-        <tr><td>Change in Inventory</td><td class="num">{{ delta_inv|floatformat:2|intcomma }}</td></tr>
-        <tr><td>Change in Accounts Payable</td><td class="num">{{ delta_ap|floatformat:2|intcomma }}</td></tr>
-        <tr class="tot"><td>Net Cash from Operating Activities</td><td class="num">{{ cash_from_ops|floatformat:2|intcomma }}</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <form class="filters me-auto" method="get">
+      <label>From</label>
+      <input type="date" name="from" value="{{ dfrom|date:'Y-m-d' }}">
+      <label>To</label>
+      <input type="date" name="to" value="{{ dto|date:'Y-m-d' }}">
+      <button class="btn" type="submit">Run</button>
+      <a class="btn ghost" href="?">Clear</a>
+    </form>
 
-  <div class="card">
-    <h3>Cash Flows from Investing Activities</h3>
-    <table>
-      <tbody>
-        <tr><td>Change in Fixed/Other Assets</td><td class="num">{{ delta_fa|floatformat:2|intcomma }}</td></tr>
-        <tr class="tot"><td>Net Cash from Investing Activities</td><td class="num">{{ cash_from_investing|floatformat:2|intcomma }}</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <div class="card">
+      <h3>Cash Flows from Operating Activities</h3>
+      <table>
+        <tbody>
+          <tr><td>Net Profit</td><td class="num">{{ net_profit|floatformat:2|intcomma }}</td></tr>
+          <tr><td>Change in Accounts Receivable</td><td class="num">{{ delta_ar|floatformat:2|intcomma }}</td></tr>
+          <tr><td>Change in Inventory</td><td class="num">{{ delta_inv|floatformat:2|intcomma }}</td></tr>
+          <tr><td>Change in Accounts Payable</td><td class="num">{{ delta_ap|floatformat:2|intcomma }}</td></tr>
+          <tr class="tot"><td>Net Cash from Operating Activities</td><td class="num">{{ cash_from_ops|floatformat:2|intcomma }}</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-  <div class="card">
-    <h3>Cash Flows from Financing Activities</h3>
-    <table>
-      <tbody>
-        <tr><td>Change in Loans</td><td class="num">{{ delta_loans|floatformat:2|intcomma }}</td></tr>
-        <tr><td>Change in Equity</td><td class="num">{{ delta_equity|floatformat:2|intcomma }}</td></tr>
-        <tr class="tot"><td>Net Cash from Financing Activities</td><td class="num">{{ cash_from_financing|floatformat:2|intcomma }}</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <div class="card">
+      <h3>Cash Flows from Investing Activities</h3>
+      <table>
+        <tbody>
+          <tr><td>Change in Fixed/Other Assets</td><td class="num">{{ delta_fa|floatformat:2|intcomma }}</td></tr>
+          <tr class="tot"><td>Net Cash from Investing Activities</td><td class="num">{{ cash_from_investing|floatformat:2|intcomma }}</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-  <div class="card">
-    <h3>Net Change in Cash</h3>
-    <table>
-      <tbody>
-        <tr><td>Cash at Start</td><td class="num">{{ cash_start|floatformat:2|intcomma }}</td></tr>
-        <tr><td>Net Change in Cash</td><td class="num">{{ net_change|floatformat:2|intcomma }}</td></tr>
-        <tr class="tot"><td>Cash at End</td><td class="num">{{ cash_end|floatformat:2|intcomma }}</td></tr>
-      </tbody>
-    </table>
-    <div class="recon">
-      Reconciliation:
-      {% if recon_ok %}
-        <span class="ok">✔ cash_start + net_change = cash_end</span>
-      {% else %}
-        <span class="bad">⚠ Not reconciled</span>
-      {% endif %}
+    <div class="card">
+      <h3>Cash Flows from Financing Activities</h3>
+      <table>
+        <tbody>
+          <tr><td>Change in Loans</td><td class="num">{{ delta_loans|floatformat:2|intcomma }}</td></tr>
+          <tr><td>Change in Equity</td><td class="num">{{ delta_equity|floatformat:2|intcomma }}</td></tr>
+          <tr class="tot"><td>Net Cash from Financing Activities</td><td class="num">{{ cash_from_financing|floatformat:2|intcomma }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Net Change in Cash</h3>
+      <table>
+        <tbody>
+          <tr><td>Cash at Start</td><td class="num">{{ cash_start|floatformat:2|intcomma }}</td></tr>
+          <tr><td>Net Change in Cash</td><td class="num">{{ net_change|floatformat:2|intcomma }}</td></tr>
+          <tr class="tot"><td>Cash at End</td><td class="num">{{ cash_end|floatformat:2|intcomma }}</td></tr>
+        </tbody>
+      </table>
+      <div class="recon">
+        Reconciliation:
+        {% if recon_ok %}
+          <span class="ok">✔ cash_start + net_change = cash_end</span>
+        {% else %}
+          <span class="bad">⚠ Not reconciled</span>
+        {% endif %}
+      </div>
     </div>
   </div>
-</div>
 </body>
 </html>

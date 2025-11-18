@@ -124,7 +124,7 @@
     }
   </style>
 </head>
-
+<a href="{% url 'accounts:accounts' %}" class="text-decoration-none " id="btn" style="color: #39B54B;font-size: 23px;">Back to Chart of accouts</a>
   <div class="container">
  <form method='post' action="{% url 'accounts:add-account' %}" enctype= 'multipart/form-data'>
     {% csrf_token %}
@@ -144,21 +144,17 @@
   <label>Account Type *</label>
   <select name="account_type" id="account_type" required>
     <option value="">Select account type</option>
-    <option>Accounts Receivable (A/R)</option>
-    <option>Current Assets</option>
-    <option>Cash and Cash Equivalents</option>
-    <option>Fixed Assets</option>
+    <option>Current Assets</option>    
     <option>Non-Current Assets</option>
-    <option>Accounts Payable (A/P)</option>
-    <option>Credit Card</option>
     <option>Current Liabilities</option>
     <option>Non-current Liabilities</option>
     <option>Owner's Equity</option>
-    <option>Income</option>
-    <option>Other Income</option>
-    <option>Cost of Sales</option>
-    <option>Expenses</option>
-    <option>Other Expenses</option>
+    <option>Operating Income</option>
+    <option>Operating Expense</option>
+    <option>Investing Income</option>
+    <option>Investing Expense</option>
+    <option>Financing Income</option>
+    <option>Income taxes</option>
   </select>
 </div>
       <!-- detail type  -->
@@ -208,9 +204,7 @@
     <!-- Footer Buttons -->
     <div class="footer">
       <a href="{% url 'accounts:accounts' %}" class="text-decoration-none button btn-sm" id="btn">Cancel</a>
-      <div class="print">
-        <button class="btn" style="background-color: #77f089;;">Print / Preview</button>
-      </div>
+  
       <div class="dropdown">
           <button type="button" class="btn button btn-green">Save ▼</button>
           <div class="dropdown-menu">
@@ -244,72 +238,60 @@
 
     // Mapping of Account Type → Detail Types
     const detailOptions = {
-        "Accounts Receivable (A/R)": [
-            "Trade Debtors",
-            "Other Receivables"
-        ],
+
         "Current Assets": [
-            "Allowance for bad debts", "Assets available for sale", "Development Costs", "Employee Cash advances", "Inventory", "Investments-Other", "Loans To Officers", "Loans To Others", "Loans To Shareholders", "Other current assets", "Prepaid Expenses","Retainage", "Undeposited funds"
+            "Assets held for sale","Inventory","Prepayments","Accounts Receivables (A/R)","Other receivables","Cash and Cash quivalents","Other current assets"
+        ],
+
+        "Non-Current Assets": [
+          "Property","Plant","Equipment","Furniture","Motor Vehicle","Investment property","Intangible Assets","Right of Use Assets","Deffered tax Assets","Other Long term Assets"
 
         ],
-        "Cash and Cash Equivalents": [
-            "Bank", " Cash and Cash Equivalents", "Cash on Hand", "Client Trust Account", "Money Market", "Rents Held in Trust", "Savings", 
-        ],
-        "Fixed Assets": [
-            "Accumulated depletion", "Accumulated depreciation on property, plant and equipment", "Buildings", "Depletable Assets", "Furniture and Fixtures", "Land", "Leasehold Improvement", "Machinery and equipment", "Other fixed assets", "Vehicles"
-        ],
-        "Non-Current Assets": [
-            "Long-term Investments","Intangible Assets","Accumulated amortisation of non-current assets","Assets held for sale","Deferred tax","Good will","Lease Buyout","Licences","Organisational Costs","Other non-current assets","Security Deposits"
-        ],
-        "Accounts Payable (A/P)": [
-        "Accounts Payable (A/P)",    
-        "Trade Creditors",
-        "Other Payables"
-        ],
-        "Credit Card": [
-            "Credit Card",
-            "Visa",
-            "MasterCard",
-            "Corporate Card",
-            "Amex"
-        ],
+      
         "Current Liabilities": [
-            "Accrued liabilities", "Client Trust Accounts-Liabilities", "Current Tax Liability", "Current portion of obligations under finance leases", "Dividends Payable", "Income tax payable", "Insurance payable", "Line of Credit", "Loan Payable", "Other current liabilities", "Payroll Clearing", "Payroll liabilities", "Prepaid Expenses Payable", "Rents in trust-liability", "Sales and service tax payable"
+            "Accounts Payable (A/P)","Other Payables","Provisions","Short term borrowings","Current tax liabilities","Accrued expenses","Other Current liabilities"
+
         ],
+
         "Non-current liabilities":[
-          "Accrued holiday payable", "Accrued non-current liabilities", "Liabilities related to assets for sale", "Long-term debt", "Notes payable", "other non-current liabilities", "Shareholder Notes Payable"
+          "Long term Borrowings","Pension and other employee obligations","Long term Lease Liabilities","Deffered tax liabilities","Other Non Curent Liabilities"
+
         ],
+
         "Owner's Equity": [
-            "Accumulated adjustment", "Dividend disbursed", "Equity in earnings of subsidiaries", "Opening balance Equity", "Ordinary shares", "Other comprehensive income", "Owner’s Equity", "Paid-in capital or Surplus", "Partner Contributions", "Partner Distributions", "Partner’s Equity", "Preferred shares", "Retained Earnings", "Share capital", "Treasury shares"
+            "Share Capital","Share premium","Retained earnings","Non controlling interest","Other Equity components"
         ],
-        "Income": [
-            "Discounts/Refunds Given", "Non-Profit income", "Other Primary Income", "Revenue-general", "Sales-retail", "Sales-wholesale", "Sales of Product income", "Service/Fee income", "Unapplied Cash Payment Income"
-        ],
-        "Other Income": [
-            "Dividend Income", "Interest earned", "Loss on disposal of assets", "Other Investment Income", "Other Miscellaneous Income", "Other Operating Income", "Tax-Exempt Interest", "Unrealized loss on securities, net tax"
-        ],
-        "Cost of Sales": [
-            "Cost of labour-COS",
-            "Equipment rental-COS",
-            "Freight and delivery-COS",
-            "Other cost of sales-COS",
-            "Supplies and materials-COS"
-        ],
-        "Expenses": [
-            "Advertisement/Promotional", "Amortisation expense", "Auto", "Bad debts", "Bank charges", "Charitable contributions", "Commission and fees", "Cost of Labor", "Dues and Subscriptions", "Equipment rental", "Finance costs", "Income tax expenses", "Insurance", "Interest Paid", "Legal and Professional fees", "Loss on discontinued operations, net of tax", "Management compensation", "Meals and entertainment", "Office/General Administrative Expenses", "Other Miscellaneous Service Cost", "Other selling expenses", "Payroll expenses", "Rent or lease of Buildings", "Repair and maintenance", "Shipping and delivery expense", "Supplies and materials", "Taxes paid", "Travel expenses- general admin expenses", "Travel expenses- selling expense", "Unapplied Cash Bill Payment expense", "Utilities"
-        ],
-        "Other Expenses": [
-            "Amortisation",
-            "Depreciation",
-            "Exchange Gain or Loss",
-            "Other Expense",
-            "Penalties and Settlements"
-        ]
+
+        "Operating Income":[
+         "Revenue", "other operation income",
+    ],
+
+   "Operating Expense":[
+    "Cost of Goods sold","Cost of Sales","Selling and distribution","Administration expenses","Research and development","other operating expenses"
+    ],
+
+   "Investing Income":[
+    "Share of profits from associates","Rental Income","Dividends","Interest income","Depreciation","Impairment", "Losses","Impairment Reversal","Loss on Disposal of Investments","Other Investing Income"
+    ],
+
+   "Investing Expense":[
+    "Gain on Disposal of Investments"	,"Fairvalue Gains","Fairvalue Losses","Other Investing Expenses"
+],
+
+"Financing Expense":[	
+"Interest expense","Other Financing Costs"
+],
+	
+"Income taxes":[
+"Income Tax Expense","Other Tax Expenses"
+],
+
+
     };
 
     // Function to update Detail Type dropdown
     function updateDetailTypes(accountType) {
-        detailTypeDropdown.innerHTML = "<option value=''>Choose detail type</option>";
+        detailTypeDropdown.innerHTML = "<option value=''></option>";
 
         if (detailOptions[accountType]) {
             detailOptions[accountType].forEach(function (detail) {

@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.utils.timezone import make_naive
 from django.db.models.functions import Coalesce
 from .models import Account,ColumnPreference
+from collections import defaultdict
 from .models import JournalEntry, JournalLine
 from django.utils import timezone
 from decimal import Decimal
@@ -18,6 +19,7 @@ from django.db.models import Sum, F, Value
 from django.db.models.functions import Coalesce
 from django.contrib.auth.decorators import login_required
 from django.utils.dateparse import parse_date
+from sowa_settings.models import CompanySettings,Currency
 
 # my views
 
@@ -34,24 +36,111 @@ DEFAULT_ACCOUNTS_COL_PREFS = {
     "actions": True,  # keep actions togglable too
 }
 
+# working on the structured approach
+# === Level 1 mapping for Chart of Accounts ============================
+LEVEL1_ORDER = [
+    "Assets",
+    "Equity",
+    "Liabilities",
+    "Income",
+    "Cost of Goods Sold",
+    "Expense",
+]
+
+ACCOUNT_TYPE_TO_LEVEL1 = {
+    # Assets
+    "asset": "Assets",
+    "assets": "Assets",
+    "current assets": "Assets",
+    "non-current assets": "Assets",
+    "fixed assets": "Assets",
+    "cash and cash equivalents": "Assets",
+    "accounts receivable": "Assets",
+    "inventory": "Assets",
+
+    # Liabilities
+    "liability": "Liabilities",
+    "liabilities": "Liabilities",
+    "current liabilities": "Liabilities",
+    "non-current liabilities": "Liabilities",
+    "loans": "Liabilities",
+
+    # Equity
+    "equity": "Equity",
+    "owner's equity": "Equity",
+    "owners equity": "Equity",
+    "share capital": "Equity",
+
+    # Income
+    "income": "Income",
+    "sales": "Income",
+    "revenue": "Income",
+    "other income": "Other Income",
+
+    # COGS
+    "cost of goods sold": "Cost of Goods Sold",
+
+    # Expenses
+    "expense": "Expenses",
+    "expenses": "Expenses",
+    "operating expenses": "Expenses",
+    "other expense": "Other Expense",
+    
+}
+
+@login_required
 def accounts(request):
     status = request.GET.get("status", "active")  # default is active
 
+    base_qs = Account.objects.all()
+
+    # --- status filter for this view ---
     if status == "inactive":
-        coas = Account.objects.filter(is_active=False)
+        qs = base_qs.filter(is_active=False)
     elif status == "all":
-        coas = Account.objects.all().order_by('account_type', 'account_name')
-    else:
-        coas = Account.objects.filter(is_active=True)
+        qs = base_qs
+    else:  # "active"
+        qs = base_qs.filter(is_active=True)
+
+    qs = qs.select_related("parent").order_by("account_type", "account_name")
+
+    # --- group accounts into Level 1 buckets using backend mapping ---
+    grouped = {label: [] for label in LEVEL1_ORDER}
+
+    for acc in qs:
+        raw_type = (acc.account_type or "").strip().lower()
+
+        level1 = ACCOUNT_TYPE_TO_LEVEL1.get(raw_type)
+
+        # Fallbacks if someone creates weird/custom types
+        if not level1:
+            if "income" in raw_type:
+                level1 = "Income"
+            elif "cost of goods" in raw_type or "cogs" in raw_type:
+                level1 = "Cost of Goods Sold"
+            elif "expense" in raw_type:
+                level1 = "Expenses"
+            elif "liabil" in raw_type:
+                level1 = "Liabilities"
+            elif "equity" in raw_type:
+                level1 = "Equity"
+            else:
+                level1 = "Assets"  # safe default
+
+        grouped.setdefault(level1, []).append(acc)
+
+    # ordered list for the template
+    level1_sections = [
+        {"label": label, "accounts": grouped.get(label, [])}
+        for label in LEVEL1_ORDER
+    ]
 
     # counts for badges
-    active_count = Account.objects.filter(is_active=True).count()
-    inactive_count = Account.objects.filter(is_active=False).count()
-    all_count = Account.objects.count()
+    active_count = base_qs.filter(is_active=True).count()
+    inactive_count = base_qs.filter(is_active=False).count()
+    all_count = base_qs.count()
 
-    # Column preferences:
-    # - if logged in: per-user prefs (created on first visit)
-    # - if anonymous: just use defaults (don't touch DB)
+    # Column preferences (same logic you had)
     if getattr(request.user, "is_authenticated", False):
         prefs, _ = ColumnPreference.objects.get_or_create(
             user=request.user,
@@ -62,15 +151,17 @@ def accounts(request):
     else:
         merged_prefs = DEFAULT_ACCOUNTS_COL_PREFS
 
-    return render(request, 'accounts.html', {
-        'coas': coas,
-        'status': status,
-        'column_prefs': merged_prefs,
+    return render(request, "accounts.html", {
+        "status": status,
+        "column_prefs": merged_prefs,
         "active_count": active_count,
         "inactive_count": inactive_count,
         "all_count": all_count,
+        # for the table
+        "level1_sections": level1_sections,
+        # optional: still pass qs if you want
+        "coas": qs,
     })
-
 # ajax to fetch the data
 
 @csrf_exempt
@@ -181,22 +272,74 @@ def journal_list(request):
 # Generating reports
 
 # trial balance
+def _company_context():
+    """
+    Fetch company name and reporting currency from the sowa_settings app.
+    Adjust field names if your model is different.
+    """
+    settings_obj = CompanySettings.objects.first()
+    if settings_obj:
+        return {
+            "company_name": getattr(settings_obj, "company_name", "") or "",
+            "reporting_currency": getattr(settings_obj, "reporting_currency", "") or "",
+        }
+    return {
+        "company_name": "",
+        "reporting_currency": "",
+    }
+
 def _period(request):
     # ?from=2025-01-01&to=2025-12-31
     dfrom = parse_date(request.GET.get("from") or "")
     dto   = parse_date(request.GET.get("to") or "")
     return dfrom, dto
 
+def _get_reporting_currency():
+    code = "UGX"
+    factor = Decimal("1")
+
+    home = Currency.objects.filter(is_home=True).first()
+    if home:
+        code = home.code or code
+
+    cs = CompanySettings.objects.first()
+
+    cur = None
+    if cs:
+        rc = getattr(cs, "reporting_currency", None)
+
+        if isinstance(rc, Currency):
+            cur = rc
+        elif isinstance(rc, str) and rc:
+            cur = Currency.objects.filter(code__iexact=rc).first()
+
+    if not cur:
+        cur = home
+
+    if not cur:
+        return code, factor
+
+    code = cur.code or code
+
+    if home and cur.id == home.id:
+        return code, factor
+
+    if cur.rate_to_home and cur.rate_to_home != 0:
+        factor = Decimal("1") / cur.rate_to_home
+
+    return code, factor
+
+
 @login_required
 def trial_balance(request):
     dfrom = parse_date(request.GET.get("from", "") or "")
     dto   = parse_date(request.GET.get("to", "") or "")
 
-    # NOTE: date lives on the parent entry
+    # Reporting currency & FX factor (UGX → reporting)
+    reporting_currency, fx = _get_reporting_currency()
+
     lines = JournalLine.objects.select_related("entry", "account")
 
-    # If your JournalEntry model uses a different field name than `date`,
-    # change `entry__date` to the correct one (e.g. `entry__posting_date`).
     if dfrom:
         lines = lines.filter(entry__date__gte=dfrom)
     if dto:
@@ -205,19 +348,27 @@ def trial_balance(request):
     agg = (
         lines.values("account_id", "account__account_name")
              .annotate(
-                 debit = Coalesce(Sum("debit"),  Value(Decimal("0.00"))),
-                 credit= Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+                 debit = Coalesce(Sum("debit"),  Value(Decimal("0.00"), output_field=DecimalField())),
+                 credit= Coalesce(Sum("credit"), Value(Decimal("0.00"), output_field=DecimalField())),
              )
              .order_by("account__account_name")
     )
 
     rows = []
     total_debit = total_credit = Decimal("0.00")
+
     for r in agg:
-        d = r["debit"] or Decimal("0")
-        c = r["credit"] or Decimal("0")
+        # Original amounts in HOME currency (UGX)
+        d_home = r["debit"]  or Decimal("0")
+        c_home = r["credit"] or Decimal("0")
+
+        # Convert to reporting currency
+        d = d_home * fx
+        c = c_home * fx
+
         total_debit  += d
         total_credit += c
+
         rows.append({
             "account": r["account__account_name"] or "—",
             "debit": d,
@@ -230,39 +381,35 @@ def trial_balance(request):
         "total_credit": total_credit,
         "dfrom": dfrom,
         "dto": dto,
+        "reporting_currency": reporting_currency,
     })
 # working on the profits and losses
 
-
-
 INCOME_TYPES  = {"income", "other income"}
 EXPENSE_TYPES = {"expense", "other expense", "cost of goods sold"}
+
 
 def _apply_entry_date_range(qs, dfrom, dto):
     """
     Apply date range to JournalLine queryset by discovering the
     correct date field on the related JournalEntry (e.g. 'entry_date' or 'date').
     """
-    # related model for the FK 'entry'
     EntryModel = qs.model._meta.get_field("entry").remote_field.model
-    # choose the date field name
     date_field_name = "entry_date"
     try:
         EntryModel._meta.get_field("entry_date")
     except FieldDoesNotExist:
         date_field_name = "date"
 
-    # build lookups like entry__entry_date__gte or entry__date__gte
     if dfrom:
         qs = qs.filter(**{f"entry__{date_field_name}__gte": dfrom})
     if dto:
         qs = qs.filter(**{f"entry__{date_field_name}__lte": dto})
     return qs
 
-# profits and loss 
 @login_required
 def report_pnl(request):
-    dfrom, dto = _period(request)  # your helper used in TB
+    dfrom, dto = _period(request)
 
     lines = JournalLine.objects.select_related("account", "entry")
     lines = _apply_entry_date_range(lines, dfrom, dto)
@@ -277,13 +424,22 @@ def report_pnl(request):
         .order_by("account__account_name")
     )
 
-    buckets = {"income": [], "cogs": [], "expense": []}
-    totals  = {"income": Decimal("0"), "cogs": Decimal("0"), "expense": Decimal("0")}
+    # basic IFRS buckets (Operating section)
+    buckets = {
+        "income": [],   # Revenue
+        "cogs":   [],   # Cost of goods sold
+        "expense": []   # Operating expenses
+    }
+    totals = {
+        "income": Decimal("0"),
+        "cogs":   Decimal("0"),
+        "expense": Decimal("0"),
+    }
 
     for a in agg:
         t = (a["account__account_type"] or "").lower()
-        rev_like = a["cre"] - a["deb"]     # revenue positive
-        exp_like = a["deb"] - a["cre"]     # costs positive
+        rev_like = a["cre"] - a["deb"]   # revenue positive
+        exp_like = a["deb"] - a["cre"]   # costs positive
 
         if t in INCOME_TYPES:
             buckets["income"].append((a["account__account_name"], rev_like))
@@ -295,76 +451,109 @@ def report_pnl(request):
             buckets["expense"].append((a["account__account_name"], exp_like))
             totals["expense"] += exp_like
 
+    # IFRS subtotals
     gross_profit = totals["income"] - totals["cogs"]
-    net_profit   = gross_profit - totals["expense"]
+    operating_profit = gross_profit - totals["expense"]
 
-    return render(request, "pnl.html", {
+    # for now we don't yet split investing / financing / tax,
+    # so these are equal to operating_profit
+    profit_before_financing_tax = operating_profit
+    profit_before_income_tax = operating_profit
+    net_profit = profit_before_income_tax
+
+    ctx = {
         "buckets": buckets,
         "totals": totals,
         "gross_profit": gross_profit,
+        "operating_profit": operating_profit,
+        "profit_before_financing_tax": profit_before_financing_tax,
+        "profit_before_income_tax": profit_before_income_tax,
         "net_profit": net_profit,
-        "dfrom": dfrom, "dto": dto,
-    })
-# working on the balance sheet
+        "dfrom": dfrom,
+        "dto": dto,
+    }
+    ctx.update(_company_context())  # gives company_name, reporting_currency, etc.
+    return render(request, "pnl.html", ctx)# working on the balance sheet
+# P&L type sets used ONLY for retained earnings on the Balance Sheet
 INCOME_TYPES  = {"income", "other income"}
 EXPENSE_TYPES = {"expense", "other expense", "cost of goods sold"}
 
-ASSET_TYPES   = {
-    "bank","cash and cash equivalents","current asset","fixed asset","other asset",
-    "accounts receivable","inventory","prepaid expense"
+ASSET_CURRENT_TYPES = {
+    "bank", "cash and cash equivalents", "current asset",
+    "accounts receivable", "inventory", "prepaid expense", "other current assets",
 }
-LIAB_TYPES    = {"accounts payable","current liability","long term liability","other liability"}
-EQUITY_TYPES  = {"equity"}
+ASSET_NONCURRENT_TYPES = {
+    "fixed asset", "non-current asset", "other asset",
+    "depletable assets", "land", "buildings", "machinery and equipment",
+}
+
+LIAB_CURRENT_TYPES = {"accounts payable", "current liability", "other current liabilities"}
+LIAB_NONCURRENT_TYPES = {"non-current liability", "long term liability", "other non-current liabilities"}
+EQUITY_TYPES  = {"equity", "owner's equity", "retained earnings"}
 
 
-def _period(request):
+def _period_bs(request):
+    """
+    Small helper for Balance Sheet only, to avoid name clash with other _period.
+    We mostly care about the 'to' date (as of).
+    """
     dfrom = request.GET.get("from") or None
     dto   = request.GET.get("to") or None
     from datetime import datetime
     fmt = "%Y-%m-%d"
-    try: dfrom = datetime.strptime(dfrom, fmt).date() if dfrom else None
-    except: dfrom = None
-    try: dto   = datetime.strptime(dto, fmt).date() if dto else None
-    except: dto = None
+    try:
+        dfrom = datetime.strptime(dfrom, fmt).date() if dfrom else None
+    except Exception:
+        dfrom = None
+    try:
+        dto   = datetime.strptime(dto, fmt).date() if dto else None
+    except Exception:
+        dto = None
     return dfrom, dto
 
 
 def _apply_asof(qs, asof):
+    """
+    Filter JournalLines up to and including the 'as of' date
+    on the related JournalEntry's date field (date or entry_date).
+    """
     if not asof:
         return qs
+
     EntryModel = qs.model._meta.get_field("entry").remote_field.model
     date_field = "entry_date"
     try:
         EntryModel._meta.get_field("entry_date")
     except FieldDoesNotExist:
         date_field = "date"
+
     return qs.filter(**{f"entry__{date_field}__lte": asof})
 
 
 def _iregex_from_types(type_set):
+    import re
     return "|".join(re.escape(t) for t in type_set)
 
 
-def _net_by_types(lines, type_set, positive_is_debit=True):
+def _bucket_balances(lines, type_set, positive_is_debit=True):
     """
-    Returns (rows, total) for the provided account-type bucket.
-    - For assets: positive_is_debit=True  -> amount = debit - credit
-    - For liab/equity: positive_is_debit=False -> amount = credit - debit
+    Returns (rows, total) for a bucket of account types.
+    For assets: positive_is_debit=True  -> amount = debit - credit
+    For liab/equity: positive_is_debit=False -> amount = credit - debit
     """
     pattern = _iregex_from_types(type_set)
     agg = (
-        lines
-        .filter(account__account_type__iregex=pattern)
-        .values("account__account_name", "account__account_type")
-        .annotate(
-            deb=Coalesce(Sum("debit"),  Value(Decimal("0"))),
-            cre=Coalesce(Sum("credit"), Value(Decimal("0")))
-        )
-        .order_by("account__account_name")
+        lines.filter(account__account_type__iregex=pattern)
+             .values("account__account_name", "account__account_type")
+             .annotate(
+                 deb=Coalesce(Sum("debit"),  Value(Decimal("0"))),
+                 cre=Coalesce(Sum("credit"), Value(Decimal("0"))),
+             )
+             .order_by("account__account_name")
     )
     rows, total = [], Decimal("0")
     for rec in agg:
-        bal = rec["deb"] - rec["cre"]           # debit-nature balance
+        bal = rec["deb"] - rec["cre"]         # debit-nature balance
         amt = bal if positive_is_debit else -bal
         if abs(amt) < Decimal("0.005"):
             continue
@@ -373,27 +562,17 @@ def _net_by_types(lines, type_set, positive_is_debit=True):
     return rows, total
 
 
-def _apply_cash_basis_rules(asset_types, liab_types):
-    """
-    Very light cash-basis tweak: remove A/R and A/P buckets so they zero out.
-    (QBO also affects other areas; refine here later if needed.)
-    """
-    aset = set(asset_types)
-    liab = set(liab_types)
-    aset -= {"accounts receivable"}
-    liab -= {"accounts payable"}
-    return aset, liab
-
-# balance sheet
 @login_required
 def report_bs(request):
     """
-    Balance Sheet (vertical, QBO-like).
-    GET params:
-      ?to=YYYY-MM-DD   -> 'As of' date
-      ?method=cash|accrual  -> accounting method toggle
+    Statement of Financial Position (Balance Sheet).
+    Layout:
+      - Assets (Non-current, Current)
+      - Equity & Liabilities:
+          * Equity
+          * Liabilities (Non-current, Current)
     """
-    _, asof = _period(request)  # we only care about 'to'
+    _, asof = _period_bs(request)
     method = (request.GET.get("method") or "accrual").strip().lower()
     method = "cash" if method == "cash" else "accrual"
 
@@ -403,18 +582,20 @@ def report_bs(request):
         asof
     )
 
-    # Cash-basis simplification: zero AR/AP by excluding those types
-    asset_types = ASSET_TYPES
-    liab_types  = LIAB_TYPES
-    if method == "cash":
-        asset_types, liab_types = _apply_cash_basis_rules(ASSET_TYPES, LIAB_TYPES)
+    # Assets buckets
+    asset_nc_rows,   asset_nc_total   = _bucket_balances(lines, ASSET_NONCURRENT_TYPES, positive_is_debit=True)
+    asset_curr_rows, asset_curr_total = _bucket_balances(lines, ASSET_CURRENT_TYPES,   positive_is_debit=True)
+    asset_total = asset_nc_total + asset_curr_total
 
-    # Buckets
-    asset_rows, asset_total = _net_by_types(lines, asset_types,  positive_is_debit=True)
-    liab_rows,  liab_total  = _net_by_types(lines, liab_types,   positive_is_debit=False)
-    eq_rows,    eq_total    = _net_by_types(lines, EQUITY_TYPES, positive_is_debit=False)
+    # Liabilities buckets
+    liab_nc_rows,   liab_nc_total   = _bucket_balances(lines, LIAB_NONCURRENT_TYPES, positive_is_debit=False)
+    liab_curr_rows, liab_curr_total = _bucket_balances(lines, LIAB_CURRENT_TYPES,    positive_is_debit=False)
+    liab_total = liab_nc_total + liab_curr_total
 
-    # Retained earnings = cumulative net income up to 'as of'
+    # Equity bucket
+    eq_rows, eq_total = _bucket_balances(lines, EQUITY_TYPES, positive_is_debit=False)
+
+    # Retained earnings from cumulative P&L balances
     inc_pattern = _iregex_from_types(INCOME_TYPES)
     exp_pattern = _iregex_from_types(EXPENSE_TYPES)
 
@@ -426,23 +607,35 @@ def report_bs(request):
         lines.filter(account__account_type__iregex=exp_pattern)
              .aggregate(v=Coalesce(Sum(F("debit") - F("credit")), Value(Decimal("0"))))["v"]
     )
-    retained = inc_val - exp_val  # increases equity when positive
+    retained = inc_val - exp_val
 
     eq_rows.append(("Retained Earnings", retained))
     eq_total = eq_total + retained
 
-    # Company name (adjust to your source if you have one)
-    company_name = getattr(getattr(request, "tenant", None), "name", "YoAccountant")
+    ctx = {
+        "asset_nc_rows": asset_nc_rows,
+        "asset_nc_total": asset_nc_total,
+        "asset_curr_rows": asset_curr_rows,
+        "asset_curr_total": asset_curr_total,
+        "asset_total": asset_total,
 
-    return render(request, "balance_sheet.html", {
-        "company_name": company_name,
-        "method": method,
-        "asset_rows": asset_rows, "asset_total": asset_total,
-        "liab_rows": liab_rows,   "liab_total": liab_total,
-        "eq_rows": eq_rows,       "eq_total": eq_total,
+        "liab_nc_rows": liab_nc_rows,
+        "liab_nc_total": liab_nc_total,
+        "liab_curr_rows": liab_curr_rows,
+        "liab_curr_total": liab_curr_total,
+        "liab_total": liab_total,
+
+        "eq_rows": eq_rows,
+        "eq_total": eq_total,
+
         "asof": asof,
+        "method": method,
         "check_ok": (asset_total == (liab_total + eq_total)),
-    })
+    }
+    ctx.update(_company_context())
+    return render(request, "balance_sheet.html", ctx)
+
+
 # working on the cashflow
 # Account type buckets
 INCOME_TYPES   = {"income", "other income"}
@@ -519,6 +712,7 @@ def _net_profit_for_period(dfrom, dto):
     return inc - exp  # profit positive
 
 # ----- CASH FLOW (Indirect) -------------------------------------------
+
 @login_required
 def report_cashflow(request):
     dfrom, dto = _period(request)
@@ -526,54 +720,50 @@ def report_cashflow(request):
     # Net Profit
     net_profit = _net_profit_for_period(dfrom, dto)
 
-    # Working capital changes (period deltas)
-    delta_ar  = _change_in_balance(_ids_by_types(AR_TYPES),  dfrom, dto)  # ↑AR = cash outflow
-    delta_inv = _change_in_balance(_ids_by_types(INV_TYPES), dfrom, dto)  # ↑Inv = cash outflow
-    delta_ap  = _change_in_balance(_ids_by_types(AP_TYPES),  dfrom, dto)  # ↑AP  = cash inflow
+    # Working capital changes
+    delta_ar  = _change_in_balance(_ids_by_types(AR_TYPES),  dfrom, dto)
+    delta_inv = _change_in_balance(_ids_by_types(INV_TYPES), dfrom, dto)
+    delta_ap  = _change_in_balance(_ids_by_types(AP_TYPES),  dfrom, dto)
 
     cash_from_ops = (
         net_profit
-        - delta_ar        # increase AR reduces cash
-        - delta_inv       # increase inventory reduces cash
-        + delta_ap        # increase AP increases cash
+        - delta_ar
+        - delta_inv
+        + delta_ap
     )
 
-    # Investing (fixed assets etc): increase in FA = cash outflow
+    # Investing
     delta_fa = _change_in_balance(_ids_by_types(FIXED_ASSET_TYPES), dfrom, dto)
     cash_from_investing = -delta_fa
 
-    # Financing: increases in loans/equity are inflows
-    delta_loans = _change_in_balance(_ids_by_types(LOAN_TYPES), dfrom, dto)
-    delta_equity= _change_in_balance(_ids_by_types(EQUITY_TYPES), dfrom, dto)
+    # Financing
+    delta_loans  = _change_in_balance(_ids_by_types(LOAN_TYPES),  dfrom, dto)
+    delta_equity = _change_in_balance(_ids_by_types(EQUITY_TYPES), dfrom, dto)
     cash_from_financing = delta_loans + delta_equity
 
-    # Net change in cash = sum sections
     net_change = cash_from_ops + cash_from_investing + cash_from_financing
 
-    # Reconcile with cash/bank balances
     cash_ids   = _ids_by_types(CASH_TYPES)
     cash_start = account_balance_asof(cash_ids, (dfrom - timedelta(days=1)) if dfrom else None)
     cash_end   = account_balance_asof(cash_ids, dto)
-    # Note: cash accounts are debit-nature; positive balance = cash asset.
 
-    return render(request, "cashflow.html", {
-        "dfrom": dfrom, "dto": dto,
-
+    ctx = {
+        "dfrom": dfrom,
+        "dto": dto,
         "net_profit": net_profit,
         "delta_ar": delta_ar,
         "delta_inv": delta_inv,
         "delta_ap": delta_ap,
         "cash_from_ops": cash_from_ops,
-
         "delta_fa": delta_fa,
         "cash_from_investing": cash_from_investing,
-
         "delta_loans": delta_loans,
         "delta_equity": delta_equity,
         "cash_from_financing": cash_from_financing,
-
         "net_change": net_change,
         "cash_start": cash_start,
         "cash_end": cash_end,
         "recon_ok": (cash_start + net_change == cash_end),
-    })
+    }
+    ctx.update(_company_context())
+    return render(request, "cashflow.html", ctx)

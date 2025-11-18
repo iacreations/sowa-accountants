@@ -10,139 +10,246 @@
   <title>Balance Sheet</title>
   <style>
     :root{
-      --brand:#39B54B; --ink:#0f5132; --muted:#64748b; --line:#e7e7e7;
-      --head:#e9fbef; --card:#ffffff;
+      --brand:#39B54B;
+      --ink:#0f5132;
+      --muted:#64748b;
+      --line:#e7e7e7;
+      --head:#e9fbef;
+      --card:#ffffff;
+      --soft:#f6fdf8;
+      --accent:#dcfce7;
     }
-    body{font-family:Poppins,system-ui,Segoe UI,Arial;margin:24px;background:#f6f8f7}
-    .wrap{max-width:1100px;margin:auto;background:#fff;border-radius:12px;padding:20px 22px;box-shadow:0 8px 22px rgba(0,0,0,.06)}
-    .hdr{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:1px solid #eef1ef;padding-bottom:12px;margin-bottom:14px}
+
+    body{
+      font-family:Poppins,system-ui,Segoe UI,Arial;
+      margin:24px;background:#f6f8f7
+    }
+    .wrap{
+      max-width:1100px;margin:auto;background:#fff;border-radius:12px;
+      padding:20px 22px;
+      box-shadow:0 8px 22px rgba(0,0,0,.06)
+    }
+    .hdr{
+      display:flex;justify-content:space-between;align-items:flex-end;gap:12px;
+      border-bottom:1px solid #eef1ef;padding-bottom:12px;margin-bottom:14px
+    }
     .hdr h1{color:var(--brand);font-size:28px;margin:0}
     .sub{color:#334155}
     .filters{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
-    input[type="date"]{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px}
-    .btn{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer}
-    .btn.ghost{background:#f0fdf4;color:#0f5132;border:1px solid #cceedd}
-    .card{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:14px}
-    .card h3{margin:0;padding:10px 12px;background:var(--head);color:var(--ink)}
-    table{width:100%;border-collapse:separate;border-spacing:0}
+    input[type="date"]{
+      border:1px solid #d1d5db;border-radius:8px;padding:8px 10px
+    }
+    .btn{
+      background:var(--brand);color:#fff;border:0;border-radius:8px;
+      padding:8px 12px;font-weight:800;cursor:pointer
+    }
+    .btn.ghost{
+      background:#f0fdf4;color:#0f5132;border:1px solid #cceedd
+    }
+
+    .card{
+      background:#fff;border:1px solid var(--line);border-radius:12px;
+      overflow:hidden;margin-top:18px
+    }
+    .card h3{
+      margin:0;padding:12px 14px;background:var(--head);color:var(--ink);
+      letter-spacing:.5px;font-weight:700;font-size:20px
+    }
+
+    table{width:100%;border-collapse:separate;border-spacing:0;font-size:15px}
     th,td{padding:10px 12px;border-top:1px solid #f1f1f1}
-    th{text-align:left;color:#0f5132;background:#fafdfb}
+    th{text-align:left;color:#0f5132;background:#fafdfb;font-weight:600}
     .num{text-align:right;white-space:nowrap}
-    .tot{font-weight:900;background:#f8fff9}
-    .check{margin-top:12px;color:#1f2937}
+
+    .group-title{
+      padding-top:14px;
+      font-size:15px;
+      font-weight:700;
+      color:#0f5132;
+      background:var(--soft)
+    }
+
+    tbody tr td:first-child{
+      padding-left:22px;
+    }
+
+    .tot{
+      font-weight:900;background:#f8fff9;color:#0f5132;
+      border-top:2px solid #e0f2e9
+    }
+    .tot strong{color:var(--brand)}
+
+    .grand{
+      background:var(--accent);
+      font-weight:900;
+      color:#14532d;
+      border-top:2px solid #bbf7d0;
+      font-size:16px;
+    }
+
+    .check{margin-top:20px;color:#1f2937;font-weight:600}
     .ok{color:#166534}
     .bad{color:#b45309}
+
     .meta {color:#475569}
   </style>
 </head>
 <body>
-  <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> &lt; Back to Reports </a>
+
+  <a href="{% url 'sowaf:reports' %}"
+     style="color:#39B54B;font-weight:900;text-decoration:none;margin-left:3%;">
+    &lt; Back to Reports
+  </a>
 
   <div class="wrap">
+
     <div class="hdr">
       <div>
         <div class="sub">{{ company_name }}</div>
-        <h1>Balance Sheet</h1>
-        <div class="meta">As of {{ asof|date:"F j, Y" }}</div>
+        <h1>Statement of Financial Position</h1>
+        <div class="meta">As of {{ asof|date:"d/m/Y" }}</div>
+        <div class="meta">Reporting Currency: {{ reporting_currency }}</div>
       </div>
 
       <form class="filters" method="get">
         <label class="meta">As of</label>
         <input type="date" name="to" value="{{ asof|date:'Y-m-d' }}">
+
         <label class="meta">Method</label>
         <label class="meta">
-          <input type="radio" name="method" value="accrual" {% if method != 'cash' %}checked{% endif %}> Accrual
+          <input type="radio" name="method" value="accrual"
+            {% if method != 'cash' %}checked{% endif %}> Accrual
         </label>
         <label class="meta">
-          <input type="radio" name="method" value="cash" {% if method == 'cash' %}checked{% endif %}> Cash
+          <input type="radio" name="method" value="cash"
+            {% if method == 'cash' %}checked{% endif %}> Cash
         </label>
+
         <button class="btn" type="submit">Run</button>
         <a class="btn ghost" href="?">Clear</a>
       </form>
     </div>
 
-    <!-- Vertical flow: Assets, then Liabilities, then Equity, then grand total -->
+    <!-- ============= ASSETS ============= -->
     <div class="card">
       <h3>Assets</h3>
       <table>
-        <thead>
-          <tr><th>Account</th><th class="num">Amount</th></tr>
-        </thead>
+        <thead><tr><th></th><th class="num"></th></tr></thead>
         <tbody>
-          {% for name, amt in asset_rows %}
-            <tr><td>{{ name }}</td><td class="num">Ush{{ amt|floatformat:2|intcomma }}</td></tr>
-          {% empty %}
-            <tr><td colspan="2">No asset activity.</td></tr>
+
+          <!-- Non-current Assets -->
+          <tr><td class="group-title">Non-current Assets</td><td></td></tr>
+          {% for name, amt in asset_nc_rows %}
+            <tr>
+              <td>{{ name }}</td>
+              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+            </tr>
           {% endfor %}
           <tr class="tot">
+            <td>Subtotal Non-current Assets</td>
+            <td class="num">{{ asset_nc_total|floatformat:2|intcomma }}</td>
+          </tr>
+
+          <!-- Current Assets -->
+          <tr><td class="group-title">Current Assets</td><td></td></tr>
+          {% for name, amt in asset_curr_rows %}
+            <tr>
+              <td>{{ name }}</td>
+              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endfor %}
+          <tr class="tot">
+            <td>Subtotal Current Assets</td>
+            <td class="num">{{ asset_curr_total|floatformat:2|intcomma }}</td>
+          </tr>
+
+          <!-- Total Assets -->
+          <tr class="grand">
             <td>Total Assets</td>
-            <td class="num">Ush{{ asset_total|floatformat:2|intcomma }}</td>
+            <td class="num">{{ asset_total|floatformat:2|intcomma }}</td>
           </tr>
+
         </tbody>
       </table>
     </div>
 
+    <!-- ============= EQUITY & LIABILITIES ============= -->
     <div class="card">
-      <h3>Liabilities</h3>
+      <h3>Equity &amp; Liabilities</h3>
       <table>
-        <thead>
-          <tr><th>Account</th><th class="num">Amount</th></tr>
-        </thead>
+        <thead><tr><th></th><th class="num"></th></tr></thead>
         <tbody>
-          {% for name, amt in liab_rows %}
-            <tr><td>{{ name }}</td><td class="num">Ush{{ amt|floatformat:2|intcomma }}</td></tr>
-          {% empty %}
-            <tr><td colspan="2">No liability activity.</td></tr>
-          {% endfor %}
-          <tr class="tot">
-            <td>Total Liabilities</td>
-            <td class="num">Ush{{ liab_total|floatformat:2|intcomma }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
 
-    <div class="card">
-      <h3>Equity</h3>
-      <table>
-        <thead>
-          <tr><th>Account</th><th class="num">Amount</th></tr>
-        </thead>
-        <tbody>
+          <!-- Equity FIRST -->
+          <tr><td class="group-title">Equity</td><td></td></tr>
           {% for name, amt in eq_rows %}
-            <tr><td>{{ name }}</td><td class="num">Ush{{ amt|floatformat:2|intcomma }}</td></tr>
-          {% empty %}
-            <tr><td colspan="2">No equity activity.</td></tr>
+            <tr>
+              <td style="padding-left:32px;">{{ name }}</td>
+              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+            </tr>
           {% endfor %}
           <tr class="tot">
             <td>Total Equity</td>
-            <td class="num">Ush{{ eq_total|floatformat:2|intcomma }}</td>
+            <td class="num">{{ eq_total|floatformat:2|intcomma }}</td>
           </tr>
-        </tbody>
-      </table>
-    </div>
 
-    <div class="card">
-      <h3>Liabilities &amp; Equity</h3>
-      <table>
-        <tbody>
+          <!-- Then Liabilities -->
+          <tr><td class="group-title">Liabilities</td><td></td></tr>
+
+          <!-- Non-current Liabilities -->
+          <tr><td class="group-title" style="padding-left:32px;">Non-current Liabilities</td><td></td></tr>
+          {% for name, amt in liab_nc_rows %}
+            <tr>
+              <td style="padding-left:45px;">{{ name }}</td>
+              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endfor %}
           <tr class="tot">
-            <td><strong>Total Liabilities &amp; Equity</strong></td>
-            <td class="num"><strong>Ush{{ liab_total|add:eq_total|floatformat:2|intcomma }}</strong></td>
+            <td>Subtotal Non-current Liabilities</td>
+            <td class="num">{{ liab_nc_total|floatformat:2|intcomma }}</td>
           </tr>
+
+          <!-- Current Liabilities -->
+          <tr><td class="group-title" style="padding-left:32px;">Current Liabilities</td><td></td></tr>
+          {% for name, amt in liab_curr_rows %}
+            <tr>
+              <td style="padding-left:45px;">{{ name }}</td>
+              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+            </tr>
+          {% endfor %}
+          <tr class="tot">
+            <td>Subtotal Current Liabilities</td>
+            <td class="num">{{ liab_curr_total|floatformat:2|intcomma }}</td>
+          </tr>
+
+          <!-- Total Liabilities -->
+          <tr class="tot">
+            <td>Total Liabilities</td>
+            <td class="num">{{ liab_total|floatformat:2|intcomma }}</td>
+          </tr>
+
+          <!-- Grand Total Equity & Liabilities -->
+          <tr class="grand">
+            <td>Total Equity &amp; Liabilities</td>
+            <td class="num">{{ liab_total|add:eq_total|floatformat:2|intcomma }}</td>
+          </tr>
+
         </tbody>
       </table>
     </div>
 
+    <!-- BALANCE CHECK -->
     <p class="check">
-      Check: Assets (Ush{{ asset_total|floatformat:2|intcomma }}) =
-      Liabilities + Equity (Ush{{ liab_total|add:eq_total|floatformat:2|intcomma }})
+      Check:
+      Assets ({{ asset_total|floatformat:2|intcomma }}) =
+      Equity &amp; Liabilities ({{ liab_total|add:eq_total|floatformat:2|intcomma }})
       {% if check_ok %}
         <span class="ok">✔ Balanced</span>
       {% else %}
         <span class="bad">⚠ Out of balance</span>
       {% endif %}
     </p>
+
   </div>
 </body>
 </html>

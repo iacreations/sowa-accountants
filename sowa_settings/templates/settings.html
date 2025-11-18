@@ -1,0 +1,340 @@
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Company Settings</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}">
+  <style>
+    .settings-page-wrap{
+      max-width: 1100px;
+      margin: 40px auto;
+      background:#ffffff;
+      border-radius:12px;
+      box-shadow:0 8px 22px rgba(0,0,0,.06);
+      display:flex;
+      min-height:480px;
+    }
+    .settings-side{
+      width:230px;
+      border-right:1px solid #e5e7eb;
+      padding:18px 14px;
+      background:#f9fafb;
+    }
+    .settings-side-title{
+      font-size:16px;
+      font-weight:700;
+      margin-bottom:12px;
+      color:#111827;
+    }
+    .settings-side-link{
+      display:block;
+      padding:7px 10px;
+      border-radius:8px;
+      margin-bottom:4px;
+      font-size:14px;
+      text-decoration:none;
+      color:#111827;
+    }
+    .settings-side-link:hover{
+      background:#e5fbe9;
+    }
+    .settings-side-link.active{
+      background:#39B54B;
+      color:#ffffff;
+      font-weight:600;
+    }
+    .settings-main{
+      flex:1;
+      padding:20px 24px;
+    }
+    .settings-main h2{
+      margin:0 0 6px;
+      font-size:20px;
+      color:#39B54B;
+    }
+    .settings-main-sub{
+      color:#6b7280;
+      margin-bottom:18px;
+      font-size:13px;
+    }
+    .field-group{
+      margin-bottom:14px;
+    }
+    .field-label{
+      display:block;
+      font-weight:600;
+      margin-bottom:4px;
+      color:#0f172a;
+    }
+    .field-input, .field-textarea, .field-select{
+      width:100%;
+      padding:8px 10px;
+      border-radius:8px;
+      border:1px solid #cbd5e1;
+    }
+    .field-textarea{ min-height:70px; }
+    .hint{
+      font-size:12px;
+      color:#6b7280;
+      margin-top:3px;
+    }
+    .settings-footer{
+      border-top:1px solid #e5e7eb;
+      margin-top:18px;
+      padding-top:12px;
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+    }
+    .btn-outline{
+      border:1px solid #cbd5e1;
+      background:#ffffff;
+      border-radius:8px;
+      padding:8px 14px;
+      font-weight:600;
+      cursor:pointer;
+    }
+    .btn-green{
+      border:0;
+      background:#39B54B;
+      color:#ffffff;
+      border-radius:8px;
+      padding:8px 18px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .pill-lock{
+      display:inline-block;
+      padding:3px 9px;
+      border-radius:999px;
+      background:#fef3c7;
+      color:#92400e;
+      font-size:11px;
+      font-weight:700;
+      margin-left:8px;
+    }
+    table.currency-table{
+      width:100%;
+      border-collapse:separate;
+      border-spacing:0;
+      border:1px solid #e5e7eb;
+      border-radius:10px;
+      overflow:hidden;
+      font-size:14px;
+    }
+    table.currency-table th,
+    table.currency-table td{
+      padding:8px 10px;
+      border-bottom:1px solid #f1f5f9;
+    }
+    table.currency-table th{
+      background:#f1f5f9;
+      font-weight:600;
+      color:#0f172a;
+    }
+    table.currency-table tr:last-child td{
+      border-bottom:none;
+    }
+    .num-input{
+      max-width:140px;
+    }
+    .badge-home{
+      display:inline-block;
+      padding:2px 7px;
+      border-radius:999px;
+      background:#dcfce7;
+      color:#166534;
+      font-size:11px;
+      font-weight:700;
+    }
+  </style>
+</head>
+<body>
+  {% include 'includes/navbar.html' %}
+  {% include 'includes/sidebar.html' %}
+
+  <div class="main_body" id="main_body" style="margin-top: 5%;">
+    <div class="settings-page-wrap">
+      <div class="settings-side">
+        <div class="settings-side-title">Settings</div>
+        <a href="?tab=company" class="settings-side-link {% if tab == 'company' %}active{% endif %}">Company info</a>
+        <a href="?tab=currencies" class="settings-side-link {% if tab == 'currencies' %}active{% endif %}">Currencies</a>
+      </div>
+
+      <div class="settings-main">
+        {% if messages %}
+          <ul class="mb-2">
+            {% for message in messages %}
+              <li style="font-size:13px;color:#15803d;">{{ message }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+
+        {% if tab == 'company' %}
+          <h2>Company info</h2>
+          <div class="settings-main-sub">
+            Company information used on reports and billing.
+          </div>
+
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="form_type" value="company">
+
+            <div class="field-group">
+              <label class="field-label">Company name</label>
+              <input type="text" name="company_name" class="field-input"
+                     value="{{ settings_obj.company_name|default_if_none:'' }}" required>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">Address</label>
+              <textarea name="address" class="field-textarea">{{ settings_obj.address|default_if_none:'' }}</textarea>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">Email</label>
+              <input type="email" name="email" class="field-input"
+                     value="{{ settings_obj.email|default_if_none:'' }}">
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">Phone</label>
+              <input type="text" name="phone" class="field-input"
+                     value="{{ settings_obj.phone|default_if_none:'' }}">
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">
+                Reporting currency
+                {% if settings_obj.currency_locked %}
+                  <span class="pill-lock">Locked</span>
+                {% endif %}
+              </label>
+
+              {% if settings_obj.currency_locked %}
+                <input type="text" class="field-input"
+                       value="{{ settings_obj.reporting_currency }}" readonly>
+                <div class="hint">
+                  Reporting currency was set when the company file was created and cannot be changed.
+                </div>
+              {% else %}
+                <select name="reporting_currency" class="field-select" required>
+                  <option value="">Select reporting currency</option>
+                  {% with current=settings_obj.reporting_currency %}
+                    <option value="UGX" {% if current == "UGX" %}selected{% endif %}>UGX - Ugandan Shilling</option>
+                    <option value="USD" {% if current == "USD" %}selected{% endif %}>USD - US Dollar</option>
+                    <option value="EUR" {% if current == "EUR" %}selected{% endif %}>EUR - Euro</option>
+                    <option value="GBP" {% if current == "GBP" %}selected{% endif %}>GBP - British Pound</option>
+                    <option value="KES" {% if current == "KES" %}selected{% endif %}>KES - Kenyan Shilling</option>
+                    <option value="TZS" {% if current == "TZS" %}selected{% endif %}>TZS - Tanzanian Shilling</option>
+                    <option value="RWF" {% if current == "RWF" %}selected{% endif %}>RWF - Rwandan Franc</option>
+                    <option value="ZAR" {% if current == "ZAR" %}selected{% endif %}>ZAR - South African Rand</option>
+                    <option value="OTHER" {% if current == "OTHER" %}selected{% endif %}>Other (custom code)</option>
+                  {% endwith %}
+                </select>
+                <div class="hint">
+                  Appears as the “Reporting Currency” on all financial reports. Usually set once.
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="settings-footer">
+              <button type="button" class="btn-outline" onclick="window.history.back()">Cancel</button>
+              <button type="submit" class="btn-green">Save</button>
+            </div>
+          </form>
+
+        {% elif tab == 'currencies' %}
+          <h2>Currencies</h2>
+          <div class="settings-main-sub">
+            Manage exchange rates against the home currency
+            <strong>{{ settings_obj.reporting_currency|default:'(not set)' }}</strong>.
+          </div>
+
+          <!-- Existing currencies table -->
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="form_type" value="currency_update">
+
+            <table class="currency-table mb-3">
+              <thead>
+                <tr>
+                  <th>Currency</th>
+                  <th>Code</th>
+                  <th>Rate (1 unit in home currency)</th>
+                  <th>Last updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for cur in currencies %}
+                  <tr>
+                    <td>
+                      {{ cur.name }}
+                      {% if cur.is_home %}
+                        <span class="badge-home">Home currency</span>
+                      {% endif %}
+                    </td>
+                    <td>{{ cur.code }}</td>
+                    <td>
+                      {% if cur.is_home %}
+                        1.000000
+                      {% else %}
+                        <input type="text" name="rate_{{ cur.id }}" class="field-input num-input"
+                               value="{{ cur.rate_to_home }}">
+                      {% endif %}
+                    </td>
+                    <td>
+                      {{ cur.last_updated|date:"d/m/Y H:i" }}
+                    </td>
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="4">No currencies yet. Add one below.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+
+            {% if currencies %}
+              <div class="settings-footer" style="padding-top:0;margin-top:0;">
+                <button type="submit" class="btn-green">Update rates</button>
+              </div>
+            {% endif %}
+          </form>
+
+          <!-- Add new currency -->
+          <h3 style="margin-top:26px;font-size:16px;">Add currency</h3>
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="form_type" value="currency_add">
+
+            <div class="field-group">
+              <label class="field-label">Currency code (e.g. USD)</label>
+              <input type="text" name="code" class="field-input num-input" maxlength="10">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Currency name</label>
+              <input type="text" name="name" class="field-input">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Rate to home currency</label>
+              <input type="text" name="rate_to_home" class="field-input num-input">
+              <div class="hint">
+                Example (home = UGX): if 1 USD = 3,575.65 UGX, enter <strong>3575.65</strong>.
+              </div>
+            </div>
+            <div class="settings-footer" style="padding-top:0;">
+              <button type="submit" class="btn-green">Add currency</button>
+            </div>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% include 'includes/footer.html' %}
+</body>
+</html>

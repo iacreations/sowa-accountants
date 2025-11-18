@@ -30,7 +30,7 @@
       border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff;
     }
     .btn{
-      background:var(--brand);color:#fff;border:0;border-radius:8px;padding:8px 12px;
+      background:#39B54B;color:#fff;border:0;border-radius:8px;padding:8px 12px;
       font-weight:800;cursor:pointer;text-decoration:none
     }
     .btn.light{
@@ -50,14 +50,19 @@
   </style>
 </head>
 <body>
-  <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back to Reports </a>
+  <a href="{% url 'sowaf:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> &lt; Back to Reports </a>
   <div class="wrap my-5">
     <div class="subbar">
       <div>
+        <div class="muted">{{ company_name }}</div>
         <h1>Trial Balance</h1>
         <div class="muted">
           Period:
-          {{ dfrom|date:"M j, Y"|default:"None" }} – {{ dto|date:"M j, Y"|default:"None" }}
+          {% if dfrom %}{{ dfrom|date:"d/m/Y" }}{% else %}None{% endif %}
+          – {% if dto %}{{ dto|date:"d/m/Y" }}{% else %}None{% endif %}
+        </div>
+        <div class="muted">
+          Reporting Currency: {{ reporting_currency }}
         </div>
       </div>
 

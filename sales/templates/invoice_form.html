@@ -248,7 +248,7 @@
 
       <div class="form-group">
         <label>Customer</label>
-        <select class="form-control" name="customer" required>
+        <select class="form-control" name="customer" id="customer-select" required>
           <option value=""> Select Customer </option>
           {% for customer in customers %}
             <option value="{{ customer.id }}"
@@ -256,6 +256,7 @@
               {{ customer.customer_name }}
             </option>
           {% endfor %}
+          <option value="add_new">➕ Add New</option>
         </select>
       </div>
 
@@ -354,7 +355,7 @@
           {% for it in items %}
           <tr>
             <td>
-              <select class="form-control product-select" name="product[]" onchange="fillProductDetails(this)">
+              <select class="form-control product-select" id="product-select" name="product[]" onchange="fillProductDetails(this)">
                 <option value="">-- Select Product --</option>
                 {% for product in products %}
                   <option value="{{ product.id }}"
@@ -477,6 +478,34 @@
 
 <!-- Scripts -->
 <script>
+  // open Add Customer in new tab if chosen
+  (function(){
+    const addCustomerUrl = "{% url 'sowaf:add-customer' %}";
+    const sel = document.getElementById('customer-select');
+    if (sel){
+      sel.addEventListener('change', function(){
+        if (this.value === 'add_new'){
+          window.open(addCustomerUrl, '_blank', 'noopener');
+          this.value = '';
+        }
+      });
+    }
+  })();
+
+// open Add product in new tab if chosen
+  (function(){
+    const addCustomerUrl = "{% url 'inventory:add-products' %}";
+    const sel = document.getElementById('product-select');
+    if (sel){
+      sel.addEventListener('change', function(){
+        if (this.value === 'add_new'){
+          window.open(addCustomerUrl, '_blank', 'noopener');
+          this.value = '';
+        }
+      });
+    }
+  })();
+
 function addDaysISO(isoDate, days){
   if(!isoDate) return "";
   const d = new Date(isoDate);

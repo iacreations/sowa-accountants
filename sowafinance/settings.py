@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'inventory',
     'sales',
     'sowaAuth',
+    'sowa_settings',
 ]
 
 MIDDLEWARE = [
