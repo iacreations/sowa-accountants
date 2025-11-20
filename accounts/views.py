@@ -188,32 +188,28 @@ def save_column_prefs(request):
 def add_account(request):
 
     if request.method == "POST":
-        # Get values from POST
         account_name = request.POST.get("account_name")
         account_number = request.POST.get("account_number")
         account_type = request.POST.get("account_type")
         detail_type = request.POST.get("detail_type")
-        is_subaccount = request.POST.get("is_subaccount") == "on"  # checkbox
-          # optional parent account
+        tax_category = request.POST.get("tax_category")  # NEW FIELD
+        is_subaccount = request.POST.get("is_subaccount") == "on"
+
+        parent_id = request.POST.get("parent")
+        parent = None
+        if is_subaccount and parent_id:
+            parent = Account.objects.filter(id=parent_id).first()
+
         opening_balance = request.POST.get("opening_balance") or 0
         as_of = request.POST.get("as_of") or timezone.now().date()
         description = request.POST.get("description")
 
-        # Handle parent account (if subaccount checked)
-        parent_id = request.POST.get("parent")
-        parent = None
-        if is_subaccount and parent_id:
-            try:
-                parent = Account.objects.get(id=parent_id)
-            except Account.DoesNotExist:
-                parent = None
-
-        # Create the account
         new_account = Account(
             account_name=account_name,
             account_number=account_number,
             account_type=account_type,
             detail_type=detail_type,
+            tax_category=tax_category,   # SAVE NEW FIELD
             is_subaccount=is_subaccount,
             parent=parent,
             opening_balance=opening_balance,
@@ -221,15 +217,18 @@ def add_account(request):
             description=description
         )
         new_account.save()
-        # adding button save actions
+
         save_action = request.POST.get('save_action')
         if save_action == 'save&new':
-            return redirect('add-account')
+            return redirect('accounts:add-account')
         elif save_action == 'save&close':
             return redirect('accounts:accounts')
-        return redirect("accounts:accounts")  # default
+
+        return redirect("accounts:accounts")
+
     parents = Account.objects.all()
     return render(request, "coa_form.html", {"parents": parents})
+
 
 def deactivate_account(request, pk):
     coa = get_object_or_404(Account, pk=pk)

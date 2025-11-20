@@ -83,8 +83,8 @@
   <div class="d-flex align-items-center justify-content-between mb-2">
     <div>
       <h1 class="text-success">Chart Of Accounts</h1>
-      <p class="text-muted" style="margin-bottom:0">
-        Organise and manage your accounts by category and sub-account.
+      <p class="text-muted text-center" style="text-align: center;">
+        Organise and manage your accounts.
       </p>
     </div>
 
@@ -96,12 +96,12 @@
   <!-- top mini menu -->
   <div class="text-center mb-3">
     <ul class="d-flex" style="list-style:none; justify-content:center; gap:16px; padding-left:0;">
-      <li><a href="#" class="text-secondary" style="text-decoration:none;">Import</a></li>
-      <li><a href="{% url 'accounts:add-account' %}" class="text-secondary" style="text-decoration:none;">Add account</a></li>
+      <li><a href="#" class="btn button" style="text-decoration:none;color: #e9fbef">Import</a></li>
+      <li><a href="{% url 'accounts:add-account' %}" class="btn button" style="text-decoration:none; color: #e9fbef;">Add account</a></li>
     </ul>
   </div>
 
-  <h4 class="text-secondary text-center">Account Lists</h4>
+  <h3 class="text-center" style="color: #39B54B; font-weight: 800;">Account Lists</h3>
 
   <!-- tabs -->
   <div class="tabs">
@@ -124,7 +124,7 @@
         <th data-col="opening_balance" style="text-transform:uppercase;">Open Balance</th>
         <th data-col="as_of"           style="text-transform:uppercase;">Date</th>
         <th data-col="account_number"  style="text-transform:uppercase;">Account Number</th>
-        <!-- account_type removed -->
+        <th data-col="account_type"  style="text-transform:uppercase;">Account Type</th>
         <th data-col="detail_type"     style="text-transform:uppercase;">Detail Type</th>
         <th data-col="description"     style="text-transform:uppercase;">Description</th>
         <th data-col="actions"         style="text-transform:uppercase;">Actions <i class='bx bxs-down-arrow'></i></th>

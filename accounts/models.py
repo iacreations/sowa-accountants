@@ -95,6 +95,16 @@ class Account(models.Model):
     description = models.TextField(blank=True, null=True)
     created_at = models.DateField(auto_now_add=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    tax_category = models.CharField(
+    max_length=50,
+    blank=True,
+    null=True,
+    choices=[
+        ("Capital deductions", "Capital deductions"),
+        ("Allowable deduction", "Allowable deduction"),
+        ("Non Allowable deduction", "Non Allowable deduction"),
+    ]
+)
 
     def __str__(self):
         return (
