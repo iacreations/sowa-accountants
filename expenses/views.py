@@ -333,6 +333,7 @@ def expense_edit(request, pk: int):
         .select_related("payee_supplier", "payment_account")
         .prefetch_related("cat_lines__category", "item_lines__product"),
         pk=pk
+        
     )
 
     if request.method == "POST":

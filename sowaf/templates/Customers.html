@@ -104,23 +104,23 @@
   <div class="analytics-wrap">
     <div class="kpi-row">
       <div class="kpi k-unbilled">
-        <div class="label">Unbilled</div>
-        <div class="value">Ush{{ analytics.amount_unbilled|default:0|floatformat:2|intcomma }}</div>
+        <div class="label">Unbilled balance</div>
+        <div class="value">{{ analytics.amount_unbilled|default:0|floatformat:2|intcomma }}</div>
         <div class="sub">{{ analytics.count_unbilled|default:0 }} invoices</div>
       </div>
       <div class="kpi k-overdue">
-        <div class="label">Overdue</div>
-        <div class="value">Ush{{ analytics.amount_overdue|default:0|floatformat:2|intcomma }}</div>
+        <div class="label">Overdue balance</div>
+        <div class="value">{{ analytics.amount_overdue|default:0|floatformat:2|intcomma }}</div>
         <div class="sub">{{ analytics.count_overdue|default:0 }} invoices</div>
       </div>
       <div class="kpi k-open">
-        <div class="label">Open</div>
-        <div class="value">Ush{{ analytics.amount_open|default:0|floatformat:2|intcomma }}</div>
+        <div class="label">Remaining balance</div>
+        <div class="value">{{ analytics.amount_open|default:0|floatformat:2|intcomma }}</div>
         <div class="sub">{{ analytics.count_open|default:0 }} invoices</div>
       </div>
       <div class="kpi k-recent">
         <div class="label">Recently paid</div>
-        <div class="value">Ush{{ analytics.amount_recent|default:0|floatformat:2|intcomma }}</div>
+        <div class="value">{{ analytics.amount_recent|default:0|floatformat:2|intcomma }}</div>
         <div class="sub">{{ analytics.count_recent|default:0 }} payments</div>
       </div>
     </div>
@@ -133,7 +133,7 @@
         <th>PROFILE ICON</th>
         <th>NAME</th>
         <th>COMPANY NAME</th>
-        <th>OPEN BALANCE</th>
+        <th>UN PAID BALANCE</th>
         <th>ACTIONS <i class='bx bxs-down-arrow'></i></th>
       </tr>
     </thead>
@@ -158,7 +158,7 @@
         </td>
 
         <td>{{ customer.company_name }}</td>
-        <td>Ush{{ customer.open_balance|default:0|floatformat:2|intcomma }}</td>
+        <td>{{ customer.opening_balance|default:0|floatformat:2|intcomma }}</td>
 
 
         <td>

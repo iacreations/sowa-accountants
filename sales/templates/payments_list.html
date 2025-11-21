@@ -130,7 +130,18 @@
           <td>{{ p.payment_date|date:"M j, Y" }}</td>
           <td><strong>{{ p.customer.customer_name }}</strong></td>
           <td><span class="chip">{{ p.deposit_to.account_name }}</span></td>
-          <td>{% if p.reference_no %}<span class="ref">Ref{{ p.reference_no }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+
+          <td>
+  {% if p.reference_no %}
+    <a href="{% url 'sales:payment-detail' p.id %}" class="ref" style=" color:inherit;">
+      Ref-{{ p.reference_no }}
+    </a>
+  {% else %}
+    <span class="muted">—</span>
+  {% endif %}
+</td>
+
+
           <td><span class="chip">{{ p.payment_method|title|default:"—" }}</span></td>
           <td class="num">{{ group.applied_total|floatformat:2|intcomma }}</td>
 <td class="action-cell">
@@ -163,19 +174,23 @@
                   <th>Invoice #</th>
                   <th>Date Created</th>
                   <th class="num">Total Due</th>
-                  <th class="num">Amount Applied</th>
-                  <th class="num">Remaining (this payment)</th>
-                  <th class="num">Outstanding Now</th>
+                  <th class="num">Amount paid</th>
+                  <th class="num">Outstanding balance</th>
                 </tr>
               </thead>
               <tbody>
                 {% for line in group.lines %}
                 <tr>
-                  <td>INV - {{ line.invoice.id|stringformat:"04d" }}</td>
+                  <td>
+  <a href="{% url 'sales:invoice-detail' line.invoice.id %}"
+     style="color:inherit;"><strong>
+    INV - {{ line.invoice.id|stringformat:"04d" }}
+    </strong>
+  </a>
+</td>
                   <td>{{ line.invoice.date_created|date:"M. j, Y"|default:"—" }}</td>
                   <td class="num">{{ line.total_due|floatformat:2|intcomma }}</td>
                   <td class="num">{{ line.amount_applied|floatformat:2|intcomma }}</td>
-                  <td class="num">{{ line.remaining_this_payment|floatformat:2|intcomma }}</td>
                   <td class="num">{{ line.outstanding_now|floatformat:2|intcomma }}</td>
                 </tr>
                 {% endfor %}

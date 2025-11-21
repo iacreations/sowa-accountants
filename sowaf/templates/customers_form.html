@@ -194,9 +194,9 @@ small{ color:var(--muted); }
           <div class="field"><label for='tin'>Sales Tax Registration</label>
             <input type="text" name='tin' value="{{ customer.tin_number|default_if_none:'' }}" required>
           </div>
-          <!-- <div class="field"><label for='balance'>Opening Balance</label>
+          <div class="field"><label for='balance'>Opening Balance</label>
             <input type="number" name='balance' value="{{ customer.opening_balance|default_if_none:'' }}">
-          </div> -->
+          </div>
           <div class="field"><label for='today'>As of Date</label>
             <input type="text" name='today' value="{{ customer.registration_date|date:'d/m/Y'|default_if_none:'' }}" placeholder="dd/mm/yyyy">
           </div>

@@ -866,7 +866,7 @@ def add_customer(request):
         mobile_number =request.POST.get('mobilenum')
         website =request.POST.get('website')
         tin_number =request.POST.get('tin')
-        # opening_balance =request.POST.get('balance')
+        opening_balance =request.POST.get('balance')
         registration_date_str = request.POST.get('today')
         registration_date = None
         if registration_date_str:
@@ -883,7 +883,7 @@ def add_customer(request):
         country =request.POST.get('country')
         notes =request.POST.get('notes')
         attachments =request.FILES.get('attachments')
-        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,notes=notes,attachments=attachments)
+        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,opening_balance=opening_balance,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,notes=notes,attachments=attachments)
         new_customer.save()
         # adding save actions
         save_action = request.POST.get('save_action')
@@ -908,7 +908,7 @@ def edit_customer(request, pk):
         customer.mobile_number = request.POST.get('mobilenum')
         customer.website = request.POST.get('website',customer.website)
         customer.tin_number = request.POST.get('tin',customer.tin_number)
-        # customer.opening_balance = request.POST.get('balance',customer.opening_balance)
+        customer.opening_balance = request.POST.get('balance',customer.opening_balance)
         registration_date_str = request.POST.get('today')
         if registration_date_str:
             try:

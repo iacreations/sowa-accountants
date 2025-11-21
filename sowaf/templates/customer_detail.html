@@ -165,7 +165,8 @@
         <!-- quick actions -->
         <div class="actions">
           <a class="btn" href="{% url 'sales:add-invoice' %}?customer_id={{ customer.id }}"><i class='bx bx-receipt'></i> New Invoice</a>
-          <a class="btn outline" href="{% url 'sales:receive-payment' %}?customer_id={{ customer.id }}"><i class='bx bx-dollar'></i> Receive Payment</a>
+          <a class="btn outline" href="{% url 'sales:receive-payment' %}?customer_id={{ customer.id }}"><i class='bx bx-money'></i>
+ Receive Payment</a>
           <a class="btn outline" href="{% url 'sales:statement-new' %}?customer_id={{ customer.id }}"><i class='bx bx-file-find'></i> Create statement</a>
         </div>
       </div>

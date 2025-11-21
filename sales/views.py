@@ -446,20 +446,20 @@ def invoice_detail(request, pk: int):
             deposited = all(is_bankish(pi.payment.deposit_to) for pi in aps if pi.payment)
 
     if total_due == 0:
-        status_text = "No amount"
+        status_text = "Cleared"
     elif balance == 0:
         status_text = "Deposited" if deposited else "Paid"
     else:
         if overdue_days:
             status_text = f"Overdue {overdue_days} days"
             if total_paid > 0:
-                status_text += f" — Partially paid, {balance:,.0f} due"
+                status_text += f" — Partially paid now {balance:,.0f} remaining"
             else:
-                status_text += f" — {balance:,.0f} due"
+                status_text += f" — {balance:,.0f} remaining"
         elif inv.due_date and inv.due_date == today and balance > 0:
-            status_text = f"Due today — {balance:,.0f} due"
+            status_text = f"Due today — {balance:,.0f} remaining"
         else:
-            status_text = f"Partially paid, {balance:,.0f} due" if total_paid > 0 else f"{balance:,.0f} due"
+            status_text = f"Partially paid, {balance:,.0f} remaining" if total_paid > 0 else f"{balance:,.0f} remaining"
 
     items = InvoiceItem.objects.filter(invoice=inv).select_related("product").order_by("id")
     payments = (
@@ -470,6 +470,7 @@ def invoice_detail(request, pk: int):
     )
 
     payment_rows = [{
+        "id":p.payment.id,
         "date": p.payment.payment_date,
         "ref": p.payment.reference_no,
         "method": (p.payment.payment_method or "").replace("_", " ").title(),

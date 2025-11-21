@@ -112,7 +112,14 @@
     .sa-nav{ overflow:auto; scrollbar-width:none; }
     .sa-nav::-webkit-scrollbar{ display:none; }
   }
+.link-num {
+  color: inherit;
+  text-decoration: none;
+}
 
+.link-num:hover {
+  text-decoration: underline;
+}
 </style>
 {% include 'includes/sidebar.html' %}
 <a href="{% url 'sales:payments_list' %}">Payments list</a>
@@ -180,14 +187,15 @@
                 <div class="estimates" id="income">ESTIMATES</div>
               </div>
             </div>
-              <section>
+          
+            <section>
                 <h3 class="" style="color: rgb(7, 142, 36);">ALL SALES</h3>
       <table class="content-table">
         <thead>
           <tr>
                       <th>DATE</th>
                       <th>TYPE</th>
-                      <th>NO.</th>
+                      <th>TRANSACTION ID</th>
                       <th>CUSTOMER</th>
                       <th>MEMO</th>
                       <th>AMOUNT</th>
@@ -208,7 +216,7 @@
         <span class="pill pill-orange">Sales Receipt</span>
       {% endif %}
     </td>
-    <td>{{ r.no }}</td>
+    <td><a href="{{r.view_url}}">{{ r.no }}</a></td>
     <td>{{ r.customer }}</td>
     <td>{{ r.memo }}</td>
     <td class="num">{{ r.amount|floatformat:2|intcomma }}</td>

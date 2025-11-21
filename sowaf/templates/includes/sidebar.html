@@ -1,5 +1,16 @@
 
    {% load static %}
+   <style>
+    .nav_label_link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  width: 100%;
+}
+
+   </style>
  <!-- sidebar -->
     <nav class="sidebar">
       <div class="menu_content">
@@ -59,13 +70,16 @@
 <ul class="menu_items">
           <div class="menu_title menu_dahsboard"></div>
            <li class="item">
-            <div href="{% url 'sowaf:reports' %}" class="nav_link submenu_item">
-              <span class="navlink_icon">
-                <i class="bx bx-grid-alt"></i>
-              </span>
-              <span class="navlink">Reports</span>
+            <div class="nav_link submenu_item">
+              <a href="{% url 'sowaf:reports' %}" class="nav_label_link">
+                 <span class="navlink_icon">
+                 <i class='bx bx-spreadsheet'></i>
+                 </span>
+                 <span class="navlink">Reports</span>
+                </a>
               <i class="bx bx-chevron-right arrow-left"></i>
-            </div>
+             </div>
+
             <ul class="menu_items submenu">
               <li class="item">
                 <a href="{% url 'accounts:report-trial-balance' %}" class="nav_link">
@@ -105,16 +119,19 @@
 <!-- end -->
 
 <!-- sales -->
-<ul class="menu_items">
+        <ul class="menu_items">
           <div class="menu_title menu_dahsboard"></div>
            <li class="item">
-            <div href="{% url 'sales:sales' %}" class="nav_link submenu_item">
-              <span class="navlink_icon">
-                <i class="bx bx-grid-alt"></i>
-              </span>
-              <span class="navlink">Sales</span>
-              <i class="bx bx-chevron-right arrow-left"></i>
+            <div class="nav_link submenu_item">
+            <a href="{% url 'sales:sales' %}" class="nav_label_link">
+             <span class="navlink_icon">
+               <i class='bx bx-money'></i>
+                </span>
+               <span class="navlink">Sales</span>
+              </a>
+             <i class="bx bx-chevron-right arrow-left"></i>
             </div>
+
             <ul class="menu_items submenu">
              <li class="item">
                 <a href="{% url 'sales:invoices' %}" class="nav_link">
@@ -140,14 +157,6 @@
                   <span class="navlink">Receipts</span>
                 </a>
               </li>
-              <li class="item">
-                <a href="{% url 'sales:sales' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-money' ></i>
-                  </span>
-                  <span class="navlink">All sales</span>
-                </a>
-              </li>
             </ul>
           </li>
         </ul>
@@ -157,13 +166,16 @@
 <ul class="menu_items">
           <div class="menu_title menu_dahsboard"></div>
            <li class="item">
-            <div href="{% url 'expenses:expenses' %}" class="nav_link submenu_item">
-              <span class="navlink_icon">
-                <i class="bx bx-grid-alt"></i>
-              </span>
-              <span class="navlink">Expenses</span>
+            <div class="nav_link submenu_item">
+              <a href="{% url 'expenses:expenses' %}" class="nav_label_link">
+               <span class="navlink_icon">
+                 <i class='bx bx-money-withdraw' ></i>
+               </span>
+               <span class="navlink">Expenses</span>
+              </a>
               <i class="bx bx-chevron-right arrow-left"></i>
-            </div>
+          </div>
+
             <ul class="menu_items submenu">
              <li class="item">
                 <a class="nav_link" role="menuitem" href="{% url 'expenses:time-activity' %}"> 
@@ -174,14 +186,6 @@
                         Time activity</span>
                     </a>
                 </li>
-                <li class="item" id="sidebar">
-             <a href="{% url 'expenses:expenses' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bx-money-withdraw' ></i>
-              </span>
-              <span class="navlink">All expenses</span>
-             </a>
-                </li>  
                <li class="item">
                 <a href="{% url 'expenses:bills-list' %}" class="nav_link">
                   <span class="navlink_icon">

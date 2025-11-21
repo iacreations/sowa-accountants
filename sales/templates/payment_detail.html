@@ -64,7 +64,7 @@
   </td>
   <td>
     {% if payment.reference_no %}
-      <span class="ref">{{ payment.reference_no }}</span>
+      <span class="ref">Ref-{{ payment.reference_no }}</span>
     {% else %}
       <span class="muted">—</span>
     {% endif %}
@@ -86,15 +86,20 @@
                     <th>Invoice #</th>
                     <th>Date Created</th>
                     <th class="num">Total Due</th>
-                    <th class="num">Amount Applied</th>
-                    <th class="num">Remaining (this payment)</th>
-                    <th class="num">Outstanding Now</th>
+                    <th class="num">Amount paid</th>
+                    <th class="num">Outstanding balance</th>
                   </tr>
                 </thead>
                 <tbody>
                   {% for l in group.lines %}
                     <tr>
-                      <td>INV - {{ l.invoice.id|stringformat:"04d" }}</td>
+                      <td>
+  <a href="{% url 'sales:invoice-detail' l.invoice.id %}"
+     style="color:inherit;"><strong>
+    INV - {{ l.invoice.id|stringformat:"04d" }}
+    </strong>
+  </a>
+</td>
                       <td>{{ l.invoice.date_created|date:"M. j, Y"|default:"—" }}</td>
                       <td class="num">{{ l.total_due|floatformat:2|intcomma }}</td>
                       <td class="num">{{ l.amount_applied|floatformat:2|intcomma }}</td>
