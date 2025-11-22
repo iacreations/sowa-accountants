@@ -178,13 +178,13 @@ small{ color:var(--muted); }
             <input type="text" name='company' value="{{ customer.company_name|default_if_none:'' }}" required>
           </div>
           <div class="field"><label for='email'>Email <span style="color:red;">*</span></label>
-            <input type="email" name='email' value="{{ customer.email|default_if_none:'' }}" required>
+            <input type="email" name='email' value="{{ customer.email|default_if_none:'' }}">
           </div>
           <div class="field"><label for='phonenum'>Phone Number <span style="color:red;">*</span></label>
-            <input type="tel" name='phonenum' value="{{ customer.phone_number|default_if_none:'' }}" required>
+            <input type="tel" name='phonenum' value="{{ customer.phone_number|default_if_none:'' }}">
           </div>
           <div class="field"><label for='mobilenum' >Mobile Number</label>
-            <input type="tel" name='mobilenum' value="{{ customer.mobile_number|default_if_none:'' }}" required>
+            <input type="tel" name='mobilenum' value="{{ customer.mobile_number|default_if_none:'' }}">
           </div>
           <div class="field"><label for='website'>Website</label>
             <input type="url" name='website' value="{{ customer.website|default_if_none:'' }}">
