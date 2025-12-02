@@ -1,0 +1,491 @@
+{% load static %}
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+.gl-container {
+  margin-left: 19%;
+  width: 80%;
+  margin-top: 6%;
+  font-family: "Poppins", sans-serif;
+}
+.gl-header {
+  display:flex;
+  flex-direction: column;         /* stack title + actions */
+  align-items:center;             /* center horizontally */
+  gap:6px;
+  margin-bottom:16px;
+}
+.gl-title {
+  color:#39B54B;
+  font-weight:800;
+  margin:0;
+  text-align:center;
+}
+.gl-header-sub {
+  margin:0;
+  font-size:13px;
+  color:#64748b;
+  text-align:center;
+}
+.gl-actions {
+  display:flex;
+  gap:8px;
+  justify-content:center;         /* center buttons under title */
+}
+.gl-actions button,
+.gl-actions a {
+  border:none;
+  padding:6px 12px;
+  border-radius:6px;
+  font-size:13px;
+  cursor:pointer;
+  background:#e5f7ea;
+  color:#14532d;
+  text-decoration:none;
+}
+.gl-actions button:hover,
+.gl-actions a:hover {
+  background:#c9f0d5;
+}
+
+/* filters */
+.gl-filters {
+  margin-bottom:14px;
+  padding:10px;
+  border-radius:10px;
+  background:#f3fff6;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.gl-filters input,
+.gl-filters select {
+  border:1px solid #39B54B;
+  border-radius:6px;
+  padding:4px 8px;
+  font-size:13px;
+}
+
+/* table */
+.gl-table {
+  width:100%;
+  border-collapse: collapse;
+  margin-top:12px;
+  background:white;
+}
+.gl-table thead th {
+  background:#39B54B;
+  color:white;
+  padding:10px;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.gl-table td {
+  border-bottom:1px solid #e5efe8;
+  padding:8px;
+  font-size:13px;
+}
+.gl-table td.num {
+  text-align:right;
+  white-space:nowrap;
+}
+.gl-row-link {
+  color:inherit;
+  text-decoration:none;
+}
+.gl-row-link:hover {
+  text-decoration:underline;
+}
+
+/* totals row */
+.gl-totals {
+  background:#003300;
+  color:white;
+  font-weight:bold;
+}
+
+/* pagination */
+.pagination {
+  margin-top:12px;
+  display:flex;
+  gap:6px;
+  align-items:center;
+}
+.pagination a,
+.pagination span {
+  padding:4px 8px;
+  border-radius:4px;
+  font-size:12px;
+  text-decoration:none;
+}
+.pagination a {
+  border:1px solid #39B54B;
+  color:#14532d;
+}
+.pagination a.active,
+.pagination span.current {
+  background:#39B54B;
+  color:white;
+}
+
+/* column toggle modal */
+#colModal {
+  display:none;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.4);
+  justify-content:center;
+  align-items:center;
+  z-index:999;
+}
+.col-card {
+  background:#fff;
+  padding:18px;
+  border-radius:10px;
+  width:280px;
+  box-shadow:0 6px 18px rgba(0,0,0,.2);
+}
+.col-card h4 {
+  margin:0 0 10px;
+  color:#39B54B;
+}
+.col-card label {
+  display:block;
+  font-size:13px;
+  margin-bottom:4px;
+}
+
+/* monthly summary */
+.monthly-summary {
+  margin-top:18px;
+  padding:12px;
+  border-radius:10px;
+  background:#f7fff9;
+  font-size:13px;
+}
+.monthly-summary h4 {
+  margin:0 0 6px;
+  color:#14532d;
+}
+.monthly-summary table {
+  width:100%;
+  border-collapse:collapse;
+}
+.monthly-summary th,
+.monthly-summary td {
+  padding:4px 6px;
+  border-bottom:1px solid #e5efe8;
+  font-size:12px;
+}
+.monthly-summary th {
+  text-transform:uppercase;
+  font-weight:700;
+  color:#14532d;
+}
+
+/* print */
+@media print {
+  .gl-actions,
+  .gl-filters,
+  .pagination,
+  #sidebar {
+    display:none !important;
+  }
+  .gl-container {
+    width:100%;
+    margin:0;
+  }
+}
+.gl-back-row{
+  margin-bottom:4px;
+}
+.gl-back-link{
+  display:inline-block;
+  color:#39B54B;
+  font-weight:700;
+  font-size:13px;
+  text-decoration:none;
+}
+.gl-back-link:hover{
+  text-decoration:underline;
+}
+
+/* filter summary chips */
+.gl-filter-chip{
+  margin-top:-4px;
+  margin-bottom:8px;
+  font-size:12px;
+  color:#14532d;
+}
+.gl-filter-chip span{
+  display:inline-block;
+  background:#e8f5ec;
+  border-radius:999px;
+  padding:2px 8px;
+  margin-right:4px;
+}
+
+</style>
+
+<div class="gl-container">
+<div class="gl-back-row">
+  <a href="{% url 'accounts:accounts' %}" class="gl-back-link">‹ Back to Accounts</a>
+</div>
+
+  <div class="gl-header">
+    <div>
+      <h2 class="gl-title">General Ledger</h2>
+      <p class="gl-header-sub">Ledger of transactions by account</p>
+    </div>
+
+    <div class="gl-actions">
+      <button type="button" id="toggleColsBtn">Columns</button>
+      <a href="#" id="openPrintView">Print / PDF</a>
+      <!-- Excel export keeps current filters -->
+      <a href="#" id="exportExcelBtn">Export Excel</a>
+    </div>
+  </div>
+
+  <!-- FILTERS -->
+  <form id="glFilterForm" method="get" class="gl-filters">
+    {% if account_label or date_from or date_to %}
+  <p class="gl-filter-chip">
+    <span>{{ account_label|default:"All accounts" }}</span>
+    {% if date_from or date_to %}
+      <span>
+        {{ date_from|default:"Start" }} – {{ date_to|default:"Today" }}
+      </span>
+    {% endif %}
+  </p>
+{% endif %}
+
+    <!-- Searchable account field (datalist + hidden id) -->
+    <div style="position:relative;">
+      <input
+        type="text"
+        id="accountSearch"
+        list="accountOptions"
+        placeholder="All accounts"
+        autocomplete="off"
+      />
+      <datalist id="accountOptions">
+        {% for acc in accounts %}
+          <option value="{{ acc.account_name }}" data-id="{{ acc.id }}"></option>
+        {% endfor %}
+      </datalist>
+      <!-- real field used by backend -->
+      <input type="hidden" name="account_id" id="accountIdField" value="{{ account_id }}">
+    </div>
+
+    <input type="date" name="date_from" value="{{ date_from }}">
+    <input type="date" name="date_to"   value="{{ date_to }}">
+    <button class="button btn-sm" type="submit">Apply</button>
+  </form>
+
+  <!-- TABLE -->
+  <table class="gl-table" id="glTable">
+    <thead>
+      <tr>
+        <th data-col="date">Date</th>
+        <th data-col="description">Description</th>
+        <th data-col="reference">Journal Reference</th>  <!-- label updated -->
+        <th data-col="debit">Debit</th>
+        <th data-col="credit">Credit</th>
+        <th data-col="balance">Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td data-col="date">
+          {% if row.url and row.url != "#" %}
+            <a href="{{ row.url }}" class="gl-row-link">{{ row.date|date:"d/m/Y" }}</a>
+          {% else %}
+            {{ row.date|date:"d/m/Y" }}
+          {% endif %}
+        </td>
+        <td data-col="description">
+          {% if row.url and row.url != "#" %}
+            <a href="{{ row.url }}" class="gl-row-link">{{ row.description }}</a>
+          {% else %}
+            {{ row.description }}
+          {% endif %}
+        </td>
+        <td data-col="reference">{{ row.reference }}</td>
+        <td data-col="debit" class="num">{{ row.debit|floatformat:2|intcomma }}</td>
+        <td data-col="credit" class="num">{{ row.credit|floatformat:2|intcomma }}</td>
+        <td data-col="balance" class="num">{{ row.balance|floatformat:2|intcomma }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" style="text-align:center; padding:10px;">No transactions found.</td></tr>
+      {% endfor %}
+    </tbody>
+
+    <tr class="gl-totals">
+      <td colspan="3">TOTAL</td>
+      <td class="num">{{ total_debit|floatformat:2|intcomma }}</td>
+      <td class="num">{{ total_credit|floatformat:2|intcomma }}</td>
+      <td class="num">{{ total_balance|floatformat:2|intcomma }}</td>
+    </tr>
+  </table>
+
+  <!-- PAGINATION -->
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="pagination">
+    {% if page_obj.has_previous %}
+      <a href="?page={{ page_obj.previous_page_number }}&account_id={{ account_id }}&date_from={{ date_from }}&date_to={{ date_to }}&search={{ query }}">« Prev</a>
+    {% endif %}
+
+    <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+
+    {% if page_obj.has_next %}
+      <a href="?page={{ page_obj.next_page_number }}&account_id={{ account_id }}&date_from={{ date_from }}&date_to={{ date_to }}&search={{ query }}">Next »</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- MONTHLY SUMMARY -->
+  {% if monthly_totals %}
+  <div class="monthly-summary">
+    <h4>Monthly totals (filtered range)</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th class="num">Debit</th>
+          <th class="num">Credit</th>
+          <th class="num">Balance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in monthly_totals %}
+        <tr>
+          <td>{{ m.label }}</td>
+          <td class="num">{{ m.debit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ m.credit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ m.balance|floatformat:2|intcomma }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- COLUMN TOGGLE MODAL -->
+<div id="colModal">
+  <div class="col-card">
+    <h4>Columns</h4>
+    <label><input type="checkbox" class="col-toggle" data-col="date" checked> Date</label>
+    <label><input type="checkbox" class="col-toggle" data-col="description" checked> Description</label>
+    <label><input type="checkbox" class="col-toggle" data-col="reference" checked> Journal Reference</label>
+    <label><input type="checkbox" class="col-toggle" data-col="debit" checked> Debit</label>
+    <label><input type="checkbox" class="col-toggle" data-col="credit" checked> Credit</label>
+    <label><input type="checkbox" class="col-toggle" data-col="balance" checked> Balance</label>
+
+    <div style="margin-top:10px; text-align:right;">
+      <button type="button" id="colCloseBtn" style="border:none; padding:6px 10px; border-radius:6px;">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  // ===== Excel export keeps current filters =====
+  const exportBtn = document.getElementById("exportExcelBtn");
+  const filterForm = document.getElementById("glFilterForm");
+
+  exportBtn.addEventListener("click", function(e) {
+    e.preventDefault();
+    const params = new URLSearchParams(new FormData(filterForm));
+    params.set("export", "excel");
+    window.location = window.location.pathname + "?" + params.toString();
+  });
+
+  // ===== Column toggle modal =====
+  const colModal   = document.getElementById("colModal");
+  const toggleBtn  = document.getElementById("toggleColsBtn");
+  const colClose   = document.getElementById("colCloseBtn");
+
+  toggleBtn.addEventListener("click", () => { colModal.style.display = "flex"; });
+  colClose.addEventListener("click", () => { colModal.style.display = "none"; });
+  colModal.addEventListener("click", (e) => {
+    if (e.target === colModal) colModal.style.display = "none";
+  });
+
+  function applyColVisibility() {
+    document.querySelectorAll(".col-toggle").forEach(cb => {
+      const col = cb.dataset.col;
+      const show = cb.checked;
+      document.querySelectorAll("[data-col='" + col + "']").forEach(cell => {
+        cell.style.display = show ? "" : "none";
+      });
+    });
+  }
+
+  document.querySelectorAll(".col-toggle").forEach(cb => {
+    cb.addEventListener("change", applyColVisibility);
+  });
+
+  applyColVisibility();
+});
+
+// print logic 
+document.addEventListener("DOMContentLoaded", function() {
+  const printBtn = document.getElementById("openPrintView");
+  const filterForm = document.getElementById("glFilterForm");
+
+  printBtn.addEventListener("click", function(e) {
+    e.preventDefault();
+    const params = new URLSearchParams(new FormData(filterForm));
+    const url = "{% url 'accounts:general-ledger-print' %}" + "?" + params.toString();
+    window.open(url, "_blank");
+  });
+});
+
+// === Searchable account field wiring ===
+document.addEventListener("DOMContentLoaded", function () {
+  const accountInput  = document.getElementById("accountSearch");
+  const accountHidden = document.getElementById("accountIdField");
+  const dataList      = document.getElementById("accountOptions");
+
+  if (!accountInput || !accountHidden || !dataList) return;
+
+  const options = Array.from(dataList.options);
+
+  function syncFromHidden() {
+    const currentId = accountHidden.value;
+    if (!currentId) {
+      accountInput.value = "";
+      return;
+    }
+    const match = options.find(opt => opt.dataset.id === currentId);
+    if (match) {
+      accountInput.value = match.value;
+    }
+  }
+  syncFromHidden();
+
+  accountInput.addEventListener("change", function () {
+    const typed = this.value.toLowerCase().trim();
+    const match = options.find(opt => opt.value.toLowerCase().trim() === typed);
+    if (match) {
+      accountHidden.value = match.dataset.id;
+    } else {
+      accountHidden.value = "";
+    }
+  });
+
+  accountInput.addEventListener("input", function () {
+    if (!this.value) {
+      accountHidden.value = "";
+    }
+  });
+});
+</script>
+
+{% include 'includes/footer.html' %}

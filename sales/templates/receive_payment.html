@@ -94,19 +94,22 @@
         </div>
 
         <!-- Deposit To -->
-        <div class="form-group">
-          <label>Deposit To</label>
-          <select name="deposit_to" required>
-            <option value="">Select Account</option>
-            {% for acc in accounts %}
-              <option value="{{ acc.id }}" {% if edit_mode and payment and payment.deposit_to_id == acc.id %}selected{% endif %}>
-                {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
-                — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
-              </option>
-            {% endfor %}
-          </select>
-          <div class="hint">Includes Bank and Cash &amp; Cash Equivalents accounts.</div>
-        </div>
+
+<div class="form-group">
+  <label>Deposit To</label>
+  <select name="deposit_to" required>
+    <option value="">Select Account</option>
+    {% for acc in accounts %}
+      <option value="{{ acc.id }}"
+        {% if edit_mode and payment and payment.deposit_to_id == acc.id %}selected{% endif %}>
+        {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
+        — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
+      </option>
+    {% endfor %}
+  </select>
+  <div class="hint">Includes Bank and Cash &amp; Cash Equivalents accounts.</div>
+</div>
+
 
         <!-- Reference No -->
         <div class="form-group">

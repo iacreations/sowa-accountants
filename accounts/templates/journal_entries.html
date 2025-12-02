@@ -1,5 +1,7 @@
-{# templates/journal_entries.html #}
+{% load static %}
 {% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
 
 <style>
   :root{
@@ -10,11 +12,57 @@
     --thead:#f3fff6;
     --chip:#e8f5ec;
   }
-  .wrap{max-width:1100px;margin:24px auto;padding:0 16px;font-family:"Poppins",system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
-  h2{color:var(--brand);margin:.2rem 0 1rem;font-weight:800;letter-spacing:.2px}
-  .card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 22px rgba(0,0,0,.05);overflow:hidden}
 
-  table.journal{width:100%;border-collapse:separate;border-spacing:0}
+  .je-container{
+    margin-left:19%;
+    width:80%;
+    margin-top:6%;
+    font-family:"Poppins",system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;
+  }
+
+  .je-back-row{
+    margin-bottom:4px;
+  }
+  .je-back-link{
+    display:inline-block;
+    color:var(--brand);
+    font-weight:700;
+    font-size:13px;
+    text-decoration:none;
+  }
+  .je-back-link:hover{
+    text-decoration:underline;
+  }
+
+  .je-header{
+    text-align:center;
+    margin-bottom:16px;
+  }
+  .je-header h2{
+    color:var(--brand);
+    margin:0;
+    font-weight:800;
+    letter-spacing:.2px;
+  }
+  .je-header p{
+    margin:4px 0 0;
+    font-size:13px;
+    color:var(--muted);
+  }
+
+  .je-card{
+    background:#fff;
+    border-radius:14px;
+    border:1px solid var(--line);
+    box-shadow:0 8px 22px rgba(0,0,0,.05);
+    overflow:hidden;
+  }
+
+  table.journal{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+  }
   .journal thead th{
     background:linear-gradient(0deg,var(--thead),#fff);
     color:#14532d;
@@ -30,8 +78,12 @@
     border-bottom:1px solid var(--line);
     vertical-align:top;
     color:var(--ink);
+    font-size:13px;
   }
-  .num{text-align:right; white-space:nowrap}
+  .num{
+    text-align:right;
+    white-space:nowrap;
+  }
   .rowspan{
     background:#fcfffd;
     color:#0f5132;
@@ -53,11 +105,17 @@
   }
 </style>
 
-<div class="wrap">
-     <a href="{% url 'accounts:accounts' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back to Accounts </a>
-  <h2 style="margin-top: 5%; text-align: center;">Journal Entries</h2>
+<div class="je-container">
+  <div class="je-back-row">
+    <a href="{% url 'accounts:accounts' %}" class="je-back-link">‹ Back to Accounts</a>
+  </div>
 
-  <div class="card">
+  <div class="je-header">
+    <h2>Journal Entries</h2>
+    <p>Detailed list of all double-entry postings</p>
+  </div>
+
+  <div class="je-card">
     <table class="journal">
       <thead>
         <tr>
@@ -70,24 +128,32 @@
         </tr>
       </thead>
       <tbody>
-        {% for entry in entries %}
-          {% for line in entry.lines.all %}
-            <tr>
-              {% if forloop.first %}
-                <td class="rowspan" rowspan="{{ entry.lines.count }}">{{ entry.date|date:"M. j, Y" }}</td>
-                <td class="rowspan" rowspan="{{ entry.lines.count }}">{{ entry.description|default:"—" }}</td>
-                <td class="rowspan" rowspan="{{ entry.lines.count }}">
-                  {% if entry.invoice %}<span class="chip">INV - {{ entry.invoice.id|stringformat:"04d" }}</span>{% else %} {% endif %}
-                </td>
-              {% endif %}
-              <td>{{ line.account.account_name }}</td>
-              <td class="num">{{ line.debit|floatformat:2|intcomma }}</td>
-              <td class="num">{{ line.credit|floatformat:2|intcomma }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="6" style="color:#7a8691; padding:16px;">No journal entries found.</td></tr>
+        {% if entries %}
+          {% for entry in entries %}
+            {% for line in entry.lines.all %}
+              <tr>
+                {% if forloop.first %}
+                  <td class="rowspan" rowspan="{{ entry.lines.count }}">{{ entry.date|date:"M. j, Y" }}</td>
+                  <td class="rowspan" rowspan="{{ entry.lines.count }}">{{ entry.description|default:"—" }}</td>
+                  <td class="rowspan" rowspan="{{ entry.lines.count }}">
+                    {% if entry.invoice %}
+                      <span class="chip">INV-{{ entry.invoice.id|stringformat:"04d" }}</span>
+                    {% elif entry.source_type and entry.source_id %}
+                      <span class="chip">{{ entry.source_type|title }} #{{ entry.source_id }}</span>
+                    {% endif %}
+                  </td>
+                {% endif %}
+                <td>{{ line.account.account_name }}</td>
+                <td class="num">{{ line.debit|floatformat:2|intcomma }}</td>
+                <td class="num">{{ line.credit|floatformat:2|intcomma }}</td>
+              </tr>
+            {% endfor %}
           {% endfor %}
-        {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="6" style="color:#7a8691; padding:16px;">No journal entries found.</td>
+          </tr>
+        {% endif %}
       </tbody>
 
       <tfoot>

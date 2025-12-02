@@ -81,7 +81,9 @@ class InvoiceItem(models.Model):
 
     def __str__(self):
         label = self.name_snapshot or (self.product.name if self.product else "Custom line")
-        return f"{label} x {self.qty} (Invoice {self.invoice_id})"   
+        return f"{label} x {self.qty} (Invoice {self.invoice_id})"
+       
+# Payment model
 
 class Payment(models.Model):
     PAYMENT_METHODS = [

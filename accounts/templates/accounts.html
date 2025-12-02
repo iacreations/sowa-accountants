@@ -124,7 +124,7 @@
         <th data-col="opening_balance" style="text-transform:uppercase;">Open Balance</th>
         <th data-col="as_of"           style="text-transform:uppercase;">Date</th>
         <th data-col="account_number"  style="text-transform:uppercase;">Account Number</th>
-        <th data-col="account_type"  style="text-transform:uppercase;">Account Type</th>
+        <th data-col="account_type"    style="text-transform:uppercase;">Account Type</th>
         <th data-col="detail_type"     style="text-transform:uppercase;">Detail Type</th>
         <th data-col="description"     style="text-transform:uppercase;">Description</th>
         <th data-col="actions"         style="text-transform:uppercase;">Actions <i class='bx bxs-down-arrow'></i></th>
@@ -132,59 +132,59 @@
     </thead>
 
     <tbody>
-  {% for section in level1_sections %}
-    <!-- Level 1 heading row (one per category, not repeated per account) -->
-    <tr class="section-row">
-      <!-- use <th> so column hide/show JS (which targets td) doesn't break it -->
-      <th colspan="8" style="background:#e9fbef; color:#0f5132; text-transform:uppercase; letter-spacing:.04em;">
-        {{ section.label }}
-      </th>
-    </tr>
-
-    {% if section.accounts %}
-      {% for coa in section.accounts %}
-        <tr class="{% if not coa.is_active %}inactive-row{% endif %}">
-          <td>
-            {% if coa.parent %}
-              <span class="indent">{{ coa.account_name }}</span>
-            {% else %}
-              {{ coa.account_name }}
-            {% endif %}
-          </td>
-          <td>{{ coa.opening_balance|intcomma }}</td>
-          <td>{{ coa.as_of|date:"d/m/Y" }}</td>
-          <td>{{ coa.account_number }}</td>
-          <td>{{ coa.account_type }}</td>
-          <td>{{ coa.detail_type }}</td>
-          <td>{{ coa.description }}</td>
-          <td class="action-cell">
-            <div class="action-wrapper">
-              <a href="#" class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit</a>
-              <div class="dropdown">
-                <i class='bx bx-chevron-down'></i>
-                <div class="dropdown-menu">
-                  {% if coa.is_active %}
-                    <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
-                  {% else %}
-                    <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          </td>
+      {% for section in level1_sections %}
+        <!-- Level 1 heading row -->
+        <tr class="section-row">
+          <th colspan="8" style="background:#e9fbef; color:#0f5132; text-transform:uppercase; letter-spacing:.04em;">
+            {{ section.label }}
+          </th>
         </tr>
+
+        {% if section.accounts %}
+          {% for coa in section.accounts %}
+            <tr class="{% if not coa.is_active %}inactive-row{% endif %}">
+              <td>
+                {% if coa.parent %}
+                  <span class="indent">{{ coa.account_name }}</span>
+                {% else %}
+                  {{ coa.account_name }}
+                {% endif %}
+              </td>
+              <td>{{ coa.opening_balance|intcomma }}</td>
+              <td>{{ coa.as_of|date:"d/m/Y" }}</td>
+              <td>{{ coa.account_number }}</td>
+              <!-- show human-readable label from choices -->
+              <td>{{ coa.get_account_type_display }}</td>
+              <td>{{ coa.detail_type }}</td>
+              <td>{{ coa.description }}</td>
+              <td class="action-cell">
+                <div class="action-wrapper">
+                  <a href="#" class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit</a>
+                  <div class="dropdown">
+                    <i class='bx bx-chevron-down'></i>
+                    <div class="dropdown-menu">
+                      {% if coa.is_active %}
+                        <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
+                      {% else %}
+                        <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <!-- structure visible even when empty -->
+          <tr class="empty-row">
+            <td colspan="8" style="font-style:italic; color:#6b7280; padding:10px 18px;">
+              No accounts under this category yet.
+            </td>
+          </tr>
+        {% endif %}
       {% endfor %}
-    {% else %}
-      <!-- structure visible even when empty -->
-      <tr class="empty-row">
-        <td colspan="8" style="font-style:italic; color:#6b7280; padding:10px 18px;">
-          No accounts under this category yet.
-        </td>
-      </tr>
-    {% endif %}
-  {% endfor %}
-</tbody>
- </table>
+    </tbody>
+  </table>
 
   <!-- Customize Modal -->
   <div id="customizeModal">

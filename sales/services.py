@@ -7,8 +7,8 @@ from datetime import datetime, date
 from django.db.models.functions import Coalesce, Cast
 import random
 from django.db.models import Q
-from accounts.models import Account, JournalEntry, JournalLine
-from .models import Payment, PaymentInvoice, SalesReceipt, SalesReceiptLine  # your sales models
+from accounts.models import Account
+from .models import Payment
 
 logger = logging.getLogger(__name__)
 
@@ -36,49 +36,6 @@ def ensure_default_accounts():
     return created
 
 
-@transaction.atomic
-def post_invoice(invoice, create_defaults=True):
-    """
-    Post an invoice to the journal (DR Accounts Receivable / CR Sales Income).
-    Returns the created JournalEntry (or None if skipped).
-    """
-    if create_defaults:
-        ensure_default_accounts()
-
-    # get required accounts
-    try:
-        ar = Account.objects.get(account_name="Accounts Receivable")
-        sales_income = Account.objects.get(account_name="Sales Income")
-    except Account.DoesNotExist as e:
-        logger.exception("Required account missing: %s", e)
-        raise
-
-    # convert total_due safely
-    try:
-        amount = Decimal(invoice.total_due)
-    except (InvalidOperation, TypeError, ValueError):
-        amount = Decimal(str(invoice.total_due or "0"))
-
-    if amount <= 0:
-        msg = f"Invoice {invoice.id} has non-positive total_due ({amount}); skipping journal post."
-        logger.warning(msg)
-        print(msg)
-        return None
-
-    # create journal entry
-    je = JournalEntry.objects.create(
-        description=f"Invoice {invoice.id}",
-        invoice=invoice,
-    )
-
-    # add debit/credit lines
-    JournalLine.objects.create(entry=je, account=ar, debit=amount, credit=0)
-    JournalLine.objects.create(entry=je, account=sales_income, debit=0, credit=amount)
-
-    logger.info("Posted JE %s for invoice %s", je.id, invoice.id)
-    print(f"Posted JE {je.id} for invoice {invoice.id}")
-
-    return je
 
 
 def get_ar_account():
@@ -92,54 +49,6 @@ def get_ar_account():
     return ar
 
 
-@transaction.atomic
-def post_payment(payment: Payment):
-    """
-    Post a customer payment to the journal:
-        DR deposit_to (Bank / Cash & Cash Equivalents)
-        CR Accounts Receivable
-
-    Links the JournalEntry to the first allocated invoice (optional).
-    Returns the created JournalEntry (or None if nothing applied).
-    """
-    # total applied to invoices
-    total_applied = (
-        PaymentInvoice.objects
-        .filter(payment=payment)
-        .aggregate(total=Sum("amount_paid"))
-        .get("total") or Decimal("0")
-    )
-    if total_applied <= 0:
-        return None  # nothing to post
-
-    ar = get_ar_account()
-    if not ar:
-        raise ValueError("No Accounts Receivable account found in Chart of Accounts.")
-
-    # link to an invoice if there is at least one allocation (first is fine for reporting)
-    first_alloc = (
-        PaymentInvoice.objects.filter(payment=payment).order_by("id").first()
-    )
-
-    je = JournalEntry.objects.create(
-        date=payment.payment_date,
-        description=f"Payment {payment.id} from {payment.customer.customer_name} "
-                    f"({payment.payment_method}) Ref:{payment.reference_no or ''}".strip(),
-        invoice=first_alloc.invoice if first_alloc else None,
-    )
-
-    # DR deposit account, CR A/R
-    JournalLine.objects.create(
-        entry=je, account=payment.deposit_to, debit=total_applied, credit=Decimal("0.00")
-    )
-    JournalLine.objects.create(
-        entry=je, account=ar, debit=Decimal("0.00"), credit=total_applied
-    )
-
-    logger.info("Posted payment JE %s for payment %s", je.id, payment.id)
-    print(f"Posted payment JE {je.id} for payment {payment.id}")
-
-    return je
 
 def generate_unique_ref_no() -> str:
     """Return an 8-digit, zero-padded, numeric reference that isn't used yet."""
@@ -204,11 +113,6 @@ def status_for_invoice(inv, total_due: Decimal, total_paid: Decimal, balance: De
 
     return f"Partially paid. {balance:,.0f} is remaining" if total_paid > 0 else f"{balance:,.0f} is remaining"
 
-# payments
-# sales/views.py (or wherever your helper lives)
-from decimal import Decimal
-from django.db.models import Sum, Value
-from django.db.models.functions import Coalesce
 
 def _payment_prefill_rows(payment):
     """
@@ -265,14 +169,6 @@ def _payment_prefill_rows(payment):
     }
 
 
-def _delete_existing_payment_journal_entries(payment: Payment):
-    """
-    If you journaled this payment previously (post_payment),
-    remove existing entries so we can re-post cleanly.
-    We identify by description prefix 'Payment {id}'.
-    If you later add a ForeignKey from JournalEntry->Payment, switch to that.
-    """
-    JournalEntry.objects.filter(description__startswith=f"Payment {payment.id}").delete()
 
 # working on the sales receipt
 
@@ -286,40 +182,6 @@ def _get_sales_income_account():
     return Account.objects.filter(Q(account_type__iexact="INCOME") | Q(account_type__icontains="income")).first()
 
 
-@transaction.atomic
-def post_sales_receipt(receipt: SalesReceipt):
-    """
-    DR deposit_to (Bank/Cash & Cash Equivalents)
-    CR Sales Income
-    amount = receipt.total_amount
-    """
-    amount = Decimal(receipt.total_amount or 0)
-    if amount <= 0:
-        return None
-
-    income = _get_sales_income_account()
-    if not income:
-        raise ValueError("No Sales Income account found (name 'Sales Income' or account_type='INCOME').")
-
-    # Create an unlinked journal entry; (your JournalEntry has `invoice` FK only)
-    je = JournalEntry.objects.create(
-        date=receipt.receipt_date,
-        description=f"Sales Receipt {receipt.id} - {receipt.customer.customer_name}",
-        invoice=None,
-    )
-
-    # DR Deposit account, CR Income
-    JournalLine.objects.create(entry=je, account=receipt.deposit_to, debit=amount, credit=Decimal("0.00"))
-    JournalLine.objects.create(entry=je, account=income,             debit=Decimal("0.00"), credit=amount)
-    return je
-
-
-def delete_sales_receipt_journal(receipt: SalesReceipt):
-    """
-    Remove previously posted JEs for this receipt (matched by description prefix).
-    (Since JournalEntry doesn't have receipt FK, we match by description text.)
-    """
-    JournalEntry.objects.filter(description__startswith=f"Sales Receipt {receipt.id}").delete()
 
 def _coerce_decimal(x, default="0"):
     try:

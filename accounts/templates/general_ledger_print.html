@@ -1,0 +1,202 @@
+{% load humanize %}
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>General Ledger - Print</title>
+  <style>
+    :root{
+      --brand:#39B54B;
+      --ink:#0f172a;
+      --muted:#64748b;
+      --line:#d1e5d6;
+      --thead:#e8f5ec;
+    }
+    *{
+      box-sizing:border-box;
+      font-family:"Poppins",system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;
+      font-size:12px;
+    }
+    body{
+      margin:0;
+      padding:20px;
+      background:#fff;
+      color:var(--ink);
+    }
+    .header{
+      text-align:center;
+      margin-bottom:10px;
+    }
+    .header h1{
+      margin:0;
+      font-size:20px;
+      color:var(--brand);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .header p{
+      margin:2px 0;
+      color:var(--muted);
+      font-size:11px;
+    }
+    .filters-summary{
+      margin:8px 0 12px;
+      font-size:11px;
+      color:var(--muted);
+      display:flex;
+      justify-content:center;
+      gap:16px;
+      flex-wrap:wrap;
+    }
+
+    table.gl-print{
+      width:100%;
+      border-collapse:collapse;
+      margin-top:4px;
+    }
+    .gl-print thead th{
+      background:var(--thead);
+      border:1px solid var(--line);
+      padding:6px;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      text-align:left;
+    }
+    .gl-print td{
+      border:1px solid var(--line);
+      padding:5px 6px;
+      font-size:11px;
+      vertical-align:top;
+    }
+    .num{
+      text-align:right;
+      white-space:nowrap;
+    }
+    .totals-row td{
+      font-weight:700;
+      background:#f0faf4;
+    }
+
+    /* page setup */
+    @page{
+      size:A4 portrait;
+      margin:15mm;
+    }
+    @media print{
+      body{
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .no-print{
+        display:none !important;
+      }
+    }
+
+    .footer-note{
+      margin-top:10px;
+      font-size:10px;
+      color:#9ca3af;
+      text-align:right;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Optional "Print Now" button for when opened in browser -->
+  <div class="no-print" style="text-align:right; margin-bottom:8px;">
+    <button onclick="window.print()" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">
+      Print / Save as PDF
+    </button>
+  </div>
+
+  <div class="header">
+    <h1>General Ledger</h1>
+    <p>Printed report of ledger transactions</p>
+  </div>
+
+  <div class="filters-summary">
+    {% if selected_account %}
+      <span><strong>Account:</strong> {{ selected_account.account_name }}</span>
+    {% else %}
+      <span><strong>Account:</strong> All accounts</span>
+    {% endif %}
+
+    {% if date_from or date_to %}
+      <span>
+        <strong>Period:</strong>
+        {% if date_from %} From {{ date_from }}{% endif %}
+        {% if date_to %} To {{ date_to }}{% endif %}
+      </span>
+    {% endif %}
+
+    {% if query %}
+      <span><strong>Search:</strong> "{{ query }}"</span>
+    {% endif %}
+  </div>
+
+  <table class="gl-print">
+    <thead>
+      <tr>
+        <th style="width:14%;">Date</th>
+        <th>Description</th>
+        <th style="width:10%;">Journal Ref</th>
+        <th style="width:20%;">Account</th>
+        <th style="width:11%;" class="num">Debit</th>
+        <th style="width:11%;" class="num">Credit</th>
+        <th style="width:11%;" class="num">Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.date|date:"d/m/Y" }}</td>
+          <td>{{ row.description }}</td>
+          <td>{{ row.reference }}</td>
+          <td>{{ row.account }}</td>
+          <td class="num">{{ row.debit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ row.credit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ row.balance|floatformat:2|intcomma }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="7" style="text-align:center; padding:10px; color:#9ca3af;">
+            No transactions found for the selected filters.
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr class="totals-row">
+        <td colspan="4" style="text-align:right;"><strong>Total</strong></td>
+        <td class="num">{{ total_debit|floatformat:2|intcomma }}</td>
+        <td class="num">{{ total_credit|floatformat:2|intcomma }}</td>
+        <td class="num">{{ total_balance|floatformat:2|intcomma }}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="footer-note">
+    Generated on {{ now|default:None }}
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+  const printBtn = document.getElementById("openPrintView");
+  const filterForm = document.getElementById("glFilterForm");
+
+  printBtn.addEventListener("click", function(e) {
+    e.preventDefault();
+    const params = new URLSearchParams(new FormData(filterForm));
+    const url = "{% url 'accounts:general-ledger-print' %}" + "?" + params.toString();
+    window.open(url, "_blank");
+  });
+
+  // ... keep your existing JS below (Excel export, column toggle, etc.)
+});
+
+  </script>
+
+</body>
+</html>

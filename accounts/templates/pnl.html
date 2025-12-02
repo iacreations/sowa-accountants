@@ -54,6 +54,15 @@
     .summary .label{color:#64748b}
     .summary .big{font-size:20px; font-weight:900; color:#0f5132}
     .neg{color:#b91c1c}
+
+    /* links inside rows */
+    .gl-link{
+      color:inherit;
+      text-decoration:none;
+    }
+    .gl-link:hover{
+      text-decoration:underline;
+    }
   </style>
 </head>
 <body>
@@ -75,7 +84,7 @@
       </div>
     </div>
 
-    <!-- Filter bar (unchanged buttons) -->
+    <!-- Filter bar -->
     <div class="filters d-flex">
       <span class="sub">
         Period:
@@ -106,11 +115,21 @@
                 <td><strong>Revenue</strong></td>
                 <td class="num"></td>
               </tr>
-              {% for name, amt in buckets.income %}
-                <tr>
-                  <td>{{ name }}</td>
-                  <td class="num">{{ amt|floatformat:2|intcomma }}</td>
-                </tr>
+              {% for row in buckets.income %}
+              <tr>
+                <td>
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                    {{ row.account }}
+                  </a>
+                </td>
+                <td class="num">
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                    {{ row.amount|floatformat:2|intcomma }}
+                  </a>
+                </td>
+              </tr>
               {% empty %}
                 <tr><td colspan="2" style="color:#6b7280;padding:12px">No revenue in this period.</td></tr>
               {% endfor %}
@@ -124,11 +143,21 @@
                 <td style="padding-top:18px;"><strong>Cost of goods sold</strong></td>
                 <td class="num" style="padding-top:18px;"></td>
               </tr>
-              {% for name, amt in buckets.cogs %}
-                <tr>
-                  <td>{{ name }}</td>
-                  <td class="num">{{ amt|floatformat:2|intcomma }}</td>
-                </tr>
+              {% for row in buckets.cogs %}
+              <tr>
+                <td>
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                    {{ row.account }}
+                  </a>
+                </td>
+                <td class="num">
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                    {{ row.amount|floatformat:2|intcomma }}
+                  </a>
+                </td>
+              </tr>
               {% empty %}
                 <tr><td colspan="2" style="color:#6b7280;padding:12px">No COGS in this period.</td></tr>
               {% endfor %}
@@ -148,11 +177,21 @@
                 <td style="padding-top:18px;"><strong>Operating expenses</strong></td>
                 <td class="num" style="padding-top:18px;"></td>
               </tr>
-              {% for name, amt in buckets.expense %}
-                <tr>
-                  <td>{{ name }}</td>
-                  <td class="num">{{ amt|floatformat:2|intcomma }}</td>
-                </tr>
+              {% for row in buckets.expense %}
+              <tr>
+                <td>
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                    {{ row.account }}
+                  </a>
+                </td>
+                <td class="num">
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                    {{ row.amount|floatformat:2|intcomma }}
+                  </a>
+                </td>
+              </tr>
               {% empty %}
                 <tr><td colspan="2" style="color:#6b7280;padding:12px">No operating expenses in this period.</td></tr>
               {% endfor %}

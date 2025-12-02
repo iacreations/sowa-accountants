@@ -92,6 +92,15 @@
     .bad{color:#b45309}
 
     .meta {color:#475569}
+
+    /* clickable GL links (look like normal text) */
+    .gl-link{
+      color:inherit;
+      text-decoration:none;
+    }
+    .gl-link:hover{
+      text-decoration:underline;
+    }
   </style>
 </head>
 <body>
@@ -139,11 +148,23 @@
 
           <!-- Non-current Assets -->
           <tr><td class="group-title">Non-current Assets</td><td></td></tr>
-          {% for name, amt in asset_nc_rows %}
+          {% for row in asset_nc_rows %}
             <tr>
-              <td>{{ name }}</td>
-              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+              <td>
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.account }}
+                </a>
+              </td>
+              <td class="num">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.amount|floatformat:2|intcomma }}
+                </a>
+              </td>
             </tr>
+          {% empty %}
+            <!-- optional: you can show a "no non-current assets" row if you want -->
           {% endfor %}
           <tr class="tot">
             <td>Subtotal Non-current Assets</td>
@@ -152,11 +173,22 @@
 
           <!-- Current Assets -->
           <tr><td class="group-title">Current Assets</td><td></td></tr>
-          {% for name, amt in asset_curr_rows %}
+          {% for row in asset_curr_rows %}
             <tr>
-              <td>{{ name }}</td>
-              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+              <td>
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.account }}
+                </a>
+              </td>
+              <td class="num">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.amount|floatformat:2|intcomma }}
+                </a>
+              </td>
             </tr>
+          {% empty %}
           {% endfor %}
           <tr class="tot">
             <td>Subtotal Current Assets</td>
@@ -182,11 +214,22 @@
 
           <!-- Equity FIRST -->
           <tr><td class="group-title">Equity</td><td></td></tr>
-          {% for name, amt in eq_rows %}
+          {% for row in eq_rows %}
             <tr>
-              <td style="padding-left:32px;">{{ name }}</td>
-              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+              <td style="padding-left:32px;">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.account }}
+                </a>
+              </td>
+              <td class="num">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.amount|floatformat:2|intcomma }}
+                </a>
+              </td>
             </tr>
+          {% empty %}
           {% endfor %}
           <tr class="tot">
             <td>Total Equity</td>
@@ -198,11 +241,22 @@
 
           <!-- Non-current Liabilities -->
           <tr><td class="group-title" style="padding-left:32px;">Non-current Liabilities</td><td></td></tr>
-          {% for name, amt in liab_nc_rows %}
+          {% for row in liab_nc_rows %}
             <tr>
-              <td style="padding-left:45px;">{{ name }}</td>
-              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+              <td style="padding-left:45px;">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.account }}
+                </a>
+              </td>
+              <td class="num">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.amount|floatformat:2|intcomma }}
+                </a>
+              </td>
             </tr>
+          {% empty %}
           {% endfor %}
           <tr class="tot">
             <td>Subtotal Non-current Liabilities</td>
@@ -211,11 +265,22 @@
 
           <!-- Current Liabilities -->
           <tr><td class="group-title" style="padding-left:32px;">Current Liabilities</td><td></td></tr>
-          {% for name, amt in liab_curr_rows %}
+          {% for row in liab_curr_rows %}
             <tr>
-              <td style="padding-left:45px;">{{ name }}</td>
-              <td class="num">{{ amt|floatformat:2|intcomma }}</td>
+              <td style="padding-left:45px;">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.account }}
+                </a>
+              </td>
+              <td class="num">
+                <a class="gl-link"
+                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                  {{ row.amount|floatformat:2|intcomma }}
+                </a>
+              </td>
             </tr>
+          {% empty %}
           {% endfor %}
           <tr class="tot">
             <td>Subtotal Current Liabilities</td>

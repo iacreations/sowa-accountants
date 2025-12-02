@@ -91,9 +91,24 @@
         <tbody>
           {% for row in rows %}
           <tr>
-            <td>{{ row.account }}</td>
-            <td class="num">{{ row.debit|floatformat:2|intcomma }}</td>
-            <td class="num">{{ row.credit|floatformat:2|intcomma }}</td>
+            <td>
+              <a href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}"
+                 style="color: inherit; text-decoration: none;">
+                {{ row.account }}
+              </a>
+            </td>
+            <td class="num">
+              <a href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}"
+                 style="color: inherit; text-decoration: none;">
+                {{ row.debit|floatformat:2|intcomma }}
+              </a>
+            </td>
+            <td class="num">
+              <a href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}"
+                 style="color: inherit; text-decoration: none;">
+                {{ row.credit|floatformat:2|intcomma }}
+              </a>
+            </td>
           </tr>
           {% empty %}
           <tr>

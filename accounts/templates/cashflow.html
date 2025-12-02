@@ -20,8 +20,8 @@
     input[type="date"]{border:1px solid #d1d5db;border-radius:8px;padding:8px 10px}
     .btn{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer}
     .btn.ghost{background:#f0fdf4;color:#0f5132;border:1px solid #cceedd}
-    .card{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.06);margin-bottom:14px}
-    .card h3{margin:0;padding:10px 12px;background:var(--head);color:var(--ink)}
+    .card{background:#fff;border:1px solid #e7e7e7;border-radius:12px;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.06);margin-bottom:14px}
+    .card h3{margin:0;padding:10px 12px;background:#e9fbef;color:#0f5132}
     table{width:100%;border-collapse:separate;border-spacing:0}
     th,td{padding:10px 12px;border-top:1px solid #f1f1f1}
     th{text-align:left;color:#0f5132;background:#fafdfb}
@@ -64,11 +64,68 @@
       <h3>Cash Flows from Operating Activities</h3>
       <table>
         <tbody>
-          <tr><td>Net Profit</td><td class="num">{{ net_profit|floatformat:2|intcomma }}</td></tr>
-          <tr><td>Change in Accounts Receivable</td><td class="num">{{ delta_ar|floatformat:2|intcomma }}</td></tr>
-          <tr><td>Change in Inventory</td><td class="num">{{ delta_inv|floatformat:2|intcomma }}</td></tr>
-          <tr><td>Change in Accounts Payable</td><td class="num">{{ delta_ap|floatformat:2|intcomma }}</td></tr>
-          <tr class="tot"><td>Net Cash from Operating Activities</td><td class="num">{{ cash_from_ops|floatformat:2|intcomma }}</td></tr>
+          <!-- Net Profit (from P&L) – here we keep it simple, no GL drilldown -->
+          <tr>
+            <td>Net Profit</td>
+            <td class="num">
+              {{ net_profit|floatformat:2|intcomma }}
+            </td>
+          </tr>
+
+          <!-- Change in AR -->
+          <tr>
+            <td>Change in Accounts Receivable</td>
+            <td class="num">
+              {% if ar_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ ar_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ delta_ar|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ delta_ar|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+
+          <!-- Change in Inventory -->
+          <tr>
+            <td>Change in Inventory</td>
+            <td class="num">
+              {% if inv_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ inv_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ delta_inv|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ delta_inv|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+
+          <!-- Change in AP -->
+          <tr>
+            <td>Change in Accounts Payable</td>
+            <td class="num">
+              {% if ap_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ ap_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ delta_ap|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ delta_ap|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+
+          <tr class="tot">
+            <td>Net Cash from Operating Activities</td>
+            <td class="num">
+              {% if cash_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ cash_from_ops|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ cash_from_ops|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -77,8 +134,30 @@
       <h3>Cash Flows from Investing Activities</h3>
       <table>
         <tbody>
-          <tr><td>Change in Fixed/Other Assets</td><td class="num">{{ delta_fa|floatformat:2|intcomma }}</td></tr>
-          <tr class="tot"><td>Net Cash from Investing Activities</td><td class="num">{{ cash_from_investing|floatformat:2|intcomma }}</td></tr>
+          <tr>
+            <td>Change in Fixed/Other Assets</td>
+            <td class="num">
+              {% if fa_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ fa_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ delta_fa|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ delta_fa|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+          <tr class="tot">
+            <td>Net Cash from Investing Activities</td>
+            <td class="num">
+              {% if cash_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ cash_from_investing|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ cash_from_investing|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -87,9 +166,42 @@
       <h3>Cash Flows from Financing Activities</h3>
       <table>
         <tbody>
-          <tr><td>Change in Loans</td><td class="num">{{ delta_loans|floatformat:2|intcomma }}</td></tr>
-          <tr><td>Change in Equity</td><td class="num">{{ delta_equity|floatformat:2|intcomma }}</td></tr>
-          <tr class="tot"><td>Net Cash from Financing Activities</td><td class="num">{{ cash_from_financing|floatformat:2|intcomma }}</td></tr>
+          <tr>
+            <td>Change in Loans</td>
+            <td class="num">
+              {% if loans_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ loans_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ delta_loans|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ delta_loans|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td>Change in Equity</td>
+            <td class="num">
+              {% if equity_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ equity_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ delta_equity|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ delta_equity|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+          <tr class="tot">
+            <td>Net Cash from Financing Activities</td>
+            <td class="num">
+              {% if cash_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ cash_from_financing|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ cash_from_financing|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -98,9 +210,42 @@
       <h3>Net Change in Cash</h3>
       <table>
         <tbody>
-          <tr><td>Cash at Start</td><td class="num">{{ cash_start|floatformat:2|intcomma }}</td></tr>
-          <tr><td>Net Change in Cash</td><td class="num">{{ net_change|floatformat:2|intcomma }}</td></tr>
-          <tr class="tot"><td>Cash at End</td><td class="num">{{ cash_end|floatformat:2|intcomma }}</td></tr>
+          <tr>
+            <td>Cash at Start</td>
+            <td class="num">
+              {% if cash_account_id and dfrom %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}&date_to={{ dfrom|date:'Y-m-d' }}">
+                  {{ cash_start|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ cash_start|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td>Net Change in Cash</td>
+            <td class="num">
+              {% if cash_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ net_change|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ net_change|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
+          <tr class="tot">
+            <td>Cash at End</td>
+            <td class="num">
+              {% if cash_account_id %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}&date_to={{ dto|date:'Y-m-d' }}">
+                  {{ cash_end|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                {{ cash_end|floatformat:2|intcomma }}
+              {% endif %}
+            </td>
+          </tr>
         </tbody>
       </table>
       <div class="recon">

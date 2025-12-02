@@ -123,8 +123,8 @@
 
       <!-- Customer -->
       <div>
-        <label>Customer *</label>
-        <select name="customer" id="customer-select" required>
+        <label>Customer</label>
+        <select name="customer" id="customer-select">
           <option value="">Select customer</option>
           {% for c in customers %}
             <option value="{{ c.id }}"
@@ -138,7 +138,7 @@
 
       <!-- Sales Date -->
       <div>
-        <label>Sales Date *</label>
+        <label>Sales Date</label>
         <!-- CHANGED: bind to receipt.receipt_date (model field) -->
         <input type="date" name="receipt_date"
                value="{% if edit_mode and receipt.receipt_date %}{{ receipt.receipt_date|date:'Y-m-d' }}{% endif %}"
@@ -166,7 +166,7 @@
 
       <!-- Deposit To -->
       <div>
-        <label>Deposit To *</label>
+        <label>Deposit To</label>
         <select name="deposit_to" required>
           <option value="">Select account</option>
           {% for acc in accounts %}

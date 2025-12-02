@@ -124,9 +124,10 @@
     }
   </style>
 </head>
+<body>
 <a href="{% url 'accounts:accounts' %}" class="text-decoration-none " id="btn" style="color: #39B54B;font-size: 23px;">Back to Chart of accouts</a>
-  <div class="container">
- <form method='post' action="{% url 'accounts:add-account' %}" enctype= 'multipart/form-data'>
+<div class="container">
+  <form method='post' action="{% url 'accounts:add-account' %}" enctype= 'multipart/form-data'>
     {% csrf_token %}
     <h2 class="title">Chart of Accounts</h2>
 
@@ -136,73 +137,86 @@
           <label>Account Name *</label>
           <input type="text" name="account_name" id="account" required />
         </div>
+
         <div class="form-group">
           <label>Account Number</label>
           <input type="text" name="account_number" id="account" />
         </div>
-        <div class="form-group">
-  <label>Account Type *</label>
-  <select name="account_type" id="account_type" required>
-    <option value="">Select account type</option>
-    <option>Current Assets</option>    
-    <option>Non-Current Assets</option>
-    <option>Current Liabilities</option>
-    <option>Non-current Liabilities</option>
-    <option>Owner's Equity</option>
-    <option>Operating Income</option>
-    <option>Operating Expense</option>
-    <option>Investing Income</option>
-    <option>Investing Expense</option>
-    <option>Financing Income</option>
-    <option>Income taxes</option>
-  </select>
-</div>
-      <!-- detail type  -->
-  <div class="form-group">
-  <label>Detail Type *</label>
-  <select name="detail_type" id="detail_type" required>
-    <option value=""></option>
-  </select>
-</div>
-<div class="form-group">
-  <label>Tax Category</label>
-  <select name="tax_category">
-    <option value="">None</option>
-    <option value="Capital deductions">Capital deductions</option>
-    <option value="Allowable deduction">Allowable deduction</option>
-    <option value="Non Allowable deduction">Non Allowable deduction</option>
-  </select>
-</div>
 
-  <div class="form-group my-5">
-  <label for="subAccountCheckbox">Make this a sub-account.
-    <input type="checkbox" id="subAccountCheckbox" name="is_subaccount" onchange="toggleSellFields()">
-  </label>
-  </div>
-       <div id="parent_account_field" style="display: none;">
-        <label for="parent">Parent Account</label> <div></div>
-        <select name="parent" id="parent">
+        <!-- ACCOUNT TYPE (codes) -->
+        <div class="form-group">
+          <label>Account Type *</label>
+          <select name="account_type" id="account_type" required>
+            <option value="">Select account type</option>
+            <option value="CURRENT_ASSET">Current Assets</option>
+            <option value="NON_CURRENT_ASSET">Non Current Assets</option>
+
+            <option value="CURRENT_LIABILITY">Current Liabilities</option>
+            <option value="NON_CURRENT_LIABILITY">Non Current Liabilities</option>
+
+            <option value="OWNER_EQUITY">Owner's Equity</option>
+
+            <option value="OPERATING_INCOME">Operating Income</option>
+            <option value="INVESTING_INCOME">Investing Income</option>
+
+            <option value="OPERATING_EXPENSE">Operating Expense</option>
+            <option value="INVESTING_EXPENSE">Investing Expense</option>
+            <option value="FINANCING_EXPENSE">Financing Expense</option>
+            <option value="INCOME_TAX_EXPENSE">Income taxes</option>
+          </select>
+        </div>
+
+        <!-- DETAIL TYPE -->
+        <div class="form-group">
+          <label>Detail Type *</label>
+          <select name="detail_type" id="detail_type" required>
+            <option value=""></option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Tax Category</label>
+          <select name="tax_category">
+            <option value="">None</option>
+            <option value="Capital deductions">Capital deductions</option>
+            <option value="Allowable deduction">Allowable deduction</option>
+            <option value="Non Allowable deduction">Non Allowable deduction</option>
+          </select>
+        </div>
+
+        <div class="form-group my-5">
+          <label for="subAccountCheckbox">
+            Make this a sub-account.
+            <input type="checkbox" id="subAccountCheckbox" name="is_subaccount">
+          </label>
+        </div>
+
+        <div id="parent_account_field" style="display: none;">
+          <label for="parent">Parent Account</label> <div></div>
+          <select name="parent" id="parent">
             <option value="">choose parent account</option>
             {% for parent in parents %}
-                <option value="{{ parent.id }}">{{ parent.account_name }}</option>
+              <option value="{{ parent.id }}">{{ parent.account_name }}</option>
             {% endfor %}
-        </select>
-    </div>
-
-      <div class="form-grid my-5">
-        <div class="form-group">
-          <label>Opening Balance</label>
-          <input type="number" name="opening_balance" />
+          </select>
         </div>
-      </div>
+
+        <div class="form-grid my-5">
+          <div class="form-group">
+            <label>Opening Balance</label>
+            <input type="number" name="opening_balance" />
+          </div>
+        </div>
+
         <div class="form-group">
           <label>As of</label>
           <input type="date" name="as_of"/>
         </div>
+      </div>
     </div>
 
-    <!-- More Info Section -->
-    <div class="section-wrapper">
+    <!-- More Info Section (now will be toggled too) -->
+    <div class="section-wrapper" id="more_info_section">
       <h3 style="margin-bottom: 15px; color: #39B54B;">More Info on Opening Balances</h3>
       <div class="form-group">
         <label>Description</label>
@@ -213,97 +227,102 @@
     <!-- Footer Buttons -->
     <div class="footer">
       <a href="{% url 'accounts:accounts' %}" class="text-decoration-none button btn-sm" id="btn">Cancel</a>
-  
-      <div class="dropdown">
-          <button type="button" class="btn button btn-green">Save ▼</button>
-          <div class="dropdown-menu">
-            <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
-            <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
-            <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
-          </div>
-        </div>
-    </div>
-    </div>
-    </form>
-  </div>
-  <script src=" {% static 'sowaf/styles/script.js' %} "></script>
-  <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        const checkbox = document.getElementById("subAccountCheckbox");
-        const parentField = document.getElementById("parent_account_field");
 
-        checkbox.addEventListener("change", function () {
-            if (this.checked) {
-                parentField.style.display = "block"; // Show field
-            } else {
-                parentField.style.display = "none"; // Hide field
-            }
-        });
+      <div class="dropdown">
+        <button type="button" class="btn button btn-green">Save ▼</button>
+        <div class="dropdown-menu">
+          <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
+          <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
+          <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script src=" {% static 'sowaf/styles/script.js' %} "></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    // ===== Sub-account toggle =====
+    const checkbox = document.getElementById("subAccountCheckbox");
+    const parentField = document.getElementById("parent_account_field");
+
+    checkbox.addEventListener("change", function () {
+        parentField.style.display = this.checked ? "block" : "none";
     });
 
-    document.addEventListener("DOMContentLoaded", function () {
+    // ===== Account Type / Detail Type logic =====
     const accountTypeDropdown = document.getElementById("account_type");
-    const detailTypeDropdown = document.getElementById("detail_type");
+    const detailTypeDropdown  = document.getElementById("detail_type");
 
-    // Mapping of Account Type → Detail Types
+    // Mapping of Account Type CODE → Detail Types (labels)
     const detailOptions = {
-
-        "Current Assets": [
-            "Assets held for sale","Inventory","Prepayments","Accounts Receivables (A/R)","Other receivables","Cash and Cash quivalents","Other current assets"
+        "CURRENT_ASSET": [
+            "Assets held for sale","Inventory","Prepayments",
+            "Accounts Receivables (A/R)","Other receivables",
+            "Cash and Cash equivalents","Other current assets"
         ],
 
-        "Non-Current Assets": [
-          "Property","Plant","Equipment","Furniture","Motor Vehicle","Investment property","Intangible Assets","Right of Use Assets","Deffered tax Assets","Other Long term Assets"
-
-        ],
-      
-        "Current Liabilities": [
-            "Accounts Payable (A/P)","Other Payables","Provisions","Short term borrowings","Current tax liabilities","Accrued expenses","Other Current liabilities"
-
+        "NON_CURRENT_ASSET": [
+          "Property","Plant","Equipment","Furniture","Motor Vehicle",
+          "Investment property","Intangible Assets","Right of Use Assets",
+          "Deffered tax Assets","Other Long term Assets"
         ],
 
-        "Non-current liabilities":[
-          "Long term Borrowings","Pension and other employee obligations","Long term Lease Liabilities","Deffered tax liabilities","Other Non Curent Liabilities"
-
+        "CURRENT_LIABILITY": [
+            "Accounts Payable (A/P)","Other Payables","Provisions",
+            "Short term borrowings","Current tax liabilities",
+            "Accrued expenses","Other Current liabilities"
         ],
 
-        "Owner's Equity": [
-            "Share Capital","Share premium","Retained earnings","Non controlling interest","Other Equity components"
+        "NON_CURRENT_LIABILITY": [
+          "Long term Borrowings","Pension and other employee obligations",
+          "Long term Lease Liabilities","Deffered tax liabilities",
+          "Other Non Curent Liabilities"
         ],
 
-        "Operating Income":[
-         "Revenue", "other operation income",
-    ],
+        "OWNER_EQUITY": [
+            "Share Capital","Share premium","Retained earnings",
+            "Non controlling interest","Other Equity components"
+        ],
 
-   "Operating Expense":[
-    "Cost of Goods sold","Cost of Sales","Selling and distribution","Administration expenses","Research and development","other operating expenses"
-    ],
+        "OPERATING_INCOME":[
+          "Revenue", "Other operating income"
+        ],
 
-   "Investing Income":[
-    "Share of profits from associates","Rental Income","Dividends","Interest income","Depreciation","Impairment", "Losses","Impairment Reversal","Loss on Disposal of Investments","Other Investing Income"
-    ],
+        "OPERATING_EXPENSE":[
+          "Cost of Goods sold","Cost of Sales","Selling and distribution",
+          "Administration expenses","Research and development",
+          "Other operating expenses"
+        ],
 
-   "Investing Expense":[
-    "Gain on Disposal of Investments"	,"Fairvalue Gains","Fairvalue Losses","Other Investing Expenses"
-],
+        "INVESTING_INCOME":[
+          "Share of profits from associates","Rental Income","Dividends",
+          "Interest income","Depreciation","Impairment", "Losses",
+          "Impairment Reversal","Loss on Disposal of Investments",
+          "Other Investing Income"
+        ],
 
-"Financing Expense":[	
-"Interest expense","Other Financing Costs"
-],
-	
-"Income taxes":[
-"Income Tax Expense","Other Tax Expenses"
-],
+        "INVESTING_EXPENSE":[
+          "Gain on Disposal of Investments","Fairvalue Gains",
+          "Fairvalue Losses","Other Investing Expenses"
+        ],
 
+        "FINANCING_EXPENSE":[
+          "Interest expense","Other Financing Costs"
+        ],
 
+        "INCOME_TAX_EXPENSE":[
+          "Income Tax Expense","Other Tax Expenses"
+        ],
     };
 
-    // Function to update Detail Type dropdown
-    function updateDetailTypes(accountType) {
+    function updateDetailTypes(accountTypeCode) {
         detailTypeDropdown.innerHTML = "<option value=''></option>";
 
-        if (detailOptions[accountType]) {
-            detailOptions[accountType].forEach(function (detail) {
+        if (detailOptions[accountTypeCode]) {
+            detailOptions[accountTypeCode].forEach(function (detail) {
                 const option = document.createElement("option");
                 option.value = detail;
                 option.textContent = detail;
@@ -312,51 +331,43 @@
         }
     }
 
-    // Trigger update when Account Type changes
-    accountTypeDropdown.addEventListener("change", function () {
-        updateDetailTypes(this.value);
-    });
-    // auto-run on page load if editing
-    if (accountTypeDropdown.value) {
-        updateDetailTypes(accountTypeDropdown.value);
-    }
-});
-
-document.addEventListener("DOMContentLoaded", function () {
-    const accountTypeDropdown = document.getElementById("account_type");
+    // ===== Opening Balance / As Of / More Info visibility =====
     const openingBalanceField = document.querySelector("input[name='opening_balance']").closest(".form-group");
-    const asOfField = document.querySelector("input[name='as_of']").closest(".form-group");
+    const asOfField           = document.querySelector("input[name='as_of']").closest(".form-group");
+    const moreInfoSection     = document.getElementById("more_info_section");
 
-    // Account types where Opening Balance & As Of should appear
-    const allowedTypes = [
-        "Accounts Receivable (A/R)",
-        "Current Assets",
-        "Cash and Cash Equivalents",
-        "Fixed Assets",
-        "Non-Current Assets",
-        "Accounts Payable (A/P)",
-        "Credit Card",
-        "Current Liabilities",
-        "Non-current Liabilities",
-        "Owner's Equity"
+    // Code list of Balance Sheet accounts
+    const balanceSheetTypes = [
+        "CURRENT_ASSET",
+        "NON_CURRENT_ASSET",
+        "CURRENT_LIABILITY",
+        "NON_CURRENT_LIABILITY",
+        "OWNER_EQUITY"
     ];
 
     function toggleBalanceFields() {
-        const selectedType = accountTypeDropdown.value;
+        const selectedCode = accountTypeDropdown.value;
 
-        if (allowedTypes.includes(selectedType)) {
+        if (balanceSheetTypes.includes(selectedCode)) {
             openingBalanceField.style.display = "block";
             asOfField.style.display = "block";
+            moreInfoSection.style.display = "block";
         } else {
             openingBalanceField.style.display = "none";
             asOfField.style.display = "none";
+            moreInfoSection.style.display = "none";
         }
     }
 
-    // Listen for changes
-    accountTypeDropdown.addEventListener("change", toggleBalanceFields);
+    accountTypeDropdown.addEventListener("change", function () {
+        updateDetailTypes(this.value);
+        toggleBalanceFields();
+    });
 
-    // Run on page load in case of edit form
+    // ===== Initial run on page load (e.g. edit form) =====
+    if (accountTypeDropdown.value) {
+        updateDetailTypes(accountTypeDropdown.value);
+    }
     toggleBalanceFields();
 });
 </script>

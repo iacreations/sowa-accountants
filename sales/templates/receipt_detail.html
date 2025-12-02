@@ -1,59 +1,163 @@
 {% load static %}
 {% load humanize %}
 {% include 'includes/navbar.html' %}
-  <title>Sales Receipt #{{ receipt.id }}</title>
-  <style>
-    :root{--brand:#39B54B;--line:#e7e7e7}
-    body{font-family:Poppins,system-ui,Segoe UI,Arial;margin:24px;background:#f6f8f7}
-    .wrap{max-width:1000px;margin:auto}
-    h2{color:var(--brand);margin:0 0 12px}
-    .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 8px 22px rgba(0,0,0,.06)}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .muted{color:#6b7280}
-    table{width:100%;border-collapse:collapse;margin-top:12px}
-    th,td{border:1px solid #edf0ee;padding:8px}
-    th{background:#f7fff8;text-align:left}
-    .num{text-align:right;white-space:nowrap}
-    .tot{font-weight:800;background:#f8fff9}
-    a.btn{display:inline-block;background:var(--brand);color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;margin-right:8px}
-    #receipt{
-      margin-top: 8%;
-      margin-left: 20%;
-    }
-  </style>
-  {% include 'includes/sidebar.html' %}
-<div class="wrap" id="receipt">
-  <a href="{% url 'sales:receipt-edit' receipt.id %}" class="btn button" style="background:#39B54B; float: right;">Edit</a>
-    <a href="" class="button" style="text-decoration:none;">
-  <span class="button_text">Print / PDF</span>
-  <h2 style="text-align: center;">Sales Receipt #{{ receipt.id }}</h2>
+
+<title>Sales Receipt #{{ receipt.id }}</title>
+
+<style>
+  :root {
+    --brand: #39B54B;
+    --line: #e5e7eb;
+    --bg: #f8faf9;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: Poppins, system-ui, Segoe UI, Arial;
+    margin: 0;
+    padding: 20px 0 40px;
+  }
+
+  .receipt-wrap {
+    max-width: 900px;
+    margin-left: 26%;
+  }
+
+  /* Header Bar */
+  .header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+
+  .header-title {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--brand);
+  }
+
+  .btn {
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #fff;
+    background: var(--brand);
+    transition: 0.2s;
+  }
+
+  .btn:hover {
+    opacity: 0.85;
+  }
+
+  .card {
+    background: #fff;
+    padding: 22px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    box-shadow: 0px 6px 18px rgba(0,0,0,0.06);
+  }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .info-grid strong {
+    color: #374151;
+  }
+
+  .muted {
+    color: #6b7280;
+    margin-top: 8px;
+    font-style: italic;
+  }
+
+  /* Table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 18px;
+    font-size: 14px;
+  }
+
+  th {
+    border-bottom: 2px solid var(--line);
+    background: #f3fff5;
+    padding: 10px;
+    text-align: left;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  td {
+    border-bottom: 1px solid var(--line);
+    padding: 8px;
+  }
+
+  .num {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .tot-row td {
+    font-weight: 700;
+    background: #f8fff9;
+  }
+
+</style>
+
+{% include 'includes/sidebar.html' %}
+
+<div class="receipt-wrap">
+
+  <!-- Header Actions -->
+  <div class="header-bar">
+    <div class="header-title">Sales Receipt #{{ receipt.id }}</div>
+
+    <div>
+      <a href="{% url 'sales:receipt-edit' receipt.id %}" class="btn">Edit</a>
+      <a href="#" class="btn">Print / PDF</a>
+    </div>
+  </div>
+
+  <!-- Receipt Card -->
   <div class="card">
-    <div class="grid">
+
+    <!-- Top Info -->
+    <div class="info-grid">
       <div><strong>Customer:</strong> {{ receipt.customer.customer_name }}</div>
       <div><strong>Date:</strong> {{ receipt.receipt_date|date:"M j, Y" }}</div>
+
       <div><strong>Deposit To:</strong> {{ receipt.deposit_to.account_name }}</div>
       <div><strong>Method:</strong> {{ receipt.payment_method|title }}</div>
+
       <div><strong>Reference:</strong> {{ receipt.reference_no|default:"—" }}</div>
       <div><strong>Tags:</strong> {{ receipt.tags|default:"—" }}</div>
     </div>
 
     {% if receipt.memo %}
-      <p class="muted" style="margin-top:10px;"><em>{{ receipt.memo }}</em></p>
+      <p class="muted">{{ receipt.memo }}</p>
     {% endif %}
 
+    <!-- Table -->
     <table>
       <thead>
         <tr>
           <th>#</th>
-          <th>Product/Service</th>
+          <th>Product / Service</th>
           <th>Description</th>
           <th class="num">Qty</th>
           <th class="num">Rate</th>
           <th class="num">Line Total</th>
         </tr>
       </thead>
+
       <tbody>
-      {% for ln in lines %}
+        {% for ln in lines %}
         <tr>
           <td>{{ forloop.counter }}</td>
           <td>{{ ln.product.name|default:"—" }}</td>
@@ -62,38 +166,47 @@
           <td class="num">{{ ln.unit_price|floatformat:2|intcomma }}</td>
           <td class="num">{{ ln.amount|floatformat:2|intcomma }}</td>
         </tr>
-      {% endfor %}
-        <tr class="tot">
+        {% endfor %}
+
+        <!-- Totals -->
+        <tr class="tot-row">
           <td colspan="5" class="num">Subtotal</td>
           <td class="num">{{ receipt.subtotal|floatformat:2|intcomma }}</td>
         </tr>
-        <tr class="tot">
+
+        <tr class="tot-row">
           <td colspan="5" class="num">Discount</td>
           <td class="num">-{{ receipt.total_discount|floatformat:2|intcomma }}</td>
         </tr>
-        <tr class="tot">
+
+        <tr class="tot-row">
           <td colspan="5" class="num">VAT</td>
           <td class="num">{{ receipt.total_vat|floatformat:2|intcomma }}</td>
         </tr>
-        <tr class="tot">
+
+        <tr class="tot-row">
           <td colspan="5" class="num">Shipping</td>
           <td class="num">{{ receipt.shipping_fee|floatformat:2|intcomma }}</td>
         </tr>
-        <tr class="tot">
+
+        <tr class="tot-row">
           <td colspan="5" class="num">Total</td>
           <td class="num">{{ receipt.total_amount|floatformat:2|intcomma }}</td>
         </tr>
-        <tr class="tot">
-         <td colspan="5" class="num">Amount Paid</td>
+
+        <tr class="tot-row">
+          <td colspan="5" class="num">Amount Paid</td>
           <td class="num">{{ receipt.amount_paid|floatformat:2|intcomma }}</td>
         </tr>
-        <tr class="tot">
-         <td colspan="5" class="num">Balance Due</td>
-        <td class="num">{{ receipt.balance|floatformat:2|intcomma }}</td>
+
+        <tr class="tot-row">
+          <td colspan="5" class="num">Balance Due</td>
+          <td class="num">{{ receipt.balance|floatformat:2|intcomma }}</td>
         </tr>
-     </tbody>
+      </tbody>
     </table>
+
   </div>
 </div>
 
- {% include 'includes/footer.html' %}
+{% include 'includes/footer.html' %}

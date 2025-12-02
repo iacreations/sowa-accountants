@@ -16,10 +16,9 @@ from .models import Expense, ExpenseCategoryLine, ExpenseItemLine,ColumnPreferen
 from .models import Cheque, ChequeCategoryLine, ChequeItemLine
 
 from sowaf.models import Newcustomer, Newsupplier
-from accounts.models import Account,JournalEntry
+from accounts.models import Account
 from inventory.models import Product,Pclass
 from .utils import generate_unique_ref_no
-from .services import post_expense_to_gl,post_bill_to_ledger,post_cheque_to_ledger
 
 # Expenses view
 
@@ -280,7 +279,6 @@ def add_expense(request):
                 exp.total_amount = total
                 exp.save(update_fields=["total_amount"])
                 # posting to chart of accounts
-                post_expense_to_gl(exp)
                 action = request.POST.get("save_action") or "save"
                 if action == "save":
                     return redirect("expenses:expenses")
@@ -323,9 +321,7 @@ def expense_detail(request, pk: int):
         .prefetch_related("cat_lines__category", "item_lines__product"),
         pk=pk
     )
-    # Optional: get the journal if you linked it with FK expense
-    je = JournalEntry.objects.filter(expense=exp).prefetch_related("lines__account").first()
-    return render(request, "expense_detail.html", {"e": exp, "journal": je})
+    return render(request, "expense_detail.html", {"e": exp,})
 # expense edit
 def expense_edit(request, pk: int):
     exp = get_object_or_404(
@@ -422,10 +418,6 @@ def expense_edit(request, pk: int):
 
                 exp.total_amount = total
                 exp.save(update_fields=["total_amount"])
-
-                # ---- Rebuild journal (delete old + re-post)
-                JournalEntry.objects.filter(expense=exp).delete()
-                post_expense_to_gl(exp)
                 return redirect("expenses:expense-detail", pk=exp.pk)
 
         except Exception as e:
@@ -436,7 +428,7 @@ def expense_edit(request, pk: int):
         "expense": exp,
         "accounts": Account.objects.all().order_by("account_name"),
         "expense_accounts": Account.objects.filter(account_type__in=[
-            "EXPENSE", "OTHER_EXPENSE", "COST_OF_SALES", "Expense", "Other Expenses", "Cost of Sales"
+            "Expense", "Other expense", "Cost of sales", "Expense", "Other Expense", "Cost of Sales"
         ]).order_by("account_name"),
         "products": Product.objects.all().order_by("name"),
         "customers": Newcustomer.objects.all().order_by("customer_name"),
@@ -496,7 +488,7 @@ def generate_unique_bill_no():
 @transaction.atomic
 def add_bill(request):
     if request.method == "POST":
-        try:
+      
             # ---------- Header ----------
             supplier_id      = request.POST.get("supplier_id") or ""   # from <select name="supplier_id">
             supplier_name    = request.POST.get("supplier") or ""      # optional text fallback if you keep it
@@ -599,25 +591,21 @@ def add_bill(request):
             if total <= 0:
                 # undo header if nothing valid was entered
                 bill.delete()
-                messages.error(request, "No valid lines to save on this Bill.")
                 return redirect("expenses:add-bill")
 
             bill.total_amount = total
             bill.save(update_fields=["total_amount"])
-
-            # ---------- Post to GL (DR expenses / CR A/P) ----------
-            post_bill_to_ledger(bill)
-
             # Redirect options
             action = request.POST.get("save_action") or "save"
+            if action == "save":
+                
+                return redirect("expenses:bills-list")
             if action == "save&new":
-                messages.success(request, "Bill saved.")
+                
                 return redirect("expenses:add-bill")
-            messages.success(request, "Bill saved.")
             return redirect("expenses:bills-list")
 
-        except Exception as e:
-            messages.error(request, f"Could not save bill: {e}")
+        
 
     # GET: choices
     context = {
@@ -647,7 +635,7 @@ def edit_bill(request, pk: int):
     )
 
     if request.method == "POST":
-        try:
+            
             # ---------- Header ----------
             supplier_id      = request.POST.get("supplier_id") or ""
             supplier_manual  = request.POST.get("supplier") or ""
@@ -752,37 +740,17 @@ def edit_bill(request, pk: int):
                 total += amt
 
             if total <= 0:
-                messages.error(request, "No valid lines found; bill not updated.")
+                
                 return redirect("expenses:bill-edit", pk=bill.pk)
 
             bill.total_amount = total
             bill.save(update_fields=["total_amount"])
 
-            # ---------- Re-post to GL ----------
-            # If your Bill model has a FK to JournalEntry (recommended):
-            if hasattr(bill, "journal_entry_id") and bill.journal_entry_id:
-                old = JournalEntry.objects.filter(pk=bill.journal_entry_id).first()
-                if old:
-                    old.lines.all().delete()
-                    old.delete()
-                bill.journal_entry = None
-                bill.save(update_fields=["journal_entry"])
-
-            je = post_bill_to_ledger(bill)
-
-            if hasattr(bill, "journal_entry"):
-                bill.journal_entry = je
-                bill.save(update_fields=["journal_entry"])
-
-            messages.success(request, "Bill updated.")
+            # save actions
             action = request.POST.get("save_action") or "save"
             if action == "save&new":
                 return redirect("expenses:add-bill")
             return redirect("expenses:bills-list")
-
-        except Exception as e:
-            messages.error(request, f"Could not update bill: {e}")
-
     # ---------- GET (prefill) ----------
     context = {
         "bill": bill,
@@ -933,7 +901,6 @@ def generate_unique_cheque_no():
 
 def add_cheque(request):
     if request.method == "POST":
-        try:
             with transaction.atomic():
                 supplier_id     = request.POST.get("payee_supplier") or ""
                 payee_name      = request.POST.get("payee_name") or ""
@@ -1028,16 +995,12 @@ def add_cheque(request):
                 chq.total_amount = total
                 chq.save(update_fields=["total_amount"])
 
-                # post to GL: DR expenses, CR bank
-                post_cheque_to_ledger(chq)
-
-                messages.success(request, "Cheque saved.")
                 action = request.POST.get("save_action") or "save"
+                if action == "save":
+                    return redirect("expenses:expenses")
                 if action == "save&new":
                     return redirect("expenses:add-cheque")
                 return redirect("expenses:expenses")
-        except Exception as e:
-            messages.error(request, f"Could not save cheque: {e}")
 
     context = {
     "suppliers": Newsupplier.objects.all().order_by("company_name"),

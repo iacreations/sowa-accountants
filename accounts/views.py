@@ -1,100 +1,56 @@
-# chart_of_accounts/views.py
-from django.shortcuts import render, redirect,get_object_or_404
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+import csv
+from collections import OrderedDict
+from django.core.paginator import Paginator
+from decimal import Decimal
 import json
-import re
-from django.db.models import Sum, Value, DecimalField
-from decimal import Decimal
-from django.utils.timezone import make_naive
-from django.db.models.functions import Coalesce
-from .models import Account,ColumnPreference
-from collections import defaultdict
-from .models import JournalEntry, JournalLine
-from django.utils import timezone
-from decimal import Decimal
-from datetime import timedelta
-from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Sum, F, Value
-from django.db.models.functions import Coalesce
-from django.contrib.auth.decorators import login_required
+from datetime import datetime
+from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
-from sowa_settings.models import CompanySettings,Currency
+from django.db.models import Sum, Value, DecimalField
+from django.db.models.functions import Coalesce
+from django.urls import reverse
+from django.http import HttpResponse,Http404
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+from django.shortcuts import render, redirect, get_object_or_404
+from django.utils import timezone
+from .models import Account, ColumnPreference, JournalEntry, JournalLine
 
-# my views
 
-
-
+# default visible columns (match the checkboxes in the template)
 DEFAULT_ACCOUNTS_COL_PREFS = {
     "account_name": True,
     "opening_balance": True,
     "as_of": True,
     "account_number": True,
-    "account_type": True,
     "detail_type": True,
     "description": True,
-    "actions": True,  # keep actions togglable too
+    "actions": True,
 }
 
-# working on the structured approach
-# === Level 1 mapping for Chart of Accounts ============================
+# fixed 5 Level-1 sections
 LEVEL1_ORDER = [
     "Assets",
     "Equity",
     "Liabilities",
     "Income",
-    "Cost of Goods Sold",
-    "Expense",
+    "Expenses",
 ]
 
-ACCOUNT_TYPE_TO_LEVEL1 = {
-    # Assets
-    "asset": "Assets",
-    "assets": "Assets",
-    "current assets": "Assets",
-    "non-current assets": "Assets",
-    "fixed assets": "Assets",
-    "cash and cash equivalents": "Assets",
-    "accounts receivable": "Assets",
-    "inventory": "Assets",
-
-    # Liabilities
-    "liability": "Liabilities",
-    "liabilities": "Liabilities",
-    "current liabilities": "Liabilities",
-    "non-current liabilities": "Liabilities",
-    "loans": "Liabilities",
-
-    # Equity
-    "equity": "Equity",
-    "owner's equity": "Equity",
-    "owners equity": "Equity",
-    "share capital": "Equity",
-
-    # Income
-    "income": "Income",
-    "sales": "Income",
-    "revenue": "Income",
-    "other income": "Other Income",
-
-    # COGS
-    "cost of goods sold": "Cost of Goods Sold",
-
-    # Expenses
-    "expense": "Expenses",
-    "expenses": "Expenses",
-    "operating expenses": "Expenses",
-    "other expense": "Other Expense",
-    
-}
-
+CASH_DETAIL_TYPES = [
+    "Cash and Cash equivalents",
+    # later you can add:
+    # "Petty Cash",
+    # "Bank current account",
+    # "Mobile Money",
+]
 @login_required
 def accounts(request):
     status = request.GET.get("status", "active")  # default is active
 
     base_qs = Account.objects.all()
 
-    # --- status filter for this view ---
+    # status filter
     if status == "inactive":
         qs = base_qs.filter(is_active=False)
     elif status == "all":
@@ -104,44 +60,25 @@ def accounts(request):
 
     qs = qs.select_related("parent").order_by("account_type", "account_name")
 
-    # --- group accounts into Level 1 buckets using backend mapping ---
+    # group into 5 Level-1 buckets using model property
     grouped = {label: [] for label in LEVEL1_ORDER}
 
     for acc in qs:
-        raw_type = (acc.account_type or "").strip().lower()
-
-        level1 = ACCOUNT_TYPE_TO_LEVEL1.get(raw_type)
-
-        # Fallbacks if someone creates weird/custom types
-        if not level1:
-            if "income" in raw_type:
-                level1 = "Income"
-            elif "cost of goods" in raw_type or "cogs" in raw_type:
-                level1 = "Cost of Goods Sold"
-            elif "expense" in raw_type:
-                level1 = "Expenses"
-            elif "liabil" in raw_type:
-                level1 = "Liabilities"
-            elif "equity" in raw_type:
-                level1 = "Equity"
-            else:
-                level1 = "Assets"  # safe default
-
+        level1 = acc.level1_group or "Assets"  # safe default if missing
         grouped.setdefault(level1, []).append(acc)
 
-    # ordered list for the template
     level1_sections = [
         {"label": label, "accounts": grouped.get(label, [])}
         for label in LEVEL1_ORDER
     ]
 
-    # counts for badges
+    # counts for tabs
     active_count = base_qs.filter(is_active=True).count()
     inactive_count = base_qs.filter(is_active=False).count()
     all_count = base_qs.count()
 
-    # Column preferences (same logic you had)
-    if getattr(request.user, "is_authenticated", False):
+    # Column preferences
+    if request.user.is_authenticated:
         prefs, _ = ColumnPreference.objects.get_or_create(
             user=request.user,
             table_name="accounts",
@@ -151,23 +88,27 @@ def accounts(request):
     else:
         merged_prefs = DEFAULT_ACCOUNTS_COL_PREFS
 
-    return render(request, "accounts.html", {
-        "status": status,
-        "column_prefs": merged_prefs,
-        "active_count": active_count,
-        "inactive_count": inactive_count,
-        "all_count": all_count,
-        # for the table
-        "level1_sections": level1_sections,
-        # optional: still pass qs if you want
-        "coas": qs,
-    })
-# ajax to fetch the data
+    return render(
+        request,
+        "accounts.html",
+        {
+            "status": status,
+            "column_prefs": merged_prefs,
+            "active_count": active_count,
+            "inactive_count": inactive_count,
+            "all_count": all_count,
+            "level1_sections": level1_sections,
+            "coas": qs,
+        },
+    )
 
-@csrf_exempt
+
+@login_required
 def save_column_prefs(request):
     if request.method != "POST":
-        return JsonResponse({"status": "error", "detail": "POST required"}, status=400)
+        return JsonResponse(
+            {"status": "error", "detail": "POST required"}, status=400
+        )
 
     try:
         data = json.loads(request.body or "{}")
@@ -178,164 +119,457 @@ def save_column_prefs(request):
     prefs, _ = ColumnPreference.objects.get_or_create(
         user=request.user,
         table_name="accounts",
+        defaults={"preferences": DEFAULT_ACCOUNTS_COL_PREFS},
     )
-    # also ensure unknown keys don’t sneak in (optional)
-    cleaned = {k: bool(preferences.get(k, True)) for k in DEFAULT_ACCOUNTS_COL_PREFS.keys()}
+
+    # ensure only known keys are saved
+    cleaned = {
+        k: bool(preferences.get(k, True)) for k in DEFAULT_ACCOUNTS_COL_PREFS.keys()
+    }
+
     prefs.preferences = cleaned
     prefs.save()
     return JsonResponse({"status": "ok"})
-# add account view
-def add_account(request):
 
+# ading an account in the coa
+@login_required
+def add_account(request):
     if request.method == "POST":
         account_name = request.POST.get("account_name")
         account_number = request.POST.get("account_number")
-        account_type = request.POST.get("account_type")
+        account_type = request.POST.get("account_type")  # code from select
         detail_type = request.POST.get("detail_type")
-        tax_category = request.POST.get("tax_category")  # NEW FIELD
+        tax_category = request.POST.get("tax_category")
         is_subaccount = request.POST.get("is_subaccount") == "on"
 
-        parent_id = request.POST.get("parent")
         parent = None
+        parent_id = request.POST.get("parent")
         if is_subaccount and parent_id:
             parent = Account.objects.filter(id=parent_id).first()
 
-        opening_balance = request.POST.get("opening_balance") or 0
-        as_of = request.POST.get("as_of") or timezone.now().date()
+        opening_balance_str = request.POST.get("opening_balance") or "0"
+        try:
+            opening_balance = Decimal(opening_balance_str)
+        except Exception:
+            opening_balance = Decimal("0")
+
+        as_of_str = request.POST.get("as_of")
+        as_of = as_of_str or timezone.now().date()
+
         description = request.POST.get("description")
 
+        # 1) Save the account
         new_account = Account(
             account_name=account_name,
             account_number=account_number,
             account_type=account_type,
             detail_type=detail_type,
-            tax_category=tax_category,   # SAVE NEW FIELD
+            tax_category=tax_category,
             is_subaccount=is_subaccount,
             parent=parent,
             opening_balance=opening_balance,
             as_of=as_of,
-            description=description
+            description=description,
         )
         new_account.save()
 
-        save_action = request.POST.get('save_action')
-        if save_action == 'save&new':
-            return redirect('accounts:add-account')
-        elif save_action == 'save&close':
-            return redirect('accounts:accounts')
+        # 2) If opening balance & balance-sheet account, create Journal Entry
+        if opening_balance != 0:
+            level1 = new_account.level1_group  # Assets / Liabilities / Equity / Income / Expenses
+
+            if level1 in ["Assets", "Liabilities", "Equity"]:
+                # Get or create the special "Opening Balance Equity" account
+                opening_equity_acct, _ = Account.objects.get_or_create(
+                    account_name="Opening Balance Equity",
+                    account_type="OWNER_EQUITY",  # equity type
+                    defaults={
+                        "detail_type": "Opening balances",
+                        "is_active": True,
+                    },
+                )
+
+                # Create Journal Entry
+                je = JournalEntry.objects.create(
+                    date=as_of,
+                    description=f"Opening balance for {new_account.account_name}",
+                    source_type="OPENING_BALANCE",
+                    source_id=new_account.id,
+                )
+
+                amount = abs(opening_balance)
+
+                # Assets normally have debit balance, Liabilities/Equity normally credit
+                if level1 == "Assets":
+                    # Debit the asset account, Credit Opening Balance Equity
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=new_account,
+                        debit=amount,
+                        credit=Decimal("0"),
+                    )
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=opening_equity_acct,
+                        debit=Decimal("0"),
+                        credit=amount,
+                    )
+                else:
+                    # Liabilities & Equity: Credit account, Debit Opening Balance Equity
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=new_account,
+                        debit=Decimal("0"),
+                        credit=amount,
+                    )
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=opening_equity_acct,
+                        debit=amount,
+                        credit=Decimal("0"),
+                    )
+
+        # 3) Redirect as before
+        save_action = request.POST.get("save_action")
+        if save_action == "save&new":
+            return redirect("accounts:add-account")
+        elif save_action == "save&close":
+            return redirect("accounts:accounts")
 
         return redirect("accounts:accounts")
 
     parents = Account.objects.all()
     return render(request, "coa_form.html", {"parents": parents})
-
-
+# working on the activate and make inactive 
+@login_required
 def deactivate_account(request, pk):
     coa = get_object_or_404(Account, pk=pk)
     coa.is_active = False
     coa.save()
-    return redirect('accounts:accounts')  # your list view
+    return redirect("accounts:accounts")
 
+
+@login_required
 def activate_account(request, pk):
     coa = get_object_or_404(Account, pk=pk)
     coa.is_active = True
     coa.save()
-    return redirect('accounts:accounts')
+    return redirect("accounts:accounts")
 
-# working on the COA calcs
+# the general ledger logic
+# making the general ledger rows linkable
+def get_entry_link(entry):
+    """
+    Map a JournalEntry to a URL where the transaction was created.
+    Adjust reverse(...) names to match your actual URLs.
+    """
+    # Opening balances from the Chart of Accounts form
+    if entry.source_type == "OPENING_BALANCE":
+        # Example: maybe later you have an account edit page
+        # return reverse("accounts:edit-account", args=[entry.source_id])
+        return reverse("accounts:accounts")  # for now, send them to COA
+
+    # Example mappings – adjust to your app structure
+    if entry.source_type == "INVOICE":
+        return reverse("sales:invoice-detail", args=[entry.source_id])
+
+    if entry.source_type == "BILL":
+        return reverse("expenses:bill-detail", args=[entry.source_id])
+
+    # Fallback: maybe a generic journal entry detail view (you can add later)
+    try:
+        return reverse("accounts:journal-entry-detail", args=[entry.id])
+    except:
+        return "#"
+ 
+
 @login_required
-def journal_list(request):
+def general_ledger(request):
+    # filters
+    account_id = request.GET.get("account_id")
+    query      = request.GET.get("search", "")
+    date_from  = request.GET.get("date_from")
+    date_to    = request.GET.get("date_to")
+    export     = request.GET.get("export")     # 'excel' or None
+    page_num   = request.GET.get("page", 1)
+
+    accounts = Account.objects.filter(is_active=True).order_by("account_name")
+
+    # base filtered queryset
+    lines_qs = JournalLine.objects.select_related("entry", "account").order_by(
+        "entry__date",
+        "id"
+    )
+
+    if account_id:
+        lines_qs = lines_qs.filter(account_id=account_id)
+
+    if date_from:
+        lines_qs = lines_qs.filter(entry__date__gte=date_from)
+    if date_to:
+        lines_qs = lines_qs.filter(entry__date__lte=date_to)
+
+    if query:
+        lines_qs = lines_qs.filter(
+            Q(entry__description__icontains=query) |
+            Q(account__account_name__icontains=query)
+        )
+
+    # evaluate once so we can paginate & also compute monthly totals
+    all_lines = list(lines_qs)
+
+    # ====== EXPORT TO EXCEL (CSV) ======
+    if export == "excel":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="general_ledger.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(["Date", "Description", "Account", "Journal Ref", "Debit", "Credit", "Balance"])
+
+        balance = Decimal("0")
+
+        def normal_side(acc: Account):
+            if acc.level1_group in ["Assets", "Expenses"]:
+                return "debit"
+            return "credit"
+
+        for ln in all_lines:
+            side = normal_side(ln.account)
+            if side == "debit":
+                balance += ln.debit - ln.credit
+            else:
+                balance += ln.credit - ln.debit
+
+            writer.writerow([
+                ln.entry.date.strftime("%Y-%m-%d"),
+                ln.entry.description,
+                ln.account.account_name,
+                ln.entry.id,
+                float(ln.debit),
+                float(ln.credit),
+                float(balance),
+            ])
+
+        return response
+
+    # ====== MONTHLY TOTALS (for filtered data) ======
+    monthly_totals = OrderedDict()
+    for ln in all_lines:
+        key = ln.entry.date.strftime("%Y-%m")
+        label = ln.entry.date.strftime("%b %Y")
+        if key not in monthly_totals:
+            monthly_totals[key] = {"label": label, "debit": Decimal("0"), "credit": Decimal("0")}
+        monthly_totals[key]["debit"]  += ln.debit
+        monthly_totals[key]["credit"] += ln.credit
+
+    for key, mt in monthly_totals.items():
+        mt["balance"] = mt["debit"] - mt["credit"]
+
+    # ====== PAGINATION ======
+    paginator = Paginator(all_lines, 50)  # 50 lines per page
+    page_obj  = paginator.get_page(page_num)
+    page_lines = page_obj.object_list
+
+    running_rows = []
+    balance = Decimal("0")
+
+    def normal_side(acc: Account):
+        if acc.level1_group in ["Assets", "Expenses"]:
+            return "debit"
+        return "credit"
+
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+
+    for ln in page_lines:
+        side = normal_side(ln.account)
+
+        if side == "debit":
+            balance += ln.debit - ln.credit
+        else:
+            balance += ln.credit - ln.debit
+
+        total_debit += ln.debit
+        total_credit += ln.credit
+
+        running_rows.append({
+            "date": ln.entry.date,
+            "description": ln.entry.description,
+            "account": ln.account.account_name,
+            "reference": ln.entry.id,
+            "debit": ln.debit,
+            "credit": ln.credit,
+            "balance": balance,
+            "url": get_entry_link(ln.entry),
+        })
+
+    return render(request, "general_ledger.html", {
+        "accounts": accounts,
+        "rows": running_rows,
+        "page_obj": page_obj,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "total_balance": total_debit - total_credit,
+        "monthly_totals": monthly_totals.values(),
+        "query": query,
+        "account_id": account_id,
+        "date_from": date_from,
+        "date_to": date_to,
+    })
+# journel entry lists
+@login_required
+def journal_entries(request):
     entries = (
         JournalEntry.objects
-        .select_related("invoice")
         .prefetch_related("lines__account")
-        .order_by("date", "id")
+        .order_by("-date", "-id")
     )
 
-    dec0 = Value(Decimal("0.00"), output_field=DecimalField(max_digits=18, decimal_places=2))
-
-    totals = JournalLine.objects.aggregate(
-        total_debit=Coalesce(Sum("debit"), dec0),
-        total_credit=Coalesce(Sum("credit"), dec0),
+    totals = JournalLine.objects.filter(entry__in=entries).aggregate(
+        grand_debit=Sum("debit"),
+        grand_credit=Sum("credit"),
     )
 
-    return render(
-        request,
-        "journal_entries.html",
-        {
-            "entries": entries,
-            "grand_debit": totals["total_debit"],
-            "grand_credit": totals["total_credit"],
-        },
-    )
-# Generating reports
-
-# trial balance
-def _company_context():
-    """
-    Fetch company name and reporting currency from the sowa_settings app.
-    Adjust field names if your model is different.
-    """
-    settings_obj = CompanySettings.objects.first()
-    if settings_obj:
-        return {
-            "company_name": getattr(settings_obj, "company_name", "") or "",
-            "reporting_currency": getattr(settings_obj, "reporting_currency", "") or "",
-        }
-    return {
-        "company_name": "",
-        "reporting_currency": "",
+    context = {
+        "entries": entries,
+        "grand_debit": totals.get("grand_debit") or Decimal("0"),
+        "grand_credit": totals.get("grand_credit") or Decimal("0"),
     }
+    return render(request, "journal_entries.html", context)
+# journal entry detail view
+@login_required
+def journal_entry_detail(request, pk):
+    entry = (
+        JournalEntry.objects
+        .prefetch_related("lines__account")
+        .filter(pk=pk)
+        .first()
+    )
+    if not entry:
+        raise Http404("Journal entry not found")
 
-def _period(request):
-    # ?from=2025-01-01&to=2025-12-31
-    dfrom = parse_date(request.GET.get("from") or "")
-    dto   = parse_date(request.GET.get("to") or "")
-    return dfrom, dto
-
-def _get_reporting_currency():
-    code = "UGX"
-    factor = Decimal("1")
-
-    home = Currency.objects.filter(is_home=True).first()
-    if home:
-        code = home.code or code
-
-    cs = CompanySettings.objects.first()
-
-    cur = None
-    if cs:
-        rc = getattr(cs, "reporting_currency", None)
-
-        if isinstance(rc, Currency):
-            cur = rc
-        elif isinstance(rc, str) and rc:
-            cur = Currency.objects.filter(code__iexact=rc).first()
-
-    if not cur:
-        cur = home
-
-    if not cur:
-        return code, factor
-
-    code = cur.code or code
-
-    if home and cur.id == home.id:
-        return code, factor
-
-    if cur.rate_to_home and cur.rate_to_home != 0:
-        factor = Decimal("1") / cur.rate_to_home
-
-    return code, factor
+    totals = JournalLine.objects.filter(entry=entry).aggregate(
+        grand_debit=Sum("debit"),
+        grand_credit=Sum("credit"),
+    )
+     
+    context = {
+        "entries": [entry],  # reuse the same table layout
+        "grand_debit": totals.get("grand_debit") or Decimal("0"),
+        "grand_credit": totals.get("grand_credit") or Decimal("0"),
+    }
+    return render(request, "journal_entries.html", context)
+# print view 
 
 
 @login_required
-def trial_balance(request):
-    dfrom = parse_date(request.GET.get("from", "") or "")
-    dto   = parse_date(request.GET.get("to", "") or "")
+def general_ledger_print(request):
+    """
+    Clean print-friendly General Ledger view.
+    No pagination, no export, no UI – just the report.
+    """
 
-    # Reporting currency & FX factor (UGX → reporting)
-    reporting_currency, fx = _get_reporting_currency()
+    # same filters as normal GL
+    account_id = request.GET.get("account_id")
+    query      = request.GET.get("search", "")
+    date_from  = request.GET.get("date_from")
+    date_to    = request.GET.get("date_to")
+
+    selected_account = None
+    if account_id:
+        selected_account = Account.objects.filter(pk=account_id).first()
+
+    lines_qs = JournalLine.objects.select_related("entry", "account").order_by(
+        "entry__date",
+        "id"
+    )
+
+    if account_id:
+        lines_qs = lines_qs.filter(account_id=account_id)
+
+    if date_from:
+        lines_qs = lines_qs.filter(entry__date__gte=date_from)
+    if date_to:
+        lines_qs = lines_qs.filter(entry__date__lte=date_to)
+
+    if query:
+        lines_qs = lines_qs.filter(
+            Q(entry__description__icontains=query) |
+            Q(account__account_name__icontains=query)
+        )
+
+    lines = list(lines_qs)
+
+    # compute running balance + totals (no pagination here)
+    running_rows = []
+    balance = Decimal("0")
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+
+    def normal_side(acc: Account):
+        if acc.level1_group in ["Assets", "Expenses"]:
+            return "debit"
+        return "credit"
+
+    for ln in lines:
+        side = normal_side(ln.account)
+        if side == "debit":
+            balance += ln.debit - ln.credit
+        else:
+            balance += ln.credit - ln.debit
+
+        total_debit += ln.debit
+        total_credit += ln.credit
+
+        running_rows.append({
+            "date": ln.entry.date,
+            "description": ln.entry.description,
+            "account": ln.account.account_name,
+            "reference": ln.entry.id,
+            "debit": ln.debit,
+            "credit": ln.credit,
+            "balance": balance,
+        })
+
+    context = {
+        "rows": running_rows,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "total_balance": total_debit - total_credit,
+        "selected_account": selected_account,
+        "date_from": date_from,
+        "date_to": date_to,
+        "query": query,
+    }
+    return render(request, "general_ledger_print.html", context)
+
+
+
+
+
+
+
+
+# working on the reports 
+
+def _parse_range(request):
+    """
+    Helper to parse ?from=YYYY-MM-DD&to=YYYY-MM-DD from query string.
+    Returns (dfrom, dto) as date or None.
+    """
+    from_str = request.GET.get("from") or request.GET.get("date_from")
+    to_str   = request.GET.get("to") or request.GET.get("date_to")
+
+    dfrom = parse_date(from_str) if from_str else None
+    dto   = parse_date(to_str) if to_str else None
+    return dfrom, dto
+
+
+def report_trial_balance(request):
+    """
+    Trial Balance = sum of debits & credits per account over a period,
+    straight from JournalLine.
+    """
+    dfrom, dto = _parse_range(request)
 
     lines = JournalLine.objects.select_related("entry", "account")
 
@@ -344,279 +578,295 @@ def trial_balance(request):
     if dto:
         lines = lines.filter(entry__date__lte=dto)
 
+    # group by account
     agg = (
-        lines.values("account_id", "account__account_name")
-             .annotate(
-                 debit = Coalesce(Sum("debit"),  Value(Decimal("0.00"), output_field=DecimalField())),
-                 credit= Coalesce(Sum("credit"), Value(Decimal("0.00"), output_field=DecimalField())),
-             )
-             .order_by("account__account_name")
+        lines
+        .values("account_id", "account__account_name")
+        .annotate(
+            debit=Coalesce(Sum("debit"),  Value(Decimal("0.00")), output_field=DecimalField(max_digits=18, decimal_places=2)),
+            credit=Coalesce(Sum("credit"), Value(Decimal("0.00")), output_field=DecimalField(max_digits=18, decimal_places=2)),
+        )
+        .order_by("account__account_name")
     )
 
     rows = []
-    total_debit = total_credit = Decimal("0.00")
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
 
     for r in agg:
-        # Original amounts in HOME currency (UGX)
-        d_home = r["debit"]  or Decimal("0")
-        c_home = r["credit"] or Decimal("0")
-
-        # Convert to reporting currency
-        d = d_home * fx
-        c = c_home * fx
-
-        total_debit  += d
-        total_credit += c
+        d = r["debit"] or Decimal("0.00")
+        c = r["credit"] or Decimal("0.00")
 
         rows.append({
-            "account": r["account__account_name"] or "—",
+            "account_id": r["account_id"],
+            "account": r["account__account_name"],
             "debit": d,
             "credit": c,
         })
+        total_debit += d
+        total_credit += c
 
-    return render(request, "trial_balance.html", {
+    context = {
+        "company_name": "YoAccountant",  # or pull from a Company model if you have one
+        "reporting_currency": "UGX",      # adjust if you store this elsewhere
         "rows": rows,
         "total_debit": total_debit,
         "total_credit": total_credit,
         "dfrom": dfrom,
         "dto": dto,
-        "reporting_currency": reporting_currency,
-    })
-# working on the profits and losses
+    }
+    return render(request, "trial_balance.html", context)
+# profit and loss
 
-INCOME_TYPES  = {"income", "other income"}
-EXPENSE_TYPES = {"expense", "other expense", "cost of goods sold"}
-
-
-def _apply_entry_date_range(qs, dfrom, dto):
-    """
-    Apply date range to JournalLine queryset by discovering the
-    correct date field on the related JournalEntry (e.g. 'entry_date' or 'date').
-    """
-    EntryModel = qs.model._meta.get_field("entry").remote_field.model
-    date_field_name = "entry_date"
-    try:
-        EntryModel._meta.get_field("entry_date")
-    except FieldDoesNotExist:
-        date_field_name = "date"
-
-    if dfrom:
-        qs = qs.filter(**{f"entry__{date_field_name}__gte": dfrom})
-    if dto:
-        qs = qs.filter(**{f"entry__{date_field_name}__lte": dto})
-    return qs
-
-@login_required
 def report_pnl(request):
-    dfrom, dto = _period(request)
+    # ---------- 1. Parse date filters ----------
+    dfrom_raw = request.GET.get("from")
+    dto_raw   = request.GET.get("to")
 
-    lines = JournalLine.objects.select_related("account", "entry")
-    lines = _apply_entry_date_range(lines, dfrom, dto)
+    date_from = None
+    date_to   = None
 
-    agg = (
-        lines
-        .values("account_id", "account__account_name", "account__account_type")
-        .annotate(
-            deb=Coalesce(Sum("debit"),  Value(Decimal("0.00"))),
-            cre=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
-        )
-        .order_by("account__account_name")
+    try:
+        if dfrom_raw:
+            date_from = datetime.strptime(dfrom_raw, "%Y-%m-%d").date()
+        if dto_raw:
+            date_to = datetime.strptime(dto_raw, "%Y-%m-%d").date()
+    except ValueError:
+        date_from = None
+        date_to   = None
+
+    # ---------- 2. Base queryset from journal lines ----------
+    jl = JournalLine.objects.select_related("account", "entry")
+
+    if date_from:
+        jl = jl.filter(entry__date__gte=date_from)
+    if date_to:
+        jl = jl.filter(entry__date__lte=date_to)
+
+    # Only accounts that actually have postings in this period
+    accounts = (
+        Account.objects
+        .filter(journalline__in=jl)
+        .distinct()
     )
 
-    # basic IFRS buckets (Operating section)
+    # ---------- 3. Helper: classify accounts into P&L buckets ----------
+    def classify_account(acc: Account) -> str | None:
+        """
+        Returns 'income', 'cogs', 'expense', or None (ignore).
+        Uses flexible matching on account_type/detail_type text.
+        """
+        atype = (acc.account_type or "").lower()
+        detail = (getattr(acc, "detail_type", "") or "").lower()
+
+        text = atype + " " + detail
+
+        if "income" in text or "revenue" in text:
+            return "income"
+
+        if "cogs" in text or "cost of goods" in text or "cost of sales" in text:
+            return "cogs"
+
+        if "expense" in text or "operating expense" in text or "admin expense" in text:
+            return "expense"
+
+        return None  # non-P&L accounts (assets, liabilities, equity, etc.)
+
+    # ---------- 4. Build buckets ----------
     buckets = {
-        "income": [],   # Revenue
-        "cogs":   [],   # Cost of goods sold
-        "expense": []   # Operating expenses
+        "income": [],
+        "cogs": [],
+        "expense": [],
     }
     totals = {
-        "income": Decimal("0"),
-        "cogs":   Decimal("0"),
-        "expense": Decimal("0"),
+        "income": Decimal("0.00"),
+        "cogs": Decimal("0.00"),
+        "expense": Decimal("0.00"),
     }
 
-    for a in agg:
-        t = (a["account__account_type"] or "").lower()
-        rev_like = a["cre"] - a["deb"]   # revenue positive
-        exp_like = a["deb"] - a["cre"]   # costs positive
+    for acc in accounts:
+        bucket = classify_account(acc)
+        if not bucket:
+            continue
 
-        if t in INCOME_TYPES:
-            buckets["income"].append((a["account__account_name"], rev_like))
-            totals["income"] += rev_like
-        elif t == "cost of goods sold":
-            buckets["cogs"].append((a["account__account_name"], exp_like))
-            totals["cogs"] += exp_like
-        elif t in EXPENSE_TYPES:
-            buckets["expense"].append((a["account__account_name"], exp_like))
-            totals["expense"] += exp_like
+        agg = jl.filter(account=acc).aggregate(
+            debit=Sum("debit"),
+            credit=Sum("credit"),
+        )
+        debit = agg["debit"] or Decimal("0.00")
+        credit = agg["credit"] or Decimal("0.00")
 
-    # IFRS subtotals
+        # Income accounts: normally credit balance → credit - debit
+        # Expense / COGS: normally debit balance → debit - credit
+        if bucket == "income":
+            amount = credit - debit
+        else:  # 'expense' or 'cogs'
+            amount = debit - credit
+
+        if amount == 0:
+            continue
+
+        buckets[bucket].append({
+            "account": acc.account_name,
+            "account_id": acc.id,
+            "amount": amount,
+        })
+        totals[bucket] += amount
+
+    # ---------- 5. High-level totals ----------
     gross_profit = totals["income"] - totals["cogs"]
     operating_profit = gross_profit - totals["expense"]
 
-    # for now we don't yet split investing / financing / tax,
-    # so these are equal to operating_profit
-    profit_before_financing_tax = operating_profit
-    profit_before_income_tax = operating_profit
-    net_profit = profit_before_income_tax
+    net_profit = operating_profit  # no financing/tax splits yet
 
-    ctx = {
+    context = {
+        "company_name": "YoAccountant",
+        "reporting_currency": "UGX",
+
         "buckets": buckets,
         "totals": totals,
         "gross_profit": gross_profit,
         "operating_profit": operating_profit,
-        "profit_before_financing_tax": profit_before_financing_tax,
-        "profit_before_income_tax": profit_before_income_tax,
+        "profit_before_financing_tax": operating_profit,
+        "profit_before_income_tax": operating_profit,
         "net_profit": net_profit,
-        "dfrom": dfrom,
-        "dto": dto,
+
+        "dfrom": date_from,
+        "dto": date_to,
     }
-    ctx.update(_company_context())  # gives company_name, reporting_currency, etc.
-    return render(request, "pnl.html", ctx)# working on the balance sheet
-# P&L type sets used ONLY for retained earnings on the Balance Sheet
-INCOME_TYPES  = {"income", "other income"}
-EXPENSE_TYPES = {"expense", "other expense", "cost of goods sold"}
 
-ASSET_CURRENT_TYPES = {
-    "bank", "cash and cash equivalents", "current asset",
-    "accounts receivable", "inventory", "prepaid expense", "other current assets",
-}
-ASSET_NONCURRENT_TYPES = {
-    "fixed asset", "non-current asset", "other asset",
-    "depletable assets", "land", "buildings", "machinery and equipment",
-}
+    return render(request, "pnl.html", context)
 
-LIAB_CURRENT_TYPES = {"accounts payable", "current liability", "other current liabilities"}
-LIAB_NONCURRENT_TYPES = {"non-current liability", "long term liability", "other non-current liabilities"}
-EQUITY_TYPES  = {"equity", "owner's equity", "retained earnings"}
-
-
-def _period_bs(request):
+# balance sheet
+def report_balance_sheet(request):
     """
-    Small helper for Balance Sheet only, to avoid name clash with other _period.
-    We mostly care about the 'to' date (as of).
+    Balance sheet 'as of' a single date, grouped into
+    non-current/current assets & liabilities, with each
+    account clickable to the General Ledger.
     """
-    dfrom = request.GET.get("from") or None
-    dto   = request.GET.get("to") or None
-    from datetime import datetime
-    fmt = "%Y-%m-%d"
-    try:
-        dfrom = datetime.strptime(dfrom, fmt).date() if dfrom else None
-    except Exception:
-        dfrom = None
-    try:
-        dto   = datetime.strptime(dto, fmt).date() if dto else None
-    except Exception:
-        dto = None
-    return dfrom, dto
 
+    # 1) Read filters
+    to_str = request.GET.get("to")
+    method = request.GET.get("method") or "accrual"  # kept for future cash-basis logic
 
-def _apply_asof(qs, asof):
-    """
-    Filter JournalLines up to and including the 'as of' date
-    on the related JournalEntry's date field (date or entry_date).
-    """
-    if not asof:
-        return qs
+    if to_str:
+        try:
+            asof = datetime.strptime(to_str, "%Y-%m-%d").date()
+        except ValueError:
+            asof = timezone.localdate()
+    else:
+        asof = timezone.localdate()
 
-    EntryModel = qs.model._meta.get_field("entry").remote_field.model
-    date_field = "entry_date"
-    try:
-        EntryModel._meta.get_field("entry_date")
-    except FieldDoesNotExist:
-        date_field = "date"
+    # 2) All lines up to that date
+    base_lines = JournalLine.objects.filter(entry__date__lte=asof)
 
-    return qs.filter(**{f"entry__{date_field}__lte": asof})
-
-
-def _iregex_from_types(type_set):
-    import re
-    return "|".join(re.escape(t) for t in type_set)
-
-
-def _bucket_balances(lines, type_set, positive_is_debit=True):
-    """
-    Returns (rows, total) for a bucket of account types.
-    For assets: positive_is_debit=True  -> amount = debit - credit
-    For liab/equity: positive_is_debit=False -> amount = credit - debit
-    """
-    pattern = _iregex_from_types(type_set)
-    agg = (
-        lines.filter(account__account_type__iregex=pattern)
-             .values("account__account_name", "account__account_type")
-             .annotate(
-                 deb=Coalesce(Sum("debit"),  Value(Decimal("0"))),
-                 cre=Coalesce(Sum("credit"), Value(Decimal("0"))),
-             )
-             .order_by("account__account_name")
+    # 3) Aggregate per account
+    per_account = (
+        base_lines
+        .values(
+            "account_id",
+            "account__account_name",
+            "account__account_type",  # stores code like CURRENT_ASSET
+            "account__detail_type",
+        )
+        .annotate(
+            total_debit=Sum("debit"),
+            total_credit=Sum("credit"),
+        )
     )
-    rows, total = [], Decimal("0")
-    for rec in agg:
-        bal = rec["deb"] - rec["cre"]         # debit-nature balance
-        amt = bal if positive_is_debit else -bal
-        if abs(amt) < Decimal("0.005"):
+
+    # Containers for rows
+    asset_nc_rows = []
+    asset_curr_rows = []
+    eq_rows = []
+    liab_nc_rows = []
+    liab_curr_rows = []
+
+    def infer_is_current(acc_type_code: str, detail: str) -> bool:
+        """
+        Very simple heuristic to split current vs non-current.
+        """
+        detail_l = (detail or "").lower()
+
+        # default: treat as current
+        is_current_local = True
+
+        # here we just reuse your LEVEL1+LEVEL2 idea if needed
+        if "non current" in detail_l or "non-current" in detail_l:
+            is_current_local = False
+        if any(k in detail_l for k in [
+            "fixed", "property", "equipment", "long term", "long-term", "ppe"
+        ]):
+            is_current_local = False
+
+        return is_current_local
+
+    # 4) Classify accounts + compute balances
+    for row in per_account:
+        code = row["account__account_type"] or ""
+        # convert code → level1 group (Assets/Liabilities/Equity/Income/Expenses)
+        level1 = Account.ACCOUNT_LEVEL1_MAP.get(code, "")  # uses your dict
+        detail_type = row.get("account__detail_type") or ""
+
+        debit = row["total_debit"] or 0
+        credit = row["total_credit"] or 0
+        net = Decimal(debit) - Decimal(credit)  # debit-positive convention
+
+        if level1 == "Assets":
+            amount = net                    # assets are debit balances
+            is_current = infer_is_current(code, detail_type)
+            target_list = asset_curr_rows if is_current else asset_nc_rows
+
+        elif level1 == "Liabilities":
+            amount = -net                   # liabilities are credit balances
+            is_current = infer_is_current(code, detail_type)
+            target_list = liab_curr_rows if is_current else liab_nc_rows
+
+        elif level1 == "Equity":
+            amount = -net                   # equity is credit balance
+            target_list = eq_rows
+
+        else:
+            # ignore income/expense here; they flow via retained earnings
             continue
-        rows.append((rec["account__account_name"], amt))
-        total += amt
-    return rows, total
 
+        if not amount:
+            continue
 
-@login_required
-def report_bs(request):
-    """
-    Statement of Financial Position (Balance Sheet).
-    Layout:
-      - Assets (Non-current, Current)
-      - Equity & Liabilities:
-          * Equity
-          * Liabilities (Non-current, Current)
-    """
-    _, asof = _period_bs(request)
-    method = (request.GET.get("method") or "accrual").strip().lower()
-    method = "cash" if method == "cash" else "accrual"
+        target_list.append({
+            "account": row["account__account_name"],
+            "account_id": row["account_id"],
+            "amount": amount,
+        })
 
-    # Journal lines up to 'as of'
-    lines = _apply_asof(
-        JournalLine.objects.select_related("account", "entry"),
-        asof
-    )
-
-    # Assets buckets
-    asset_nc_rows,   asset_nc_total   = _bucket_balances(lines, ASSET_NONCURRENT_TYPES, positive_is_debit=True)
-    asset_curr_rows, asset_curr_total = _bucket_balances(lines, ASSET_CURRENT_TYPES,   positive_is_debit=True)
+    # 5) Totals
+    asset_nc_total = sum(r["amount"] for r in asset_nc_rows)
+    asset_curr_total = sum(r["amount"] for r in asset_curr_rows)
     asset_total = asset_nc_total + asset_curr_total
 
-    # Liabilities buckets
-    liab_nc_rows,   liab_nc_total   = _bucket_balances(lines, LIAB_NONCURRENT_TYPES, positive_is_debit=False)
-    liab_curr_rows, liab_curr_total = _bucket_balances(lines, LIAB_CURRENT_TYPES,    positive_is_debit=False)
+    liab_nc_total = sum(r["amount"] for r in liab_nc_rows)
+    liab_curr_total = sum(r["amount"] for r in liab_curr_rows)
     liab_total = liab_nc_total + liab_curr_total
 
-    # Equity bucket
-    eq_rows, eq_total = _bucket_balances(lines, EQUITY_TYPES, positive_is_debit=False)
+    eq_total = sum(r["amount"] for r in eq_rows)
 
-    # Retained earnings from cumulative P&L balances
-    inc_pattern = _iregex_from_types(INCOME_TYPES)
-    exp_pattern = _iregex_from_types(EXPENSE_TYPES)
+    # 6) Balance check
+    check_ok = round(asset_total, 2) == round(liab_total + eq_total, 2)
 
-    inc_val = (
-        lines.filter(account__account_type__iregex=inc_pattern)
-             .aggregate(v=Coalesce(Sum(F("credit") - F("debit")), Value(Decimal("0"))))["v"]
-    )
-    exp_val = (
-        lines.filter(account__account_type__iregex=exp_pattern)
-             .aggregate(v=Coalesce(Sum(F("debit") - F("credit")), Value(Decimal("0"))))["v"]
-    )
-    retained = inc_val - exp_val
+    context = {
+        "company_name": "YoAccountant",     # or pull from a Company model
+        "reporting_currency": "UGX",        # or dynamic
+        "asof": asof,
+        "method": method,
 
-    eq_rows.append(("Retained Earnings", retained))
-    eq_total = eq_total + retained
-
-    ctx = {
         "asset_nc_rows": asset_nc_rows,
         "asset_nc_total": asset_nc_total,
         "asset_curr_rows": asset_curr_rows,
         "asset_curr_total": asset_curr_total,
         "asset_total": asset_total,
+
+        "eq_rows": eq_rows,
+        "eq_total": eq_total,
 
         "liab_nc_rows": liab_nc_rows,
         "liab_nc_total": liab_nc_total,
@@ -624,145 +874,216 @@ def report_bs(request):
         "liab_curr_total": liab_curr_total,
         "liab_total": liab_total,
 
-        "eq_rows": eq_rows,
-        "eq_total": eq_total,
-
-        "asof": asof,
-        "method": method,
-        "check_ok": (asset_total == (liab_total + eq_total)),
+        "check_ok": check_ok,
     }
-    ctx.update(_company_context())
-    return render(request, "balance_sheet.html", ctx)
 
+    return render(request, "balance_sheet.html", context)
+# cash flow
 
-# working on the cashflow
-# Account type buckets
-INCOME_TYPES   = {"income", "other income"}
-EXPENSE_TYPES  = {"expense", "other expense", "cost of goods sold"}
-CASH_TYPES     = {"bank", "cash and cash equivalents"}
-AR_TYPES       = {"accounts receivable"}
-INV_TYPES      = {"inventory"}
-AP_TYPES       = {"accounts payable"}
-FIXED_ASSET_TYPES = {"fixed asset", "other asset"}
-LOAN_TYPES        = {"current liability", "long term liability"}
-EQUITY_TYPES      = {"equity"}
-
-def _entry_date_field():
-    """Detect whether JournalEntry uses entry_date or date."""
-    Entry = JournalLine._meta.get_field("entry").remote_field.model
+def _parse_date_or_none(date_str):
+    if not date_str:
+        return None
     try:
-        Entry._meta.get_field("entry_date")
-        return "entry_date"
-    except FieldDoesNotExist:
-        return "date"
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
-def _apply_period(lines, dfrom, dto):
-    """Apply range filter (inclusive) on detected entry date field."""
-    df = _entry_date_field()
-    if dfrom:
-        lines = lines.filter(**{f"entry__{df}__gte": dfrom})
-    if dto:
-        lines = lines.filter(**{f"entry__{df}__lte": dto})
-    return lines
 
-def _iregex(type_set):  # case-insensitive regex from type names (safe)
-    return "|".join(re.escape(t) for t in type_set)
+def _balance_for_accounts(accounts_qs, date_to=None, strict_lt=False):
+    """
+    Returns debit-minus-credit balance for a set of accounts
+    up to date_to (inclusive by default, or < date_to if strict_lt=True).
+    """
+    if not accounts_qs.exists():
+        return 0
 
-def _ids_by_types(type_set):
-    return list(
-        Account.objects
-        .filter(account_type__iregex=_iregex(type_set))
-        .values_list("id", flat=True)
+    lines = JournalLine.objects.filter(account__in=accounts_qs)
+    if date_to:
+        if strict_lt:
+            lines = lines.filter(entry__date__lt=date_to)
+        else:
+            lines = lines.filter(entry__date__lte=date_to)
+
+    agg = lines.aggregate(
+        d=Sum("debit"),
+        c=Sum("credit"),
     )
+    d = agg["d"] or 0
+    c = agg["c"] or 0
+    return d - c  # debit-positive convention
 
-def account_balance_asof(account_ids, asof):
-    """Debit-nature balance (debit - credit) as of <= asof."""
-    q = JournalLine.objects.filter(account_id__in=account_ids)
-    if asof:
-        df = _entry_date_field()
-        q = q.filter(**{f"entry__{df}__lte": asof})
-    agg = q.aggregate(
-        deb=Coalesce(Sum("debit"),  Value(Decimal("0"))),
-        cre=Coalesce(Sum("credit"), Value(Decimal("0")))
-    )
-    return agg["deb"] - agg["cre"]
-
-def _change_in_balance(account_ids, dfrom, dto):
-    """End balance minus balance just before the period start."""
-    start_asof = (dfrom - timedelta(days=1)) if dfrom else None
-    start_bal  = account_balance_asof(account_ids, start_asof)
-    end_bal    = account_balance_asof(account_ids, dto)
-    return end_bal - start_bal
-
-def _net_profit_for_period(dfrom, dto):
-    """Compute Net Profit for the period directly (no view calls)."""
-    lines = _apply_period(
-        JournalLine.objects.select_related("account", "entry"),
-        dfrom, dto
-    )
-    inc = (
-        lines.filter(account__account_type__iregex=_iregex(INCOME_TYPES))
-             .aggregate(v=Coalesce(Sum(F("credit") - F("debit")), Value(Decimal("0"))))["v"]
-    )
-    exp = (
-        lines.filter(account__account_type__iregex=_iregex(EXPENSE_TYPES))
-             .aggregate(v=Coalesce(Sum(F("debit") - F("credit")), Value(Decimal("0"))))["v"]
-    )
-    return inc - exp  # profit positive
-
-# ----- CASH FLOW (Indirect) -------------------------------------------
-
-@login_required
+# cashflow
 def report_cashflow(request):
-    dfrom, dto = _period(request)
+    """
+    Statement of cash flows (very simplified, indirect method),
+    with drill-down links to General Ledger for key line items.
+    """
 
-    # Net Profit
-    net_profit = _net_profit_for_period(dfrom, dto)
+    from_str = request.GET.get("from")
+    to_str = request.GET.get("to")
 
-    # Working capital changes
-    delta_ar  = _change_in_balance(_ids_by_types(AR_TYPES),  dfrom, dto)
-    delta_inv = _change_in_balance(_ids_by_types(INV_TYPES), dfrom, dto)
-    delta_ap  = _change_in_balance(_ids_by_types(AP_TYPES),  dfrom, dto)
+    dfrom = _parse_date_or_none(from_str)
+    dto = _parse_date_or_none(to_str)
 
-    cash_from_ops = (
-        net_profit
-        - delta_ar
-        - delta_inv
-        + delta_ap
+    today = timezone.localdate()
+    if not dto:
+        dto = today
+
+    start_date = dfrom
+
+    # Cash & bank accounts (all asset codes, but with 'cash' or 'bank')
+    cash_accounts = Account.objects.filter(
+        account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
+    ).filter(
+        Q(detail_type__icontains="cash") |
+        Q(detail_type__icontains="bank")
     )
 
-    # Investing
-    delta_fa = _change_in_balance(_ids_by_types(FIXED_ASSET_TYPES), dfrom, dto)
-    cash_from_investing = -delta_fa
+    # Accounts receivable
+    ar_accounts = Account.objects.filter(
+        Q(detail_type__icontains="receivable") |
+        Q(account_name__icontains="receivable")
+    )
 
-    # Financing
-    delta_loans  = _change_in_balance(_ids_by_types(LOAN_TYPES),  dfrom, dto)
-    delta_equity = _change_in_balance(_ids_by_types(EQUITY_TYPES), dfrom, dto)
+    # Inventory
+    inv_accounts = Account.objects.filter(
+        Q(detail_type__icontains="inventory") |
+        Q(account_name__icontains="inventory")
+    )
+
+    # Accounts payable
+    ap_accounts = Account.objects.filter(
+        Q(detail_type__icontains="payable") |
+        Q(account_name__icontains="payable")
+    )
+
+    # Fixed / other non-current assets (still asset codes)
+    fa_accounts = Account.objects.filter(
+        account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
+    ).filter(
+        Q(detail_type__icontains="fixed") |
+        Q(detail_type__icontains="property") |
+        Q(detail_type__icontains="equipment")
+    )
+
+    # Loans – liability codes
+    loan_accounts = Account.objects.filter(
+        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"]
+    ).filter(
+        Q(detail_type__icontains="loan") |
+        Q(account_name__icontains="loan")
+    )
+
+    # Equity – owner’s capital / retained earnings etc.
+    equity_accounts = Account.objects.filter(
+        account_type="OWNER_EQUITY"
+    )
+
+    # IDs used for GL drill-down (pick first if many)
+    cash_account_id = cash_accounts.first().id if cash_accounts.exists() else None
+    ar_account_id = ar_accounts.first().id if ar_accounts.exists() else None
+    inv_account_id = inv_accounts.first().id if inv_accounts.exists() else None
+    ap_account_id = ap_accounts.first().id if ap_accounts.exists() else None
+    fa_account_id = fa_accounts.first().id if fa_accounts.exists() else None
+    loans_account_id = loan_accounts.first().id if loan_accounts.exists() else None
+    equity_account_id = equity_accounts.first().id if equity_accounts.exists() else None
+
+    # ---------- Net profit for the period (from GL) ----------
+
+    period_lines = JournalLine.objects.all()
+    if dfrom:
+        period_lines = period_lines.filter(entry__date__gte=dfrom)
+    period_lines = period_lines.filter(entry__date__lte=dto)
+
+    # here we can still use your account_type codes:
+    income_lines = period_lines.filter(
+        account__account_type__in=["OPERATING_INCOME", "INVESTING_INCOME"]
+    )
+    expense_lines = period_lines.filter(
+        account__account_type__in=[
+            "OPERATING_EXPENSE", "INVESTING_EXPENSE",
+            "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"
+        ]
+    )
+
+    income_agg = income_lines.aggregate(d=Sum("debit"), c=Sum("credit"))
+    expense_agg = expense_lines.aggregate(d=Sum("debit"), c=Sum("credit"))
+
+    income_total = (income_agg["c"] or 0) - (income_agg["d"] or 0)      # credits - debits
+    expense_total = (expense_agg["d"] or 0) - (expense_agg["c"] or 0)   # debits - credits
+
+    net_profit = income_total - expense_total
+
+    # ---------- Opening & closing balances for key accounts ----------
+
+    if start_date:
+        cash_start   = _balance_for_accounts(cash_accounts, start_date, strict_lt=True)
+        ar_start     = _balance_for_accounts(ar_accounts, start_date, strict_lt=True)
+        inv_start    = _balance_for_accounts(inv_accounts, start_date, strict_lt=True)
+        ap_start     = _balance_for_accounts(ap_accounts, start_date, strict_lt=True)
+        fa_start     = _balance_for_accounts(fa_accounts, start_date, strict_lt=True)
+        loans_start  = _balance_for_accounts(loan_accounts, start_date, strict_lt=True)
+        equity_start = _balance_for_accounts(equity_accounts, start_date, strict_lt=True)
+    else:
+        cash_start = ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = 0
+
+    cash_end   = _balance_for_accounts(cash_accounts, dto)
+    ar_end     = _balance_for_accounts(ar_accounts, dto)
+    inv_end    = _balance_for_accounts(inv_accounts, dto)
+    ap_end     = _balance_for_accounts(ap_accounts, dto)
+    fa_end     = _balance_for_accounts(fa_accounts, dto)
+    loans_end  = _balance_for_accounts(loan_accounts, dto)
+    equity_end = _balance_for_accounts(equity_accounts, dto)
+
+    # ---------- Deltas (end - start) ----------
+
+    delta_ar     = ar_end - ar_start
+    delta_inv    = inv_end - inv_start
+    delta_ap     = ap_end - ap_start
+    delta_fa     = fa_end - fa_start
+    delta_loans  = loans_end - loans_start
+    delta_equity = equity_end - equity_start
+
+    # ---------- Cash flows ----------
+
+    cash_from_ops       = net_profit - delta_ar - delta_inv + delta_ap
+    cash_from_investing = -delta_fa
     cash_from_financing = delta_loans + delta_equity
 
     net_change = cash_from_ops + cash_from_investing + cash_from_financing
 
-    cash_ids   = _ids_by_types(CASH_TYPES)
-    cash_start = account_balance_asof(cash_ids, (dfrom - timedelta(days=1)) if dfrom else None)
-    cash_end   = account_balance_asof(cash_ids, dto)
+    recon_ok = round(cash_start + net_change, 2) == round(cash_end, 2)
 
-    ctx = {
+    context = {
+        "company_name": "YoAccountant",
+        "reporting_currency": "UGX",
         "dfrom": dfrom,
         "dto": dto,
+
         "net_profit": net_profit,
         "delta_ar": delta_ar,
         "delta_inv": delta_inv,
         "delta_ap": delta_ap,
-        "cash_from_ops": cash_from_ops,
         "delta_fa": delta_fa,
-        "cash_from_investing": cash_from_investing,
         "delta_loans": delta_loans,
         "delta_equity": delta_equity,
+
+        "cash_from_ops":       cash_from_ops,
+        "cash_from_investing": cash_from_investing,
         "cash_from_financing": cash_from_financing,
-        "net_change": net_change,
+
         "cash_start": cash_start,
+        "net_change": net_change,
         "cash_end": cash_end,
-        "recon_ok": (cash_start + net_change == cash_end),
+        "recon_ok": recon_ok,
+
+        "cash_account_id": cash_account_id,
+        "ar_account_id": ar_account_id,
+        "inv_account_id": inv_account_id,
+        "ap_account_id": ap_account_id,
+        "fa_account_id": fa_account_id,
+        "loans_account_id": loans_account_id,
+        "equity_account_id": equity_account_id,
     }
-    ctx.update(_company_context())
-    return render(request, "cashflow.html", ctx)
+
+    return render(request, "cashflow.html", context)

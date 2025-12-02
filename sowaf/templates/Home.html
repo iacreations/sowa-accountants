@@ -1,4 +1,4 @@
-analyse this html file {% load static %}
+{% load static %}
 {% include 'includes/navbar.html' %}
   <style>
     body { background:#f5fbf8; }
@@ -307,7 +307,8 @@ box-sizing: border-box;
             </div>
             <ul>
               <li><a href="{% url 'accounts:add-account' %}">Add account</a></li>
-              <!-- <li><a href="{% url 'sowaf:customers' %}">Customer List</a></li>
+              <li><a href="{% url 'accounts:general-ledger' %}">General Ledger</a></li>
+              <!-- <li><a href="{% url 'sowaf:customers' %}">Day book</a></li>
               <li><a href="{% url 'sales:add-invoice' %}">Create Invoice</a></li>
               <li><a href="{% url 'sales:invoices' %}">Invoice List</a></li> -->
             </ul>

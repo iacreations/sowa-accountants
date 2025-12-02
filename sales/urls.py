@@ -24,7 +24,7 @@ urlpatterns = [
     
     # payment links 
     path("payments/<int:pk>/", views.payment_detail, name="payment-detail"),
-   path("payments/<int:pk>/edit/", views.payment_edit, name="payment-edit"),
+    path("payments/<int:pk>/edit/", views.payment_edit, name="payment-edit"),
     path("sales/payments/", views.payments_list, name="payments_list"),
     path('sales/receive/payment', views.receive_payment_view, name='receive-payment'),
     path("add-class-ajax/", views.add_class_ajax, name="add_class_ajax"),

@@ -46,20 +46,13 @@
                   <span class="navlink">Accounts</span>
                 </a>
               </li>  
-               <li class="item">
-                <a href="#" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class='bx bxs-pie-chart-alt-2' ></i>
-                  </span>
-                  <span class="navlink">Insights</span>
-                </a>
-              </li>
+             
               <li class="item">
-                <a href="{% url 'accounts:journal_entries' %}" class="nav_link">
+                <a href="{% url 'accounts:journal-entries' %}" class="nav_link">
                   <span class="navlink_icon">
                     <i class='bx bx-book'></i>
                   </span>
-                  <span class="navlink">Journal Entries</span>
+                  <span class="navlink">Day Book</span>
                 </a>
               </li>
             </ul>
@@ -98,7 +91,7 @@
                 </a>
               </li>
               <li class="item">
-                <a href="{% url 'accounts:report-bs' %}" class="nav_link">
+                <a href="{% url 'accounts:report-balance-sheet' %}" class="nav_link">
                   <span class="navlink_icon">
                    <i class='bx bx-spreadsheet'></i>
                   </span>
@@ -106,7 +99,7 @@
                 </a>
               </li>
               <li class="item">
-                <a href="{% url 'accounts:cashflow' %}" class="nav_link">
+                <a href="{% url 'accounts:report-cashflow' %}" class="nav_link">
                   <span class="navlink_icon">
                    <i class='bx bx-money-withdraw'></i>
                   </span>
@@ -236,14 +229,7 @@
               <span class="navlink">Clients</span>
             </a>
           </li>
-          <li class="item">
-            <a href="{% url 'sowaf:customers' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bx-user-voice'></i>
-              </span>
-              <span class="navlink">Customers</span>
-            </a>
-          </li>
+          
           <li class="item">
             <a href="{% url 'sowaf:suppliers' %}" class="nav_link">
               <span class="navlink_icon">

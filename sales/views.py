@@ -28,10 +28,382 @@ from django.http import JsonResponse
 from django.db.models import Sum, F, Value
 from django.utils.dateparse import parse_date
 from inventory.models import Product,Pclass
-from accounts.models import Account
-from .services import post_invoice, post_payment,post_sales_receipt, generate_unique_ref_no, parse_date_flexible, status_for_invoice, _payment_prefill_rows, _delete_existing_payment_journal_entries,_coerce_decimal, delete_sales_receipt_journal
+from accounts.models import Account, JournalEntry, JournalLine
+from .services import generate_unique_ref_no, parse_date_flexible, status_for_invoice, _payment_prefill_rows,_coerce_decimal
+from accounts.utils import deposit_accounts_qs
+from collections import defaultdict
 
+def _find_control_account(detail_type=None, name_contains=None):
+    """
+    Helper to locate control accounts like A/R, VAT, Sales.
+    Tries detail_type first, then name_contains.
+    """
+    qs = Account.objects.filter(is_active=True)
 
+    if detail_type:
+        acc = qs.filter(detail_type__iexact=detail_type).first()
+        if acc:
+            return acc
+
+    if name_contains:
+        acc = qs.filter(account_name__icontains=name_contains).first()
+        if acc:
+            return acc
+
+    return None
+
+# posting invoice to general ledger
+
+def _post_invoice_to_ledger(invoice: Newinvoice):
+    """
+    Create / replace the journal entry for a given invoice.
+
+    Pattern:
+      DR Accounts Receivable
+      CR Revenue (by product.income_account)
+      CR VAT Payable (if VAT exists)
+    """
+
+    total_due = Decimal(str(invoice.total_due or "0"))
+    if total_due == 0:
+        # If invoice is zero, remove any journal that might exist
+        JournalEntry.objects.filter(
+            source_type="invoice",
+            source_id=invoice.id
+        ).delete()
+        return
+
+    # 1) Remove any previous journal for this invoice (for edits)
+    JournalEntry.objects.filter(
+        source_type="invoice",
+        source_id=invoice.id
+    ).delete()
+
+    # 2) Collect revenue per income account + VAT total
+    revenue_by_account = defaultdict(lambda: Decimal("0.00"))
+    vat_total = Decimal("0.00")
+
+    # default income account if product has no income_account set
+    default_income_acc = (
+        _find_control_account(name_contains="Sales")
+        or _find_control_account(name_contains="Revenue")
+    )
+
+    items = invoice.items.select_related("product").all()
+    for line in items:
+        line_amount   = Decimal(str(line.amount or "0"))
+        line_discount = Decimal(str(line.discount_amount or "0"))
+        net_amount    = line_amount - line_discount
+        if net_amount < 0:
+            net_amount = Decimal("0.00")
+
+        prod = line.product
+        income_acc = None
+        if prod:
+            # this matches your product form: product.income_account
+            income_acc = getattr(prod, "income_account", None)
+
+        if not income_acc:
+            income_acc = default_income_acc
+
+        if income_acc and net_amount > 0:
+            revenue_by_account[income_acc] += net_amount
+
+        vat_total += Decimal(str(line.vat or "0"))
+
+    # Treat shipping as extra revenue on the default income account (for now)
+    shipping_fee = Decimal(str(invoice.shipping_fee or "0"))
+    if shipping_fee > 0 and default_income_acc:
+        revenue_by_account[default_income_acc] += shipping_fee
+
+    # 3) Determine A/R & VAT accounts
+    ar_account = (
+        _find_control_account(detail_type="Accounts Receivable (A/R)")
+        or _find_control_account(name_contains="receivable")
+    )
+    vat_account = (
+        _find_control_account(name_contains="VAT")  # e.g. "VAT Payable", "Output VAT"
+    )
+
+    # If we really don't find A/R, quietly skip posting to avoid bad GL
+    if not ar_account:
+        return
+
+    # 4) Create JournalEntry
+    entry_date = invoice.date_created or timezone.now().date()
+    bits = [f"Invoice {invoice.id:04d}"]
+    if invoice.customer_id and getattr(invoice.customer, "customer_name", None):
+        bits.append(f"– {invoice.customer.customer_name}")
+    description = " ".join(bits)
+
+    entry = JournalEntry.objects.create(
+        date=entry_date,
+        description=description,
+        source_type="invoice",
+        source_id=invoice.id,
+    )
+
+    # 5) Lines
+    # DR A/R
+    JournalLine.objects.create(
+        entry=entry,
+        account=ar_account,
+        debit=total_due,
+        credit=Decimal("0.00"),
+    )
+
+    # CR Revenue (per income account)
+    for acc, amt in revenue_by_account.items():
+        if not acc or amt <= 0:
+            continue
+        JournalLine.objects.create(
+            entry=entry,
+            account=acc,
+            debit=Decimal("0.00"),
+            credit=amt,
+        )
+
+    # CR VAT
+    if vat_total > 0 and vat_account:
+        JournalLine.objects.create(
+            entry=entry,
+            account=vat_account,
+            debit=Decimal("0.00"),
+            credit=vat_total,
+        )
+
+# posting for payments
+
+def _post_payment_to_ledger(payment: Payment):
+    """
+    Create / replace the journal entry for a given customer payment.
+
+    Pattern:
+      DR Bank/Cash (deposit_to)
+      CR Accounts Receivable
+    """
+
+    # 1) Total applied amount on this payment
+    agg = (
+        PaymentInvoice.objects
+        .filter(payment=payment)
+        .aggregate(
+            total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00")))
+        )
+    )
+    total_applied = agg["total"] or Decimal("0.00")
+
+    # If nothing applied, remove any old journal and exit
+    if total_applied <= 0:
+        JournalEntry.objects.filter(
+            source_type="payment",
+            source_id=payment.id
+        ).delete()
+        return
+
+    # 2) Remove previous JE for this payment (for edits)
+    JournalEntry.objects.filter(
+        source_type="payment",
+        source_id=payment.id
+    ).delete()
+
+    # 3) Find AR & deposit_to account
+    ar_account = (
+        _find_control_account(detail_type="Accounts Receivable (A/R)")
+        or _find_control_account(name_contains="receivable")
+    )
+    deposit_acc = payment.deposit_to
+
+    # If critical accounts are missing, fail silently to avoid corrupt GL
+    if not ar_account or not deposit_acc:
+        return
+
+    # 4) Create JournalEntry
+    entry_date = payment.payment_date or timezone.localdate()
+
+    bits = [f"Payment {payment.id:04d}"]
+    if payment.customer_id and getattr(payment.customer, "customer_name", None):
+        bits.append(f"– {payment.customer.customer_name}")
+    if payment.reference_no:
+        bits.append(f"(Ref {payment.reference_no})")
+
+    description = " ".join(bits)
+
+    entry = JournalEntry.objects.create(
+        date=entry_date,
+        description=description,
+        source_type="payment",
+        source_id=payment.id,
+    )
+
+    # 5) Lines
+    # DR Bank / Cash
+    JournalLine.objects.create(
+        entry=entry,
+        account=deposit_acc,
+        debit=total_applied,
+        credit=Decimal("0.00"),
+    )
+
+    # CR Accounts Receivable
+    JournalLine.objects.create(
+        entry=entry,
+        account=ar_account,
+        debit=Decimal("0.00"),
+        credit=total_applied,
+    )
+
+    from collections import defaultdict
+from decimal import Decimal
+from django.utils import timezone
+from django.db.models.functions import Coalesce
+from django.db.models import Sum, F, Value
+
+# ...
+
+def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
+    """
+    Create / replace the journal entry for a given sales receipt.
+
+    Pattern (cash sale):
+      DR Bank / Cash (deposit_to)          — amount_paid
+      DR Accounts Receivable (optional)    — balance (if > 0)
+      CR Revenue (per product.income_account, incl. shipping - discount)
+      CR VAT Payable (if VAT exists)
+
+    Debit total = Credit total = receipt.total_amount
+    """
+
+    total_amount = Decimal(str(receipt.total_amount or "0"))
+    amount_paid  = Decimal(str(receipt.amount_paid or "0"))
+    balance      = Decimal(str(receipt.balance or "0"))
+
+    # If there is effectively no amount, clear any existing JE and exit
+    if total_amount <= 0 and amount_paid <= 0 and balance <= 0:
+        JournalEntry.objects.filter(
+            source_type="sales_receipt",
+            source_id=receipt.id
+        ).delete()
+        return
+
+    # Safety: keep balance consistent with total & paid
+    if balance < 0:
+        balance = Decimal("0.00")
+    if total_amount != (amount_paid + balance):
+        # If mismatch, recompute balance from total & paid
+        balance = max(total_amount - amount_paid, Decimal("0.00"))
+
+    # Remove any previous journal for this receipt (for edits)
+    JournalEntry.objects.filter(
+        source_type="sales_receipt",
+        source_id=receipt.id
+    ).delete()
+
+    # Collect revenue per income account + VAT total
+    revenue_by_account = defaultdict(lambda: Decimal("0.00"))
+    vat_total = Decimal("0.00")
+
+    # default income account (same logic as invoice)
+    default_income_acc = (
+        _find_control_account(name_contains="Sales")
+        or _find_control_account(name_contains="Revenue")
+    )
+
+    lines = receipt.lines.select_related("product").all()
+    for line in lines:
+        line_amount = Decimal(str(line.amount or "0"))
+        if line_amount <= 0:
+            continue
+
+        prod = line.product
+        income_acc = getattr(prod, "income_account", None) if prod else None
+        if not income_acc:
+            income_acc = default_income_acc
+
+        if income_acc:
+            revenue_by_account[income_acc] += line_amount
+
+        vat_total += Decimal(str(getattr(line, "vat_amt", "0") or "0"))
+
+    # Apply overall discount as negative revenue on default income account
+    discount_amt = Decimal(str(receipt.total_discount or "0"))
+    if discount_amt > 0 and default_income_acc:
+        revenue_by_account[default_income_acc] -= discount_amt
+
+    # Treat shipping as extra revenue on default income account
+    shipping_fee = Decimal(str(receipt.shipping_fee or "0"))
+    if shipping_fee > 0 and default_income_acc:
+        revenue_by_account[default_income_acc] += shipping_fee
+
+    # Find deposit / AR / VAT accounts
+    deposit_acc = receipt.deposit_to
+    ar_account = (
+        _find_control_account(detail_type="Accounts Receivable (A/R)")
+        or _find_control_account(name_contains="receivable")
+    )
+    vat_account = _find_control_account(name_contains="VAT")
+
+    # If we don't have a deposit account, quietly skip to avoid bad GL
+    if not deposit_acc:
+        return
+
+    # Create JournalEntry
+    entry_date = receipt.receipt_date or timezone.localdate()
+    bits = [f"Receipt {receipt.id:04d}"]
+    if receipt.customer_id and getattr(receipt.customer, "customer_name", None):
+        bits.append(f"– {receipt.customer.customer_name}")
+    if receipt.reference_no:
+        bits.append(f"(Ref {receipt.reference_no})")
+    description = " ".join(bits)
+
+    entry = JournalEntry.objects.create(
+        date=entry_date,
+        description=description,
+        source_type="sales_receipt",
+        source_id=receipt.id,
+    )
+
+    # ----- DEBITS -----
+
+    # 1) DR Bank / Cash for amount actually received
+    if amount_paid > 0:
+        JournalLine.objects.create(
+            entry=entry,
+            account=deposit_acc,
+            debit=amount_paid,
+            credit=Decimal("0.00"),
+        )
+
+    # 2) DR Accounts Receivable for any remaining balance (if you allow part-paid receipts)
+    if balance > 0 and ar_account:
+        JournalLine.objects.create(
+            entry=entry,
+            account=ar_account,
+            debit=balance,
+            credit=Decimal("0.00"),
+        )
+
+    # ----- CREDITS -----
+
+    # 3) CR Revenue per income account
+    for acc, amt in revenue_by_account.items():
+        if not acc or amt <= 0:
+            continue
+        JournalLine.objects.create(
+            entry=entry,
+            account=acc,
+            debit=Decimal("0.00"),
+            credit=amt,
+        )
+
+    # 4) CR VAT (if any)
+    if vat_total > 0 and vat_account:
+        JournalLine.objects.create(
+            entry=entry,
+            account=vat_account,
+            debit=Decimal("0.00"),
+            credit=vat_total,
+        )
 
 # sales analytics
 def _invoice_analytics():
@@ -331,8 +703,8 @@ def add_invoice(request):
         invoice.total_vat = total_vat
         invoice.total_due = total_due
         invoice.save()
-        # calling the post invoice which affects the COA
-        post_invoice(invoice)
+        # ⇨ Post to General Ledger
+        _post_invoice_to_ledger(invoice)
         # Decide redirect
         save_action = request.POST.get("save_action")
         if save_action == "save&new":
@@ -624,10 +996,8 @@ def edit_invoice(request, pk: int):
         inv.total_due       = (subtotal - total_discount + total_vat + shipping_fee).quantize(Decimal("0.01"))
 
         inv.save()
-
-        # NOTE: Avoid re-posting to the journal here unless you have a revisioning strategy.
-        # If you must journal changes, add a safe update in your accounting layer.
-
+        # ⇨ Re-post to General Ledger (delete + recreate entry)
+        _post_invoice_to_ledger(inv)
         return redirect("sales:invoice-detail", pk=inv.pk)
 
     # ----- GET: prefill form -----
@@ -711,41 +1081,24 @@ def add_receipt(request):
     
     return render(request, 'receipt_form.html', {})
 # receive payment form view
-
-# Allowed account types for "Deposit To"
-CASH_EQ_DETAIL_CHOICES = [
-    "Bank", "Cash on hand", "Petty Cash", "Undeposited Funds", "Mobile Money", "MOMO", "Wallet"
-]
-
-def deposit_accounts_qs():
-    """
-    Returns accounts that should appear in 'Deposit To':
-    - Account Type == 'Cash and Cash Equivalents' (or 'CASH_EQUIV')
-    - OR Detail Type includes typical cash/bank items (e.g., 'Bank', 'Cash on hand', etc.)
-    - Also includes Account Type == 'Bank' if you ever store it that way.
-    """
-    return Account.objects.filter(
-        Q(account_type__iexact="Cash and Cash Equivalents") |
-        Q(account_type__iexact="CASH_EQUIV") |
-        Q(account_type__iexact="Bank") |
-        Q(detail_type__in=CASH_EQ_DETAIL_CHOICES)
-    ).filter(is_active=True).order_by("account_name", "account_number")
-# payments
+@transaction.atomic
 def receive_payment_view(request):
     customers = Newcustomer.objects.order_by("customer_name")
-    accounts = deposit_accounts_qs()   # for the dropdown
+    accounts = deposit_accounts_qs()   # only Bank + Cash & Cash Equivalents
 
     if request.method == "POST":
-        customer_id = (request.POST.get("customer") or "").strip()
-        payment_date = parse_date(request.POST.get("payment_date") or "")
-        payment_method = (request.POST.get("payment_method") or "cash").strip()
+        customer_id   = (request.POST.get("customer") or "").strip()
+        payment_date  = parse_date(request.POST.get("payment_date") or "")
+        payment_method= (request.POST.get("payment_method") or "cash").strip()
         deposit_to_id = (request.POST.get("deposit_to") or "").strip()
-        reference_no = (request.POST.get("reference_no") or "").strip()
-        tags = (request.POST.get("tags") or "").strip()
-        memo = (request.POST.get("memo") or "").strip()
+        reference_no  = (request.POST.get("reference_no") or "").strip()
+        tags          = (request.POST.get("tags") or "").strip()
+        memo          = (request.POST.get("memo") or "").strip()
 
         # resolve & validate deposit account **only from allowed set**
-        deposit_account = accounts.filter(id=deposit_to_id).first() if deposit_to_id else None
+        deposit_account = None
+        if deposit_to_id.isdigit():
+            deposit_account = accounts.filter(id=int(deposit_to_id)).first()
 
         # ensure we have a valid 8-digit numeric ref; if not, generate one
         if not (len(reference_no) == 8 and reference_no.isdigit()):
@@ -779,7 +1132,9 @@ def receive_payment_view(request):
 
         if not allocations:
             return render(request, "receive_payment.html", {
-                "customers": customers, "accounts": accounts, "reference_no": reference_no,
+                "customers": customers,
+                "accounts": accounts,
+                "reference_no": reference_no,
                 "form_error": "Enter at least one positive Amount to Apply.",
             })
 
@@ -800,7 +1155,9 @@ def receive_payment_view(request):
                 max_allowed = balance_map.get(invoice_id)
                 if max_allowed is None or amount > max_allowed:
                     return render(request, "receive_payment.html", {
-                        "customers": customers, "accounts": accounts, "reference_no": reference_no,
+                        "customers": customers,
+                        "accounts": accounts,
+                        "reference_no": reference_no,
                         "form_error": f"Allocation {amount} exceeds outstanding balance {max_allowed} on invoice {invoice_id}.",
                     })
 
@@ -809,7 +1166,7 @@ def receive_payment_view(request):
                 payment_date=payment_date,
                 payment_method=payment_method,
                 deposit_to=deposit_account,
-                reference_no=reference_no, 
+                reference_no=reference_no,
                 tags=tags,
                 memo=memo,
             )
@@ -819,7 +1176,9 @@ def receive_payment_view(request):
                 for inv_id, amt in allocations
             ])
 
-        post_payment(payment)
+            # === Post this payment into the General Ledger ===
+            _post_payment_to_ledger(payment)
+
         return redirect(f"{request.path}?ok=1")
 
     # GET: pre-generate and pass to template so it’s visible immediately
@@ -829,7 +1188,6 @@ def receive_payment_view(request):
         "accounts": accounts,
         "reference_no": reference_no,   # <-- make sure the template uses this
     })
-
 def outstanding_invoices_api(request):
     cid = request.GET.get("customer")
     if not cid or cid == "add_new":
@@ -951,7 +1309,7 @@ def payment_edit(request, pk: int):
         pk=pk
     )
     customers = Newcustomer.objects.order_by("customer_name")
-    accounts  = deposit_accounts_qs()
+    accounts  = deposit_accounts_qs()   # only Bank + Cash & Cash Equivalents
 
     if request.method == "POST":
         customer_id   = (request.POST.get("customer") or "").strip()
@@ -962,10 +1320,11 @@ def payment_edit(request, pk: int):
         tags          = (request.POST.get("tags") or "").strip()
         memo          = (request.POST.get("memo") or "").strip()
 
-        # validate & resolve
+        # validate & resolve deposit account from restricted queryset
         if not (customer_id.isdigit() and payment_date and deposit_to_id.isdigit()):
             return render(request, "receive_payment.html", {
-                "customers": customers, "accounts": accounts,
+                "customers": customers,
+                "accounts": accounts,
                 "payment": payment,
                 "reference_no": payment.reference_no or generate_unique_ref_no(),
                 "prefill_rows": _payment_prefill_rows(payment),
@@ -993,7 +1352,8 @@ def payment_edit(request, pk: int):
 
         if not allocations:
             return render(request, "receive_payment.html", {
-                "customers": customers, "accounts": accounts,
+                "customers": customers,
+                "accounts": accounts,
                 "payment": payment,
                 "reference_no": payment.reference_no or generate_unique_ref_no(),
                 "prefill_rows": _payment_prefill_rows(payment),
@@ -1025,7 +1385,8 @@ def payment_edit(request, pk: int):
             allowed = balance_map.get(invoice_id, Decimal("0.00")) + prev_map.get(invoice_id, Decimal("0.00"))
             if new_amt > allowed:
                 return render(request, "receive_payment.html", {
-                    "customers": customers, "accounts": accounts,
+                    "customers": customers,
+                    "accounts": accounts,
                     "payment": payment,
                     "reference_no": payment.reference_no or generate_unique_ref_no(),
                     "prefill_rows": _payment_prefill_rows(payment),
@@ -1050,9 +1411,8 @@ def payment_edit(request, pk: int):
             for inv_id, amt in allocations
         ])
 
-        # re-post journal: delete existing then re-post cleanly
-        _delete_existing_payment_journal_entries(payment)
-        post_payment(payment)
+        # === Re-post this payment to the ledger (clear & recreate journal) ===
+        _post_payment_to_ledger(payment)
 
         return redirect('sales:payment-detail', pk=payment.pk)
 
@@ -1117,7 +1477,7 @@ def _lines_for_payment(payment: Payment):
     outstanding_total = Decimal("0.00")
 
     for inv in invoices:
-        total_due = Decimal(str(inv.total_due_dec or "0"))
+        total_due = Decimal(str(inv.total_due or "0"))
         applied = Decimal(str(applied_map.get(inv.id, Decimal("0.00"))))
         paid_before = Decimal(str(prev_paid_map.get(inv.id, Decimal("0.00"))))
 
@@ -1171,7 +1531,6 @@ def payment_print(request, pk: int):
 # end
 
 # working on the receipt
-
 @transaction.atomic
 def sales_receipt_new(request):
     customers = Newcustomer.objects.order_by("customer_name")
@@ -1197,15 +1556,14 @@ def sales_receipt_new(request):
 
         customer   = get_object_or_404(Newcustomer, pk=int(customer_id))
         deposit_to = get_object_or_404(accounts, pk=int(deposit_to_id))
-        subtotal        = _coerce_decimal(request.POST.get("subtotal"))              # number
-        discount_amount = _coerce_decimal(request.POST.get("discount_amount"))       # number
-        shipping_fee    = _coerce_decimal(request.POST.get("shipping"))              # number
-        total_amount    = _coerce_decimal(request.POST.get("total"))                 # number (a.k.a. grandTotal)
-        amount_paid     = _coerce_decimal(request.POST.get("amount_paid"))           # number
+        subtotal        = _coerce_decimal(request.POST.get("subtotal"))          # ok
+        discount_amount = _coerce_decimal(request.POST.get("discount_amount"))   
+        shipping_fee    = _coerce_decimal(request.POST.get("shipping_fee"))      
+        total_amount    = _coerce_decimal(request.POST.get("total_amount"))      
+        amount_paid     = _coerce_decimal(request.POST.get("amount_paid"))       # ok
         balance         = total_amount - amount_paid
         if balance < 0:
             balance = Decimal("0.00")
-
         # ensure 8-digit numeric ref
         if not (len(reference_no) == 8 and reference_no.isdigit()):
             reference_no = generate_unique_ref_no()
@@ -1230,7 +1588,7 @@ def sales_receipt_new(request):
             total_amount=total_amount,
             amount_paid=amount_paid,   # <-- save it
             balance=balance,
-            )
+        )
 
         # --- lines (use your posted names) ---
         products_ids = request.POST.getlist("product[]")
@@ -1268,8 +1626,8 @@ def sales_receipt_new(request):
         if bulk:
             SalesReceiptLine.objects.bulk_create(bulk)
 
-        # --- Post to Journal (cash sale): DR deposit_to, CR Sales Income
-        post_sales_receipt(receipt)
+        # === Post this sales receipt into the General Ledger ===
+        _post_sales_receipt_to_ledger(receipt)
 
         # --- redirects ---
         action = request.POST.get("save_action")
@@ -1289,6 +1647,7 @@ def sales_receipt_new(request):
         "products": products,
         "reference_no": reference_no,
     })
+# editing the sales receipt
 
 @transaction.atomic
 def sales_receipt_edit(request, pk: int):
@@ -1331,12 +1690,14 @@ def sales_receipt_edit(request, pk: int):
 
         # totals (map from form)
         receipt.amount_paid    = _coerce_decimal(request.POST.get("amount_paid"))
-        receipt.balance        = (receipt.total_amount - receipt.amount_paid)
         receipt.subtotal       = _coerce_decimal(request.POST.get("subtotal"))
         receipt.total_discount = _coerce_decimal(request.POST.get("discount_amount"))
         receipt.total_vat      = Decimal("0.00")
         receipt.shipping_fee   = _coerce_decimal(request.POST.get("shipping_fee"))
         receipt.total_amount   = _coerce_decimal(request.POST.get("total_amount"))
+        receipt.balance        = receipt.total_amount - receipt.amount_paid
+        if receipt.balance < 0:
+            receipt.balance = Decimal("0.00")
         receipt.save()
 
         # replace lines
@@ -1376,9 +1737,8 @@ def sales_receipt_edit(request, pk: int):
         if bulk:
             SalesReceiptLine.objects.bulk_create(bulk)
 
-        # re-post journal
-        delete_sales_receipt_journal(receipt)
-        post_sales_receipt(receipt)
+        # === Re-post this receipt to the ledger ===
+        _post_sales_receipt_to_ledger(receipt)
 
         return redirect("sales:receipt-detail", pk=receipt.pk)
 
@@ -1392,6 +1752,8 @@ def sales_receipt_edit(request, pk: int):
         "items": receipt.lines.all(),
         "reference_no": receipt.reference_no or generate_unique_ref_no(),
     })
+
+# sales receipt detail page
 def sales_receipt_detail(request, pk: int):
     receipt = get_object_or_404(SalesReceipt.objects.select_related("customer", "deposit_to"), pk=pk)
     lines = receipt.lines.select_related("product").all()
@@ -1477,7 +1839,7 @@ def receipt_print(request, pk: int):
         "receipt": receipt,
         "lines": lines,
         # header info (use your real settings if you have them)
-        "logo_url": request.build_absolute_uri(static("sowaf/images/yo-logo.png")),
+        "logo_url": request.build_absolute_url(static("sowaf/images/yo-logo.png")),
         "company_name": "YoAccountant",
         "company_address": "Kampala, Uganda",
         "company_phone": "+256 700 000 000",
@@ -1611,12 +1973,7 @@ def _filter_by_type(rows, statement_type, customer_id, start_date):
         ids = set(inv_open.values_list("id", flat=True))
         return [r for r in rows if r["kind"] == "invoice" and r["source_id"] in ids]
 
-    # Balance Forward shows only a single BFWD line + period activity (which we already have)
-    # We’ll add the BFWD line in the save/preview builder; here we return as is.
     return rows
-
-
-@require_http_methods(["GET", "POST"])
 
 @require_http_methods(["GET", "POST"])
 def statement_new(request):
