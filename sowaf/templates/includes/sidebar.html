@@ -55,6 +55,15 @@
                   <span class="navlink">Day Book</span>
                 </a>
               </li>
+              {% comment %} audit trail {% endcomment %}
+              <li class="item">
+                <a href="{% url 'accounts:audit-trail' %}" class="nav_link">
+                  <span class="navlink_icon">
+                    <i class='bx bx-book'></i>
+                  </span>
+                  <span class="navlink">Audit Trail</span>
+                </a>
+              </li>
             </ul>
           </li>
           <!-- end -->

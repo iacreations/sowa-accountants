@@ -3,34 +3,32 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 # Create your models here.
-
 class Newcustomer(models.Model):
     logo = models.ImageField(null=True, blank=True)
-    customer_name = models.CharField(max_length=255,null=True, blank=True)
-    company_name = models.CharField(max_length=255,null=True, blank=True)
-    email = models.EmailField(max_length=255,null=True, blank=True)
-    phone_number = models.CharField(max_length=10,null=True, blank=True)
-    mobile_number = models.CharField(max_length=10,null=True, blank=True)
-    website = models.URLField(max_length=255,null=True, blank=True)
-    tin_number = models.CharField(max_length=10,null=True, blank=True)
-    opening_balance = models.DecimalField(max_digits=10,decimal_places=2,default=0,null=True, blank=True)
-    registration_date = models.DateTimeField(auto_now_add=True,null=True, blank=True)
-    street_one = models.CharField(max_length=255,null=True, blank=True)
-    street_two = models.CharField(max_length=255,null=True, blank=True)
-    city = models.CharField(max_length=255,null=True, blank=True)
-    province = models.CharField(max_length=255,null=True, blank=True)
-    postal_code = models.CharField(max_length=5,null=True, blank=True)
-    country = models.CharField(max_length=255,null=True, blank=True)
-    notes = models.TextField(max_length=1000,null=True, blank=True)
+    customer_name = models.CharField(max_length=255, null=True, blank=True)
+    company_name = models.CharField(max_length=255, null=True, blank=True)
+    email = models.EmailField(max_length=255, null=True, blank=True)
+    phone_number = models.CharField(max_length=10, null=True, blank=True)
+    mobile_number = models.CharField(max_length=10, null=True, blank=True)
+    website = models.URLField(max_length=255, null=True, blank=True)
+    tin_number = models.CharField(max_length=10, null=True, blank=True)
+    opening_balance = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=0)
+    registration_date = models.DateField(null=True, blank=True)
+    street_one = models.CharField(max_length=255, null=True, blank=True)
+    street_two = models.CharField(max_length=255, null=True, blank=True)
+    city = models.CharField(max_length=255, null=True, blank=True)
+    province = models.CharField(max_length=255, null=True, blank=True)
+    postal_code = models.CharField(max_length=5, null=True, blank=True)
+    country = models.CharField(max_length=255, null=True, blank=True)
+    notes = models.TextField(max_length=1000, null=True, blank=True)
     is_active = models.BooleanField(default=True)
-    attachments = models.FileField(upload_to='uploads/',null=True, blank=True)
+    attachments = models.FileField(upload_to='uploads/', null=True, blank=True)
 
     class Meta:
-        ordering =['customer_name']
+        ordering = ['customer_name']
 
     def __str__(self):
-        return f'{self.customer_name}-{self.company_name}-{self.phone_number}-{self.country}'
-    
+        return f'{self.customer_name}-{self.company_name}-{self.phone_number}-{self.country}'    
 # supplier model
 class Newsupplier(models.Model):
     PAYMENT_CHOICES = [
@@ -50,7 +48,6 @@ class Newsupplier(models.Model):
     logo = models.ImageField(null=True, blank=True)
     company_name = models.CharField(max_length=255,null=True, blank=True)
     supplier_type = models.CharField(max_length=255, choices=SUPPLIER_CHOICES, default='',null=True, blank=True)
-    status = models.CharField(max_length=255, choices=STATUS_CHOICES, default='',null=True, blank=True)
     contact_person = models.CharField(max_length=255,null=True, blank=True)
     contact_position = models.CharField(max_length=255,null=True, blank=True)
     contact = models.CharField(max_length=10,null=True, blank=True)
@@ -72,7 +69,6 @@ class Newsupplier(models.Model):
     tin = models.CharField(max_length=10,null=True, blank=True)
     reg_number=models.CharField(max_length=255,null=True, blank=True)
     is_active = models.BooleanField(default=True)
-    tax_rate=models.DecimalField(max_digits=10,default=0,decimal_places=2,null=True, blank=True)
     attachments = models.FileField(upload_to='uploads/',null=True, blank=True)
 
     class Meta:

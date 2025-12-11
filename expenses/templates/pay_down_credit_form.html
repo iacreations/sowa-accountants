@@ -3,193 +3,187 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Pay Down Credit Card</title>
+  <title>Pay down credit card</title>
   <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
   <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
-      <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
-    <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}">
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}">
   <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background-color: #f8f8f8;
-      margin: 0;
-      padding: 30px;
-    }
-
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-      background: #fff;
-      padding: 30px;
-      border-radius: 10px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    }
-
-    h2 {
-      margin-bottom: 5px;
-      color: #333;
-    }
-
-    p {
-      margin-bottom: 20px;
-      color: #555;
-    }
-
-    .form-group {
-      margin-bottom: 20px;
-    }
-
-    label {
-      display: block;
-      margin-bottom: 6px;
-      font-weight: 600;
-      color: #333;
-    }
-
-    input, select, textarea {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      font-size: 15px;
-    }
-
-    .form-row {
-      display: flex;
-      gap: 20px;
-    }
-
-    .form-row .form-group {
-      flex: 1;
-    }
-
-    .memo-section {
-      margin-top: 20px;
-    }
-
-    .memo-toggle {
-      cursor: pointer;
-      font-weight: 600;
-      color: #39B54B;
-      margin-bottom: 10px;
-    }
-
-    .memo-content {
-      display: none;
-    }
-
-    .actions {
-      margin-top: 30px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .btn {
-      padding: 10px 18px;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 15px;
-    }
-
-    .btn-cancel {
-      background-color: #666;
-      color: white;
-    }
-
-    .btn-save {
-      background-color: #39B54B;
-      color: white;
-      margin-right: 10px;
-    }
-
-    .btn-save-close {
-      background-color: #2e9e3f;
-      color: white;
-    }
-
-    .btn:hover {
-      opacity: 0.95;
-    }
-
-    input[type="file"] {
-      border: none;
-      padding-left: 0;
-    }
+    body{font-family:'Segoe UI',sans-serif;background:#f8f8f8;margin:0;padding:30px;}
+    .container{max-width:800px;margin:0 auto;background:#fff;padding:30px;border-radius:10px;
+      box-shadow:0 4px 12px rgba(0,0,0,.08);}
+    h2{margin-bottom:5px;color:#39B54B;}
+    p{margin-bottom:20px;color:#555;}
+    .form-group{margin-bottom:20px;}
+    label{display:block;margin-bottom:6px;font-weight:600;color:#333;}
+    input,select,textarea{width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:6px;font-size:15px;}
+    .form-row{display:flex;gap:20px;}
+    .form-row .form-group{flex:1;}
+    .memo-section{margin-top:20px;}
+    .memo-toggle{cursor:pointer;font-weight:600;color:#39B54B;margin-bottom:10px;}
+    .memo-content{display:none;}
+    .actions{margin-top:30px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+    .btn{padding:10px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:600;font-size:15px;}
+    .btn-cancel{background:#666;color:#fff;text-decoration:none;display:inline-block;}
+    .btn-green{background:#39B54B;color:#fff;}
+    .btn:hover{opacity:.95;}
+    .dropdown{position:relative;display:inline-block;}
+    .dropdown-menu{display:none;position:absolute;right:0;background:#fff;border:1px solid #ccc;
+      border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.1);z-index:100;width:160px;}
+    .dropdown-menu button{width:100%;padding:8px 14px;background:none;border:none;text-align:left;
+      cursor:pointer;white-space:nowrap;}
+    .dropdown:hover .dropdown-menu{display:block;}
   </style>
 </head>
 <body>
 
   <div class="container">
+    <a href="{% url 'expenses:expenses' %}" style="color:#39B54B; text-decoration:none;">← Back to All Expenses</a>
     <h2>Pay down credit card</h2>
-    <p>Record payments made to your balance</p>
+    <p>Record payments made to your credit card balance.</p>
 
-    <form>
+    <form method="post" enctype="multipart/form-data"
+          action="{% if payment %}{% url 'expenses:paydown-credit-edit' payment.id %}{% else %}{% url 'expenses:pay-down-credit' %}{% endif %}">
+      {% csrf_token %}
+
       <div class="form-group">
         <label for="creditCard">Which credit card did you pay?</label>
-        <select id="creditCard">
-          <option value="">Select credit card</option>
+        <select id="creditCard" name="credit_card" required>
+          <option value="">— Select credit card —</option>
+          {% for acc in credit_cards %}
+            <option value="{{ acc.id }}" {% if payment and payment.credit_card_id == acc.id %}selected{% endif %}>
+              {{ acc.account_name }}
+            </option>
+          {% endfor %}
         </select>
       </div>
 
       <div class="form-group">
-        <label for="payee">Payee (optional)</label>
-        <select id="payee">
-          <option value="">Choose a payee</option>
+        <label for="payee_supplier">Payee (optional)</label>
+        <select id="payee_supplier" name="payee_supplier">
+          <option value="">— Choose supplier —</option>
+          {% for s in suppliers %}
+            <option value="{{ s.id }}" {% if payment and payment.payee_supplier_id == s.id %}selected{% endif %}>
+              {{ s.company_name }}
+            </option>
+          {% endfor %}
         </select>
+        <small>Or enter name:</small>
+        <input type="text" name="payee_name"
+               value="{% if payment %}{{ payment.payee_name }}{% endif %}"
+               placeholder="Free text (optional)">
       </div>
 
       <div class="form-row">
         <div class="form-group">
           <label for="amount">How much did you pay?</label>
-          <input type="number" id="amount" placeholder="Enter the amount">
+          <input type="number" step="0.01" id="amount" name="amount"
+                 value="{% if payment %}{{ payment.amount }}{% endif %}"
+                 placeholder="Enter the amount" required>
         </div>
         <div class="form-group">
           <label for="date">Date of payment</label>
-          <input type="date" id="date" value="2025-03-28">
+          <input type="date" id="date" name="payment_date"
+                 value="{% if payment %}{{ payment.payment_date|date:'Y-m-d' }}{% else %}{{ today|date:'Y-m-d' }}{% endif %}">
         </div>
       </div>
 
       <div class="form-group">
         <label for="bankAccount">What did you use to make this payment?</label>
-        <select id="bankAccount">
-          <option value="">Select bank account</option>
+        <select id="bankAccount" name="bank_account" required>
+          <option value="">— Select bank / cash account —</option>
+          {% for acc in bank_accounts %}
+            <option value="{{ acc.id }}" {% if payment and payment.bank_account_id == acc.id %}selected{% endif %}>
+              {{ acc.account_name }}
+            </option>
+          {% endfor %}
         </select>
       </div>
 
+      <div class="form-row">
+        <div class="form-group">
+          <label>Ref No.</label>
+          <input type="text" name="ref_no"
+                 value="{% if payment %}{{ payment.ref_no }}{% else %}{{ ref_no }}{% endif %}">
+        </div>
+        <div class="form-group">
+          <label>Location</label>
+          <input type="text" name="location"
+                 value="{% if payment %}{{ payment.location }}{% endif %}">
+        </div>
+      </div>
+
       <div class="memo-section">
-        <div class="memo-toggle" onclick="toggleMemo()">&#9654; Memo and attachments</div>
+        <div class="memo-toggle" onclick="toggleMemo()">▸ Memo and attachments</div>
         <div class="memo-content" id="memoContent">
-          <textarea rows="4" placeholder="Enter memo..."></textarea>
+          <textarea rows="4" name="memo"
+                    placeholder="Enter memo...">{% if payment %}{{ payment.memo }}{% endif %}</textarea>
           <br><br>
-          <input type="file" multiple>
+          {% if payment and payment.attachments %}
+            <p>Existing file: <a href="{{ payment.attachments.url }}" target="_blank">Download</a></p>
+          {% endif %}
+          <input type="file" name="attachments" multiple>
         </div>
       </div>
 
       <div class="actions">
-        <a href="{% url 'sowaf:expenses' %}" class="btn btn-cancel">
-         Cancel
-        </a>
-       <div class="dropdown">
+        <a href="{% url 'expenses:expenses' %}" class="btn btn-cancel">Cancel</a>
+
+        <div class="dropdown">
           <button type="button" class="btn btn-green">Save ▼</button>
           <div class="dropdown-menu">
-            <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
-            <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
-            <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+            <button type="submit" name="save_action" value="save">Save</button>
+            <button type="submit" name="save_action" value="save&new">Save &amp; New</button>
+            <button type="submit" name="save_action" value="save&close">Save &amp; Close</button>
           </div>
         </div>
       </div>
     </form>
   </div>
-<script src=" {% static 'sowaf/styles/script.js' %} "></script>
+ {% comment %} error popup message {% endcomment %}
+ {% if messages %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+  {% for message in messages %}
+    Swal.fire({
+      icon: "{% if 'error' in message.tags %}error{% else %}success{% endif %}",
+      title: "{{ message.tags|capfirst }}",
+      text: "{{ message }}",
+      confirmButtonText: "OK",
+
+      /* --- Custom green theme --- */
+      background: "#f0fff5",        // soft green background
+      color: "#111",                // text color
+      iconColor: "{% if 'error' in message.tags %}#e63946{% else %}#39B54B{% endif %}",
+
+      customClass: {
+          confirmButton: "swal-confirm-btn"
+      }
+    });
+  {% endfor %}
+</script>
+
+<style>
+  .swal-confirm-btn {
+      background-color: #39B54B !important;
+      color: white !important;
+      border-radius: 8px !important;
+      padding: 10px 22px !important;
+      font-size: 16px !important;
+  }
+  .swal-confirm-btn:hover {
+      background-color: #2da73e !important;
+  }
+</style>
+
+{% endif %}
+  <script src="{% static 'sowaf/styles/script.js' %}"></script>
   <script>
-    function toggleMemo() {
+    function toggleMemo(){
       const memo = document.getElementById('memoContent');
-      memo.style.display = memo.style.display === 'block' ? 'none' : 'block';
+      memo.style.display = (memo.style.display === 'block') ? 'none' : 'block';
     }
   </script>
-
 </body>
 </html>

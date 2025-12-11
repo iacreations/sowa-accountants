@@ -1,0 +1,285 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2a8b3b;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#e5e7eb;
+    --bg:#f8fafc;
+    --card:#ffffff;
+  }
+  .page-wrap{
+    margin-left:20%;
+    width:79%;
+    min-height:100vh;
+    background:var(--bg);
+    padding:24px 32px;
+    box-sizing:border-box;
+    margin-top: 6%;
+  }
+  .header-bar{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    margin-bottom:20px; gap:16px;
+  }
+  .title-block h1{
+    margin:0; font-size:26px; font-weight:800; color:var(--brand);
+  }
+  .title-block .sub{
+    margin-top:4px; font-size:13px; color:var(--muted);
+  }
+  .status-chip{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; padding:4px 10px; border-radius:999px;
+    border:1px solid transparent;
+  }
+  .status-draft{ background:#f9fafb; border-color:#e5e7eb; color:#4b5563; }
+  .status-sent{ background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+  .status-closed{ background:#ecfdf5; border-color:#bbf7d0; color:#047857; }
+  .status-cancelled{ background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
+
+  .btn{
+    padding:8px 12px; border-radius:8px; border:1px solid var(--line);
+    background:#fff; font-size:13px; cursor:pointer;
+    display:inline-flex; align-items:center; gap:6px; text-decoration:none; color:#111827;
+  }
+  .btn.primary{
+    background:var(--brand); color:#fff; border-color:var(--brand);
+  }
+  .btn.primary:hover{ background:var(--brand-600); }
+  .btn:hover{ background:#f9fafb; }
+
+  .card{
+    background:var(--card); border-radius:16px; border:1px solid var(--line);
+    box-shadow:0 10px 25px rgba(15,23,42,.06);
+    padding:20px;
+  }
+  .flex-row{ display:flex; flex-wrap:wrap; gap:24px; margin-bottom:16px; }
+  .column{ flex:1 1 260px; }
+  .label{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:2px; }
+  .value{ font-size:14px; color:#111827; margin-bottom:10px; }
+
+  .items-table{
+    width:100%; border-collapse:separate; border-spacing:0; margin-top:8px; min-width:860px;
+  }
+  .items-table th{
+    background:#f3f4f6; font-size:12px; text-transform:uppercase; padding:8px 10px;
+    border-bottom:1px solid #e5e7eb; color:#111827;
+  }
+  .items-table td{
+    font-size:14px; padding:8px 10px; border-bottom:1px solid #f1f5f9;
+  }
+  .items-table tbody tr:nth-child(odd){ background:#fff; }
+  .items-table tbody tr:nth-child(even){ background:#fafafa; }
+  .items-table tfoot td{
+    background:#f9fafb; font-weight:600;
+  }
+  .num{ text-align:right; white-space:nowrap; }
+
+  .memo-block{
+    margin-top:16px; border-top:1px dashed #e5e7eb; padding-top:12px;
+  }
+  .attachments-block{
+    margin-top:12px; font-size:13px;
+  }
+  .muted{ color:var(--muted); }
+</style>
+
+<div class="page-wrap">
+  <div class="header-bar">
+    <div class="title-block">
+      <h1>Purchase Order {{ po.po_number }}</h1>
+      <div class="sub">
+        {% if po.vendor %}
+          {{ po.vendor.company_name }}
+        {% else %}
+          {{ po.vendor_name|default:"(No vendor set)" }}
+        {% endif %}
+        · created on {{ po.po_date|date:"d M Y" }}
+      </div>
+      <div style="margin-top:8px;">
+        {% if po.status == "sent" %}
+          <span class="status-chip status-sent">Sent</span>
+        {% elif po.status == "closed" %}
+          <span class="status-chip status-closed">Closed</span>
+        {% elif po.status == "cancelled" %}
+          <span class="status-chip status-cancelled">Cancelled</span>
+        {% else %}
+          <span class="status-chip status-draft">Draft</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
+      <div>
+        <a href="{% url 'expenses:purchase-order-edit' po.id %}" class="btn primary">
+          <i class='bx bx-edit'></i> Edit
+        </a>
+        <a href="{% url 'expenses:purchase-order-list' %}" class="btn">
+          <i class='bx bx-list-ul'></i> All POs
+        </a>
+        <a href="{% url 'expenses:expenses' %}" class="btn">
+          <i class='bx bx-home-smile'></i> All expenses
+        </a>
+      </div>
+      <div>
+        <button class="btn" type="button" onclick="window.print()">
+          <i class='bx bx-printer'></i> Print
+        </button>
+        <button class="btn" type="button" onclick="sendEmail()">
+          <i class='bx bx-envelope'></i> Email
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex-row">
+      <div class="column">
+        <div class="label">Vendor</div>
+        <div class="value">
+          {% if po.vendor %}
+            {{ po.vendor.company_name }}<br>
+            <span class="muted">{{ po.mailing_address }}</span>
+          {% else %}
+            {{ po.vendor_name|default:"—" }}<br>
+            <span class="muted">{{ po.mailing_address }}</span>
+          {% endif %}
+        </div>
+
+        <div class="label">Ship To</div>
+        <div class="value">
+          {{ po.ship_to|default:"—" }}
+        </div>
+      </div>
+
+      <div class="column">
+        <div class="label">PO Date</div>
+        <div class="value">{{ po.po_date|date:"d/m/Y" }}</div>
+
+        <div class="label">Deliver By</div>
+        <div class="value">
+          {% if po.deliver_by %}
+            {{ po.deliver_by|date:"d/m/Y" }}
+          {% else %}
+            —
+          {% endif %}
+        </div>
+
+        <div class="label">Location</div>
+        <div class="value">{{ po.location|default:"—" }}</div>
+      </div>
+
+      <div class="column">
+        <div class="label">Total Amount</div>
+        <div class="value" style="font-size:18px; font-weight:700;">
+          UGX {{ po.total_amount|floatformat:2|intcomma }}
+        </div>
+        <div class="label">Subtotal</div>
+        <div class="value">
+          UGX {{ subtotal|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px; overflow:auto;">
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th style="width:40px;">#</th>
+            <th>Product / Service</th>
+            <th>Description</th>
+            <th class="num">Qty</th>
+            <th class="num">Rate</th>
+            <th class="num">Amount</th>
+            <th>Customer / Project</th>
+            <th>Class</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in po.lines.all %}
+          <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ line.product.name }}</td>
+            <td>{{ line.description }}</td>
+            <td class="num">{{ line.qty|floatformat:2 }}</td>
+            <td class="num">{{ line.rate|floatformat:2|intcomma }}</td>
+            <td class="num">{{ line.amount|floatformat:2|intcomma }}</td>
+            <td>
+              {% if line.customer %}
+                {{ line.customer.customer_name }}
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if line.class_field %}
+                {{ line.class_field.class_name }}
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" style="text-align:center; padding:12px;">
+              No item lines on this purchase order.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="5" class="num">Subtotal</td>
+            <td class="num">{{ subtotal|floatformat:2|intcomma }}</td>
+            <td colspan="2"></td>
+          </tr>
+          <tr>
+            <td colspan="5" class="num">Total</td>
+            <td class="num">{{ po.total_amount|floatformat:2|intcomma }}</td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="memo-block">
+      <div class="label">Memo</div>
+      <div class="value">{{ po.memo|default:"—" }}</div>
+    </div>
+
+    <div class="attachments-block">
+      <div class="label">Attachments</div>
+      <div class="value">
+        {% if po.attachments %}
+          <a href="{{ po.attachments.url }}" target="_blank">
+            {{ po.attachments.name|cut:'purchase_orders/' }}
+          </a>
+        {% else %}
+          <span class="muted">No attachments</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function sendEmail(){
+    const subject = encodeURIComponent("Purchase Order {{ po.po_number }}");
+    const body = encodeURIComponent(
+`Hi,
+
+Please find attached Purchase Order {{ po.po_number }}.
+
+Regards,
+Your Company`
+    );
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  }
+</script>
+
+{% include 'includes/footer.html' %}
+

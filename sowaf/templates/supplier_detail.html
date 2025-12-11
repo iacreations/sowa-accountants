@@ -129,11 +129,11 @@
         <div class="pills">
           <span class="pill">
             <span class="dot dot-open"></span> Open balance
-            <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
+            <span class="val">{{ supplier.open_balance|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
             <span class="dot dot-overdue"></span> Overdue bills
-            <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
+            <span class="val danger">{{ overdue_balance|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
             <span class="dot dot-inv"></span> Bills
@@ -142,7 +142,7 @@
           <span class="pill">
             <span class="dot dot-paid"></span> Status
             <span class="val">
-              {% if open_balance|default:0 > 0 %}Payable{% else %}Clear{% endif %}
+              {% if supplier.open_balance|default:0 > 0 %}Payable{% else %}Clear{% endif %}
             </span>
           </span>
         </div>
@@ -150,7 +150,7 @@
         <!-- quick actions (supplier side) -->
         <div class="actions">
           <a class="btn" href="{% url 'expenses:add-bill' %}?supplier_id={{ supplier.id }}"><i class='bx bx-file'></i> New Bill</a>
-          <a class="btn outline" href="{% url 'expenses:add-expense' %}?supplier_id={{ supplier.id }}"><i class='bx bx-receipt'></i> New Expense</a>
+          <a class="btn outline" href="{% url 'expenses:add-expenses' %}?supplier_id={{ supplier.id }}"><i class='bx bx-receipt'></i> New Expense</a>
           <a class="btn outline" href="{% url 'expenses:add-cheque' %}?supplier_id={{ supplier.id }}"><i class='bx bx-credit-card'></i> Write Cheque</a>
         </div>
       </div>
@@ -160,11 +160,11 @@
         <h4>Financial summary</h4>
         <div class="sum-row">
           <span>Open balance</span>
-          <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
+          <span class="val">{{ supplier.open_balance|floatformat:2|intcomma }}</span>
         </div>
         <div class="sum-row">
           <span>Overdue bills</span>
-          <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
+          <span class="val danger">{{ overdue_balance|floatformat:2|intcomma }}</span>
         </div>
       </aside>
 

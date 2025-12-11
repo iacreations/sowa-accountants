@@ -218,7 +218,7 @@
       <div class="collapsible-header">Supplier Information</div>
       <div class="collapsible-content">
         <div class="header">
-          <div class="field"><label for="company_name">Company Name *</label><input type="text" name="company_name" value="{{ supplier.company_name|default_if_none:'' }}" required></div>
+          <div class="field"><label for="company_name">Company Name *</label><input type="text" name="company_name" value="{{ supplier.company_name|default_if_none:'' }}"></div>
           <div class="field">
             <label for="supplier_type" style="font-size: 1em;">Supplier Type</label>
             <select name="supplier_type" style="font-size: 1em; width: 100%;" >
@@ -227,18 +227,12 @@
               <option class="" value="Both" {% if supplier.supplier_type == "Both" %}selected{% endif %}>Both</option>
             </select>
             </div>
-          <div class="field">
-            <label for="status">Status</label>
-            <select name="status" style="font-size: 1em; width: 100%;">
-              <option class="Active" {% if supplier.status == "Active" %}selected{% endif %}>Active</option>
-              <option class="Inactive" {% if supplier.status == "Inactive" %}selected{% endif %}>Inactive</option>
-            </select>
-          </div>
+          
           <div class="field"><label for="contact_person">Contact Person</label><input type="text" name="contact_person" value="{{ supplier.contact_person|default_if_none:'' }}"></div>
           <div class="field"><label for="contact_position">Contact Position</label><input type="text" name="contact_position" value="{{ supplier.contact_position|default_if_none:'' }}"></div>
-          <div class="field"><label for="contact">Phone Number *</label><input type="tel" name="contact" value="{{ supplier.contact|default_if_none:'' }}" required></div>
-          <div class="field"><label for="email">Email Address *</label><input type="email" name="email" value="{{ supplier.email|default_if_none:'' }}" required></div>
-          <div class="field"><label for="open_balance">Open balance *</label><input type="text" name="open_balance" value="{{ supplier.open_balance|default_if_none:'' }}" required></div>
+          <div class="field"><label for="contact">Phone Number *</label><input type="tel" name="contact" value="{{ supplier.contact|default_if_none:'' }}"></div>
+          <div class="field"><label for="email">Email Address *</label><input type="email" name="email" value="{{ supplier.email|default_if_none:'' }}"></div>
+          <div class="field"><label for="open_balance">Open balance *</label><input type="text" name="open_balance" value="{{ supplier.open_balance|default_if_none:'' }}"></div>
           <div class="field"><label for="website">Website</label><input type="text" name="website" value="{{ supplier.website|default_if_none:'' }}"></div>
         </div>
       </div>
@@ -267,8 +261,8 @@
           <div class="field"><label for="bank">Bank Name</label><input type="text" name="bank" value="{{ supplier.bank|default_if_none:'' }}"></div>
           <div class="field"><label for="bank_account">Bank Account Number</label><input type="text" name="bank_account" value="{{ supplier.bank_account|default_if_none:'' }}"></div>
           <div class="field"><label for="bank_branch">Bank Branch / Routing No</label><input type="text" name="bank_branch" value="{{ supplier.bank_branch|default_if_none:'' }}"></div>
-          <div class="field"><label for="payment_terms">Payment Terms *</label><input type="text" name="payment_terms" value="{{ supplier.payment_terms|default_if_none:'' }}" required></div>
-          <div class="field"><label for="currency">Preferred Currency *</label><input type="text" name="currency" value="{{ supplier.currency|default_if_none:'' }}" required></div>
+          <div class="field"><label for="payment_terms">Payment Terms *</label><input type="text" name="payment_terms" value="{{ supplier.payment_terms|default_if_none:'' }}"></div>
+          {% comment %} <div class="field"><label for="currency">Preferred Currency *</label><input type="text" name="currency" value="{{ supplier.currency|default_if_none:'' }}"></div> {% endcomment %}
           <div class="field">
             <label for="payment_method">Payment Method *</label>
             <select name="payment_method" style="font-size: 1em; width: 100%;" value="{{ supplier.payment_method|default_if_none:'' }}">
@@ -286,9 +280,9 @@
       <div class="collapsible-header">Tax & Compliance Details</div>
       <div class="collapsible-content">
         <div class="header">
-          <div class="field"><label for="tin">VAT / Tax ID *</label><input type="text" name="tin" value="{{ supplier.tin|default_if_none:'' }}" required></div>
+          <div class="field"><label for="tin">VAT / Tax ID *</label><input type="text" name="tin" value="{{ supplier.tin|default_if_none:'' }}"></div>
           <div class="field"><label for="reg_number">Registration / License No</label><input type="text" name="reg_number" value="{{ supplier.reg_number|default_if_none:'' }}"></div>
-          <div class="field"><label for="tax_rate">Tax Withholding Rate (%)</label><input type="number" name="tax_rate" value="{{ supplier.tax_rate|default_if_none:'' }}"></div>
+          {% comment %} <div class="field"><label for="tax_rate">Tax Withholding Rate (%)</label><input type="number" name="tax_rate" value="{{ supplier.tax_rate|default_if_none:'' }}"></div> {% endcomment %}
         </div>
       </div>
     </div>

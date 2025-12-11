@@ -1,0 +1,87 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+.audit-container{
+  margin-left:19%;
+  width:80%;
+  margin-top:6%;
+  font-family:Poppins;
+}
+.audit-card{
+  background:#fff;
+  border-radius:12px;
+  border:1px solid #e5efe8;
+  padding:20px;
+}
+.audit-title{
+  color:#39B54B;
+  font-weight:800;
+  text-align:center;
+  margin-bottom:12px;
+}
+table{
+  width:100%;
+  border-collapse:collapse;
+}
+th{
+  background:#39B54B;
+  color:#fff;
+  font-size:12px;
+  padding:10px;
+}
+td{
+  padding:8px;
+  border-bottom:1px solid #e5efe8;
+  font-size:13px;
+}
+.badge{
+  padding:2px 8px;
+  border-radius:6px;
+  font-size:11px;
+  font-weight:700;
+}
+.create{background:#d2f4dc;color:#14532d;}
+.update{background:#fff3cd;color:#856404;}
+.delete{background:#f8d7da;color:#721c24;}
+</style>
+
+<div class="audit-container">
+  <div class="audit-card">
+    <h2 class="audit-title">Audit Trail</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Model</th>
+          <th>Record ID</th>
+          <th>Description</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in logs %}
+        <tr>
+          <td>{{ a.timestamp|date:"d/m/Y H:i" }}</td>
+          <td>{{ a.user|default:"System" }}</td>
+          <td>
+            <span class="badge {{ a.action|lower }}">
+              {{ a.action }}
+            </span>
+          </td>
+          <td>{{ a.model_name }}</td>
+          <td>{{ a.object_id }}</td>
+          <td>{{ a.description }}</td>
+          <td>{{ a.ip_address }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

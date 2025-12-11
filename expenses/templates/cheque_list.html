@@ -1,0 +1,99 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cheques</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+    body { background:#f4f6f8; padding:30px; }
+    .container { background:#fff; padding:25px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.08); width:95%; margin:auto; }
+    h2.title { color:#39B54B; margin-bottom:20px; font-size:24px; font-weight:700; }
+    .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px; }
+    .btn { padding:8px 14px; border-radius:6px; border:none; cursor:pointer; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:4px; font-size:13px; }
+    .btn-green { background:#39B54B; color:#fff; }
+    .btn-outline { background:#f5f5f5; color:#39B54B; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    th, td { border:1px solid #ddd; padding:8px; }
+    th { background:#fafafa; text-align:left; }
+    .totals { text-align:right; margin-top:10px; font-weight:600; }
+    form.filters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    input[type="text"], input[type="date"] { padding:6px 8px; border-radius:4px; border:1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-bar">
+      <h2 class="title">Cheques</h2>
+      <div>
+        <a href="{% url 'expenses:add-cheque' %}" class="btn btn-green">
+          <i class='bx bx-plus'></i> New Cheque
+        </a>
+        <a href="{% url 'expenses:expenses' %}" class="btn btn-outline">
+          <i class='bx bx-arrow-back'></i> Back to Expenses
+        </a>
+      </div>
+    </div>
+
+    <form method="get" class="filters">
+      <input type="text" name="q" placeholder="Search number / payee / bank" value="{{ q }}">
+      <label>From <input type="date" name="from" value="{{ from }}"></label>
+      <label>To <input type="date" name="to" value="{{ to }}"></label>
+      <button class="btn btn-green" type="submit">Filter</button>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Cheque No.</th>
+          <th>Payee</th>
+          <th>Bank Account</th>
+          <th style="text-align:right;">Amount</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for chq in page_obj %}
+        <tr>
+          <td>{{ chq.payment_date|date:"d M Y" }}</td>
+          <td>{{ chq.cheque_no }}</td>
+          <td>
+            {% if chq.payee_supplier %}
+              {{ chq.payee_supplier.company_name }}
+            {% else %}
+              {{ chq.payee_name|default:"—" }}
+            {% endif %}
+          </td>
+          <td>{{ chq.bank_account.account_name }}</td>
+          <td style="text-align:right;">UGX {{ chq.total_amount|floatformat:2 }}</td>
+          <td>
+            <a href="{% url 'expenses:cheque-detail' chq.id %}">View</a> |
+            <a href="{% url 'expenses:cheque-edit' chq.id %}">Edit</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6">No cheques found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="totals">
+      Total amount: UGX {{ totals.grand|default:"0.00"|floatformat:2 }}
+    </div>
+
+    {% if page_obj.has_other_pages %}
+    <div style="margin-top:10px;">
+      {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}&q={{ q }}&from={{ from }}&to={{ to }}">« Prev</a>
+      {% endif %}
+      Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+      {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}&q={{ q }}&from={{ from }}&to={{ to }}">Next »</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</body>
+</html>

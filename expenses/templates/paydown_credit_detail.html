@@ -1,0 +1,77 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{--brand:#39B54B;--muted:#6b7280;--bg:#f8fafc;--card:#fff;--line:#e5e7eb;}
+  .page-wrap{margin-left:20%;background:var(--bg);width:79%;margin-top:6%;min-height:100vh;padding:24px 32px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.04);padding:20px 24px;}
+  .title{font-size:24px;font-weight:800;color:var(--brand);margin-bottom:4px;}
+  .muted{color:var(--muted);font-size:13px;}
+  .row{display:flex;flex-wrap:wrap;margin-top:16px;}
+  .col{flex:1 1 220px;padding:6px 12px;}
+  .label{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.06em;margin-bottom:2px;}
+  .value{font-size:14px;font-weight:500;}
+  .amount{font-size:22px;font-weight:800;margin-top:10px;}
+  .btn{display:inline-block;margin-top:16px;padding:8px 14px;border-radius:8px;border:none;background:var(--brand);color:#fff;font-weight:600;text-decoration:none;}
+</style>
+
+<div class="page-wrap">
+  <a href="{% url 'expenses:paydown-credit-list' %}" style="color:#39B54B;text-decoration:none;">← Back to payments list</a>
+
+  <div class="card">
+    <div class="title">Credit card payment</div>
+    <div class="muted">Ref {{ p.ref_no }} · {{ p.payment_date|date:"d/m/Y" }}</div>
+
+    <div class="amount">
+      Ush {{ p.amount|floatformat:2|intcomma }}
+    </div>
+
+    <div class="row">
+      <div class="col">
+        <div class="label">Credit card</div>
+        <div class="value">{{ p.credit_card.account_name }}</div>
+      </div>
+      <div class="col">
+        <div class="label">Bank / cash account</div>
+        <div class="value">{{ p.bank_account.account_name }}</div>
+      </div>
+      <div class="col">
+        <div class="label">Payee</div>
+        <div class="value">
+          {% if p.payee_supplier %}
+            {{ p.payee_supplier.company_name }}
+          {% else %}
+            {{ p.payee_name|default:"—" }}
+          {% endif %}
+        </div>
+      </div>
+      <div class="col">
+        <div class="label">Location</div>
+        <div class="value">{{ p.location|default:"—" }}</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col" style="flex:1 1 100%;">
+        <div class="label">Memo</div>
+        <div class="value">
+          {% if p.memo %}{{ p.memo }}{% else %}<span class="muted">No memo</span>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if p.attachments %}
+      <div class="row">
+        <div class="col" style="flex:1 1 100%;">
+          <div class="label">Attachment</div>
+          <a href="{{ p.attachments.url }}" target="_blank">Download file</a>
+        </div>
+      </div>
+    {% endif %}
+
+    <a href="{% url 'expenses:paydown-credit-edit' p.id %}" class="btn">Edit payment</a>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

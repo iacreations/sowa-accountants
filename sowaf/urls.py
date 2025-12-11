@@ -46,7 +46,6 @@ urlpatterns = [
     path('suppliers/', views.supplier, name='suppliers'),
     path('suppliers/add/supplier', views.add_supplier, name='add-supplier'),
     path('suppliers/edit/<str:pk>', views.edit_supplier, name='edit-supplier'),
-    path('suppliers/delete/<str:pk>', views.delete_supplier, name='delete-supplier'),
     path('suppliers/import/import-suppliers', views.import_suppliers, name='import-suppliers'),
     path('templates/suppliers/', views.download_suppliers_template, name='import_suppliers_template'),
     path("suppliers/<int:pk>/make-inactive/", views.make_inactive_supplier, name="make-inactive-supplier"),

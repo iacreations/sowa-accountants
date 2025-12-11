@@ -1,0 +1,346 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2a8b3b;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#e5e7eb;
+    --bg:#f8fafc;
+    --card:#ffffff;
+  }
+
+  .page-wrap{
+    margin-left:20%;
+    background:var(--bg);
+    box-sizing:border-box;
+    width:79%;
+    margin-top: 6%;
+    min-height:100vh;
+    padding:24px 32px;
+  }
+  .header-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:12px;
+    align-items:center;
+    margin-bottom:18px;
+  }
+  .title-wrap{
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    margin-right:auto;
+  }
+  .title{
+    font-size:26px;
+    font-weight:800;
+    color:var(--brand);
+  }
+  .subtitle{
+    font-size:13px;
+    color:var(--muted);
+  }
+  .pill{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 10px;
+    border-radius:999px;
+    border:1px solid var(--line);
+    background:#fff;
+    font-size:12px;
+    color:var(--muted);
+  }
+  .btn{
+    background:var(--brand);
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    padding:8px 14px;
+    font-weight:600;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-size:13px;
+  }
+  .btn:hover{ background:var(--brand-600); }
+  .btn.secondary{
+    background:#fff;
+    color:var(--ink);
+    border:1px solid var(--line);
+  }
+
+  .layout{
+    display:grid;
+    grid-template-columns:2fr 1.2fr;
+    gap:18px;
+  }
+  @media (max-width:1024px){
+    .page-wrap{ margin-left:0; width:100%; padding:16px; }
+    .layout{ grid-template-columns:1fr; }
+  }
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:16px;
+    box-shadow:0 10px 25px rgba(0,0,0,.04);
+    padding:16px 18px;
+  }
+  .card-title{
+    font-size:15px;
+    font-weight:700;
+    margin-bottom:10px;
+    color:var(--ink);
+  }
+  .meta-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+    gap:10px 18px;
+    font-size:13px;
+  }
+  .meta-label{
+    font-size:12px;
+    color:var(--muted);
+    margin-bottom:2px;
+  }
+  .meta-value{
+    font-size:13px;
+    color:var(--ink);
+  }
+
+  .table-wrap{ overflow:auto; margin-top:8px; }
+  table{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+    min-width:800px;
+  }
+  thead th{
+    background:#f3f4f6;
+    color:#111827;
+    font-weight:700;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    border-bottom:1px solid var(--line);
+    padding:8px 10px;
+  }
+  tbody td{
+    padding:8px 10px;
+    font-size:13px;
+    border-bottom:1px solid #f1f5f9;
+  }
+  tbody tr:nth-child(odd){ background:#fff; }
+  tbody tr:nth-child(even){ background:#fafafa; }
+
+  .num{ text-align:right; white-space:nowrap; }
+  .muted{ color:var(--muted); }
+
+  .totals{
+    margin-top:10px;
+    text-align:right;
+    font-size:13px;
+  }
+  .totals div{
+    margin-bottom:2px;
+  }
+  .totals strong{
+    font-size:14px;
+  }
+
+  .badge-status{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 10px;
+    border-radius:999px;
+    border:1px solid #bbf7d0;
+    background:#ecfdf5;
+    color:#166534;
+    font-size:12px;
+  }
+
+  .attachment-box{
+    font-size:13px;
+    color:var(--muted);
+  }
+  .attachment-box a{
+    color:var(--brand-600);
+    text-decoration:none;
+    font-weight:600;
+  }
+  .attachment-box a:hover{
+    text-decoration:underline;
+  }
+</style>
+
+<div class="page-wrap">
+  <div class="header-row">
+    <div class="title-wrap">
+      <div class="title">Supplier Credit {{ credit.ref_no }}</div>
+      <div class="subtitle">
+        {% if credit.supplier %}
+          {{ credit.supplier.company_name }}
+        {% else %}
+          {{ credit.supplier_name }}
+        {% endif %}
+        · {{ credit.credit_date|date:"d M Y" }}
+      </div>
+    </div>
+
+    <span class="pill">
+      <i class='bx bx-purchase-tag'></i>
+      Total: {{ credit.total_amount|floatformat:2|intcomma }} Ush
+    </span>
+
+    <a href="{% url 'expenses:supplier-credit-edit' credit.id %}" class="btn secondary" style="text-decoration:none;">
+      <i class='bx bx-edit'></i> Edit
+    </a>
+    <a href="{% url 'expenses:supplier-credit-list' %}" class="btn secondary" style="text-decoration:none;">
+      <i class='bx bx-arrow-back'></i> Back to list
+    </a>
+  </div>
+
+  <div class="layout">
+    <!-- Left: Lines -->
+    <div class="card">
+      <div class="card-title">
+        Credit Lines
+        <span style="float:right;" class="badge-status">
+          <i class='bx bx-check-circle'></i> Open
+        </span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th>Customer / Project</th>
+              <th>Class</th>
+              <th style="text-align:right;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in credit.lines.all %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td>{{ line.line_date|date:"d/m/Y" }}</td>
+              <td>
+                {% if line.category %}
+                  {{ line.category.account_name }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>{{ line.description }}</td>
+              <td class="muted">
+                {% if line.customer %}
+                  {{ line.customer.customer_name }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td class="muted">
+                {% if line.class_field %}
+                  {{ line.class_field.class_name }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td class="num">
+                {{ line.amount|floatformat:2|intcomma }}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="7" class="muted" style="text-align:center; padding:14px;">
+                No lines on this supplier credit.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="totals">
+        <div>
+          Lines total: {{ total_lines|floatformat:2|intcomma }} Ush
+        </div>
+        <div>
+          <strong>Credit total: {{ credit.total_amount|floatformat:2|intcomma }} Ush</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Header / Meta -->
+    <div class="card">
+      <div class="card-title">Summary</div>
+      <div class="meta-grid" style="margin-bottom:14px;">
+        <div>
+          <div class="meta-label">Supplier</div>
+          <div class="meta-value">
+            {% if credit.supplier %}
+              {{ credit.supplier.company_name }}
+            {% else %}
+              {{ credit.supplier_name }}
+            {% endif %}
+          </div>
+        </div>
+        <div>
+          <div class="meta-label">Credit Date</div>
+          <div class="meta-value">{{ credit.credit_date|date:"d/m/Y" }}</div>
+        </div>
+        <div>
+          <div class="meta-label">Reference No.</div>
+          <div class="meta-value">{{ credit.ref_no }}</div>
+        </div>
+        <div>
+          <div class="meta-label">Location</div>
+          <div class="meta-value">
+            {% if credit.location %}{{ credit.location }}{% else %}—{% endif %}
+          </div>
+        </div>
+        <div>
+          <div class="meta-label">Mailing Address</div>
+          <div class="meta-value">
+            {% if credit.mailing_address %}{{ credit.mailing_address }}{% else %}—{% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <div class="meta-label">Memo</div>
+        <div class="meta-value">
+          {% if credit.memo %}
+            {{ credit.memo|linebreaksbr }}
+          {% else %}
+            <span class="muted">No memo provided.</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="attachment-box">
+        <div class="meta-label">Attachment</div>
+        {% if credit.attachments %}
+          <p>
+            <i class='bx bx-paperclip'></i>
+            <a href="{{ credit.attachments.url }}" target="_blank">Download file</a>
+          </p>
+        {% else %}
+          <p class="muted">No attachment uploaded.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

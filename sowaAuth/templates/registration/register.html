@@ -5,15 +5,6 @@
       <img src="{% static 'sowaf/images/yo-logo.png' %}" alt="YoAccountant">
     </div>
     <h4 style="color:green; text-align:center;">Signup here! </h4>
-    {% if messages %}
-      {% for message in messages %}
-        {% if messages.tags == 'error' %}
-        <p style="color:green; text-align:center;">{{message}}</p>
-        {% else %}
-        <p style="color:green; text-align:center;">{{message}}</p>
-        {% endif %}
-      {% endfor %}
-    {% endif %}
     <!-- Sign Up Form -->
     <form id="signup-form" action="{% url 'sowaAuth:register' %}" method="POST">
       {% csrf_token %}
@@ -52,6 +43,42 @@
       <div class="social-btn"><img src="https://img.icons8.com/fluency/16/microsoft-outlook-2019.png" /> Outlook</div>
       <div class="social-btn"><img src="https://img.icons8.com/color/16/yahoo.png" /> Yahoo</div>
     </div>
-    
+    {% comment %} error popup message {% endcomment %}
+{% if messages %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-  
+<script>
+  {% for message in messages %}
+    Swal.fire({
+      icon: "{% if 'error' in message.tags %}error{% else %}success{% endif %}",
+      title: "{{ message.tags|capfirst }}",
+      text: "{{ message }}",
+      confirmButtonText: "OK",
+
+      /* --- Custom green theme --- */
+      background: "#f0fff5",        // soft green background
+      color: "#111",                // text color
+      iconColor: "{% if 'error' in message.tags %}#e63946{% else %}#39B54B{% endif %}",
+
+      customClass: {
+          confirmButton: "swal-confirm-btn"
+      }
+    });
+  {% endfor %}
+</script>
+
+<style>
+  .swal-confirm-btn {
+      background-color: #39B54B !important;
+      color: white !important;
+      border-radius: 8px !important;
+      padding: 10px 22px !important;
+      font-size: 16px !important;
+  }
+  .swal-confirm-btn:hover {
+      background-color: #2da73e !important;
+  }
+</style>
+
+{% endif %}
+{% include "includes/footer.html" %}

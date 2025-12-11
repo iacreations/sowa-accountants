@@ -1,0 +1,203 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cheque Detail</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+    body { background: #f4f6f8; padding: 30px; }
+    .container { background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 90%; margin: auto; }
+    h2.title { text-align: center; color: #39B54B; margin-bottom: 25px; font-size: 26px; font-weight: 700; }
+    .header-actions { display: flex; justify-content: space-between; margin-bottom: 20px; }
+    .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+    .btn-back { background: #f5f5f5; color: #39B54B; }
+    .btn-edit { background: #39B54B; color: #fff; }
+    .section-wrapper { background: #f9f9f9; padding: 18px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .section-title { font-weight: 600; margin-bottom: 12px; color: #555; }
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 30px; }
+    .info-row-label { font-weight: 600; color: #666; }
+    .info-row-value { margin-top: 2px; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #fafafa; text-align: left; }
+    .totals { text-align: right; margin-top: 10px; font-weight: 600; }
+
+    .attachment-link { margin-top: 8px; display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-actions">
+      <a href="{% url 'expenses:cheque-list' %}" class="btn btn-back">
+        <i class='bx bx-arrow-back'></i> Back to Cheques
+      </a>
+      <a href="{% url 'expenses:cheque-edit' cheque.id %}" class="btn btn-edit">
+        <i class='bx bx-edit'></i> Edit
+      </a>
+    </div>
+
+    <h2 class="title">Cheque #{{ cheque.cheque_no }}</h2>
+
+    <!-- Cheque summary -->
+    <div class="section-wrapper">
+      <div class="section-title">Cheque Information</div>
+      <div class="info-grid">
+        <div>
+          <div class="info-row-label">Payee</div>
+          <div class="info-row-value">
+            {% if cheque.payee_supplier %}
+              {{ cheque.payee_supplier.company_name }}
+            {% else %}
+              {{ cheque.payee_name|default:"—" }}
+            {% endif %}
+          </div>
+        </div>
+
+        <div>
+          <div class="info-row-label">Bank Account</div>
+          <div class="info-row-value">
+            {{ cheque.bank_account.account_name }}
+          </div>
+        </div>
+
+        <div>
+          <div class="info-row-label">Payment Date</div>
+          <div class="info-row-value">
+            {{ cheque.payment_date|date:"d M Y" }}
+          </div>
+        </div>
+
+        <div>
+          <div class="info-row-label">Location</div>
+          <div class="info-row-value">
+            {{ cheque.location|default:"—" }}
+          </div>
+        </div>
+
+        <div>
+          <div class="info-row-label">Mailing Address</div>
+          <div class="info-row-value">
+            {{ cheque.mailing_address|default:"—" }}
+          </div>
+        </div>
+
+        <div>
+          <div class="info-row-label">Total Amount</div>
+          <div class="info-row-value">
+            UGX {{ cheque.total_amount|floatformat:2 }}
+          </div>
+        </div>
+      </div>
+
+      {% if cheque.memo %}
+      <div style="margin-top: 15px;">
+        <div class="info-row-label">Memo</div>
+        <div class="info-row-value">{{ cheque.memo }}</div>
+      </div>
+      {% endif %}
+
+      {% if cheque.attachments %}
+      <div class="attachment-link">
+        <i class='bx bx-paperclip'></i>
+        <a href="{{ cheque.attachments.url }}" target="_blank">
+          View attachment
+        </a>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Category lines -->
+    <div class="section-wrapper">
+      <div class="section-title">Category Details</div>
+      {% if cheque.category_lines.all %}
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th>Customer / Project</th>
+              <th>Class</th>
+              <th>Billable</th>
+              <th style="text-align:right;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in cheque.category_lines.all %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td>{{ line.category.account_name }}</td>
+              <td>{{ line.description }}</td>
+              <td>{% if line.customer %}{{ line.customer.customer_name }}{% else %}—{% endif %}</td>
+              <td>{% if line.class_field %}{{ line.class_field.class_name }}{% else %}—{% endif %}</td>
+              <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
+              <td style="text-align:right;">UGX {{ line.amount|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="totals">
+          Category total: UGX {{ cat_total|floatformat:2 }}
+        </div>
+      {% else %}
+        <p>No category lines.</p>
+      {% endif %}
+    </div>
+
+    <!-- Item lines -->
+    <div class="section-wrapper">
+      <div class="section-title">Item Details</div>
+      {% if cheque.item_lines.all %}
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product / Service</th>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Rate</th>
+              <th>Customer / Project</th>
+              <th>Class</th>
+              <th>Billable</th>
+              <th style="text-align:right;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in cheque.item_lines.all %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td>{{ line.product.name }}</td>
+              <td>{{ line.description }}</td>
+              <td>{{ line.qty }}</td>
+              <td>UGX {{ line.rate|floatformat:2 }}</td>
+              <td>{% if line.customer %}{{ line.customer.customer_name }}{% else %}—{% endif %}</td>
+              <td>{% if line.class_field %}{{ line.class_field.class_name }}{% else %}—{% endif %}</td>
+              <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
+              <td style="text-align:right;">UGX {{ line.amount|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="totals">
+          Item total: UGX {{ item_total|floatformat:2 }}
+        </div>
+      {% else %}
+        <p>No item lines.</p>
+      {% endif %}
+    </div>
+
+    <!-- Grand totals -->
+    <div class="section-wrapper">
+      <div class="section-title">Totals</div>
+      <div class="totals">
+        Subtotal (categories + items): UGX {{ subtotal|floatformat:2 }}<br>
+        Cheque Total: <strong>UGX {{ cheque.total_amount|floatformat:2 }}</strong>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -24,3 +24,29 @@ def deposit_accounts_qs():
         )
         .order_by("account_name", "account_number")
     )
+
+# ==== NEW: Expense accounts helper ====
+
+EXPENSE_ACCOUNT_TYPES = [
+    "OPERATING_EXPENSE",
+    "INVESTING_EXPENSE",
+    "FINANCING_EXPENSE",
+    "INCOME_TAX_EXPENSE",
+]
+
+def expense_accounts_qs():
+    """
+    Accounts that can be used as expense categories on the expense form
+    (and that we will DR in the General Ledger).
+
+    Includes both level-2 accounts and their sub-accounts.
+    """
+    return (
+        Account.objects
+        .filter(
+            Q(account_type__in=EXPENSE_ACCOUNT_TYPES) |
+            Q(parent__account_type__in=EXPENSE_ACCOUNT_TYPES),
+            is_active=True,
+        )
+        .order_by("account_name", "account_number")
+    )

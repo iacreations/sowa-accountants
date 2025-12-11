@@ -1,0 +1,357 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2a8b3b;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#e5e7eb;
+    --bg:#f8fafc;
+    --card:#ffffff;
+  }
+
+  .page-wrap{
+    margin-left: 20%;
+    background: var(--bg);
+    box-sizing: border-box;
+    width: 79%;
+    margin-top: 6%;
+    min-height: 100vh;
+    padding: 24px 32px;
+  }
+
+  .toolbar{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    flex-wrap:wrap;
+    margin-bottom:18px;
+  }
+  .title-wrap{
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    margin-right:auto;
+  }
+  .title{
+    font-size:26px;
+    font-weight:800;
+    color:var(--brand);
+  }
+  .subtitle{
+    font-size:12px;
+    color:var(--muted);
+  }
+
+  .search{
+    position:relative;
+  }
+  .search input{
+    width:240px;
+    max-width:45vw;
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:8px 32px 8px 32px;
+    outline:none;
+    transition:.15s border-color ease;
+  }
+  .search input:focus{ border-color: var(--brand); }
+  .search .icon{
+    position:absolute;
+    left:8px;
+    top:50%;
+    transform:translateY(-50%);
+    font-size:18px;
+    color:var(--muted);
+  }
+
+  .btn{
+    background:var(--brand);
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    padding:8px 14px;
+    font-weight:600;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    box-shadow:0 1px 0 rgba(0,0,0,.05);
+    font-size:13px;
+  }
+  .btn:hover{ background:var(--brand-600); }
+  .btn.secondary{
+    background:#fff;
+    color:var(--ink);
+    border:1px solid var(--line);
+    box-shadow:none;
+  }
+  .btn.secondary:hover{
+    border-color:#d1d5db;
+  }
+
+  .filters-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    margin-bottom:10px;
+    align-items:center;
+  }
+  .pill{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:6px 10px;
+    border-radius:999px;
+    background:#ffffff;
+    border:1px solid var(--line);
+    font-size:12px;
+    color:#111827;
+  }
+  .filter-field{
+    display:flex;
+    align-items:center;
+    gap:4px;
+    font-size:12px;
+    color:var(--muted);
+  }
+  .filter-field input{
+    padding:4px 6px;
+    border-radius:6px;
+    border:1px solid var(--line);
+    font-size:12px;
+  }
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:16px;
+    box-shadow:0 10px 25px rgba(0,0,0,.04);
+    overflow:hidden;
+  }
+  .card-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:10px 14px;
+    border-bottom:1px solid var(--line);
+    background:#f9fafb;
+  }
+  .card-header .summary{
+    font-size:13px;
+    color:var(--muted);
+  }
+  .card-header .summary strong{
+    color:var(--ink);
+  }
+
+  .table-wrap{ overflow:auto; }
+  table{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+    min-width:900px;
+  }
+  thead th{
+    position:sticky;
+    top:0;
+    z-index:2;
+    background:#f3f4f6;
+    color:#111827;
+    font-weight:700;
+    text-transform:uppercase;
+    font-size:11px;
+    letter-spacing:.06em;
+    border-bottom:1px solid var(--line);
+    padding:10px 12px;
+  }
+  tbody td{
+    padding:10px 12px;
+    font-size:13px;
+    color:#0b1324;
+    border-bottom:1px solid #f1f5f9;
+  }
+  tbody tr:nth-child(odd){ background:#fff; }
+  tbody tr:nth-child(even){ background:#fafafa; }
+  tbody tr:hover{ background:#f0fdf4; }
+
+  .num{ text-align:right; white-space:nowrap; }
+  .muted{ color:var(--muted); }
+
+  .status-badge{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-size:11px;
+    padding:4px 8px;
+    border-radius:999px;
+    border:1px solid #e5e7eb;
+    background:#f9fafb;
+    color:#374151;
+  }
+
+  .action-cell{
+    text-align:right;
+    white-space:nowrap;
+  }
+  .action-link{
+    color:var(--brand-600);
+    text-decoration:none;
+    font-weight:600;
+    margin-left:8px;
+  }
+  .action-link:hover{
+    text-decoration:underline;
+  }
+
+  @media (max-width:1024px){
+    .page-wrap{
+      margin-left:0;
+      width:100%;
+      padding:16px;
+    }
+  }
+</style>
+
+<div class="page-wrap">
+  <div class="toolbar">
+    <div class="title-wrap">
+      <div class="title">Supplier Credits</div>
+      <div class="subtitle">
+        View and manage all supplier credit notes.
+      </div>
+    </div>
+
+    <form method="get" class="search">
+      <i class='bx bx-search icon'></i>
+      <input type="text"
+             name="q"
+             placeholder="Search supplier, ref no, location…"
+             value="{{ request.GET.q }}">
+    </form>
+
+    <a href="{% url 'expenses:supplier-credit' %}" class="btn">
+      <i class='bx bx-plus'></i> New Supplier Credit
+    </a>
+  </div>
+
+  <div class="filters-row">
+    <div class="pill">
+      <i class='bx bx-slider'></i> All credits ({{ count_all }})
+    </div>
+    <form method="get" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <div class="filter-field">
+        <span>From:</span>
+        <input type="date" name="from" value="{{ request.GET.from }}">
+      </div>
+      <div class="filter-field">
+        <span>To:</span>
+        <input type="date" name="to" value="{{ request.GET.to }}">
+      </div>
+      {% if request.GET.q %}
+        <input type="hidden" name="q" value="{{ request.GET.q }}">
+      {% endif %}
+      <button class="btn secondary" type="submit">
+        <i class='bx bx-filter-alt'></i> Apply
+      </button>
+      <a href="{% url 'expenses:supplier-credit-list' %}" class="btn secondary" style="text-decoration:none;">
+        Clear
+      </a>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="summary">
+        <strong>Total credits:</strong>
+        Ush {{ totals.grand|default:0|floatformat:2|intcomma }}
+      </div>
+      <div class="summary muted">
+        Subtotal: {{ totals.subtotal|default:0|floatformat:2|intcomma }} ·
+        Tax: {{ totals.tax|default:0|floatformat:2|intcomma }}
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Ref No.</th>
+            <th>Supplier</th>
+            <th>Location</th>
+            <th>Memo</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th style="text-align:right;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sc in credits %}
+          <tr>
+            <td>{{ sc.credit_date|date:"d/m/Y" }}</td>
+            <td><strong>{{ sc.ref_no }}</strong></td>
+            <td>
+              {% if sc.supplier %}
+                {{ sc.supplier.company_name }}
+              {% else %}
+                {{ sc.supplier_name }}
+              {% endif %}
+            </td>
+            <td class="muted">{{ sc.location }}</td>
+            <td class="muted">
+              {% if sc.memo %}
+                {{ sc.memo|truncatechars:40 }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="num">
+              {{ sc.total_amount|floatformat:2|intcomma }}
+            </td>
+            <td>
+              <span class="status-badge">
+                <i class='bx bx-check-circle'></i> Open
+              </span>
+            </td>
+            <td class="action-cell">
+              <a href="{% url 'expenses:supplier-credit-detail' sc.id %}" class="action-link">View</a>
+              <a href="{% url 'expenses:supplier-credit-edit' sc.id %}" class="action-link">Edit</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" class="muted" style="text-align:center; padding:16px;">
+              No supplier credits found.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const searchForm  = document.querySelector('.toolbar .search');
+    if (!searchForm) return;
+    const searchInput = searchForm.querySelector('input[name="q"]');
+    if (!searchInput) return;
+
+    let typingTimer = null;
+    const delay = 400; // ms – adjust if you want faster/slower
+
+    searchInput.addEventListener('input', function () {
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(function () {
+        searchForm.submit();  // submit GET form, page reloads with filtered results
+      }, delay);
+    });
+  });
+</script>
+
+{% include 'includes/footer.html' %}

@@ -32,6 +32,26 @@ from accounts.models import Account, JournalEntry, JournalLine
 from .services import generate_unique_ref_no, parse_date_flexible, status_for_invoice, _payment_prefill_rows,_coerce_decimal
 from accounts.utils import deposit_accounts_qs
 from collections import defaultdict
+from accounts.middleware import get_current_user, get_current_ip
+
+def apply_audit_fields(obj):
+    """
+    Safely attach audit fields if the model supports them.
+    Does NOT break models that don't have audit columns.
+    """
+    user = get_current_user()
+    ip   = get_current_ip()
+
+    if hasattr(obj, "created_by") and not obj.pk:
+        obj.created_by = user
+    if hasattr(obj, "updated_by"):
+        obj.updated_by = user
+
+    if hasattr(obj, "created_ip") and not obj.pk:
+        obj.created_ip = ip
+    if hasattr(obj, "updated_ip"):
+        obj.updated_ip = ip
+
 
 def _find_control_account(detail_type=None, name_contains=None):
     """
@@ -221,7 +241,7 @@ def _post_payment_to_ledger(payment: Payment):
     # 4) Create JournalEntry
     entry_date = payment.payment_date or timezone.localdate()
 
-    bits = [f"Payment {payment.id:04d}"]
+    bits = [f"Sales Collection {payment.id:04d}"]
     if payment.customer_id and getattr(payment.customer, "customer_name", None):
         bits.append(f"– {payment.customer.customer_name}")
     if payment.reference_no:
@@ -253,14 +273,8 @@ def _post_payment_to_ledger(payment: Payment):
         credit=total_applied,
     )
 
-    from collections import defaultdict
-from decimal import Decimal
-from django.utils import timezone
-from django.db.models.functions import Coalesce
-from django.db.models import Sum, F, Value
 
-# ...
-
+# posting receipt to gl
 def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
     """
     Create / replace the journal entry for a given sales receipt.
@@ -702,6 +716,7 @@ def add_invoice(request):
         # Update invoice totals
         invoice.total_vat = total_vat
         invoice.total_due = total_due
+        apply_audit_fields(invoice)
         invoice.save()
         # ⇨ Post to General Ledger
         _post_invoice_to_ledger(invoice)
@@ -994,7 +1009,7 @@ def edit_invoice(request, pk: int):
         inv.total_vat       = total_vat
         inv.shipping_fee    = shipping_fee
         inv.total_due       = (subtotal - total_discount + total_vat + shipping_fee).quantize(Decimal("0.01"))
-
+        apply_audit_fields(inv)
         inv.save()
         # ⇨ Re-post to General Ledger (delete + recreate entry)
         _post_invoice_to_ledger(inv)
@@ -1170,7 +1185,8 @@ def receive_payment_view(request):
                 tags=tags,
                 memo=memo,
             )
-
+            apply_audit_fields(payment)
+            payment.save()
             PaymentInvoice.objects.bulk_create([
                 PaymentInvoice(payment=payment, invoice_id=inv_id, amount_paid=amt)
                 for inv_id, amt in allocations
@@ -1402,6 +1418,7 @@ def payment_edit(request, pk: int):
         payment.reference_no  = reference_no if reference_no else payment.reference_no
         payment.tags          = tags
         payment.memo          = memo
+        apply_audit_fields(payment)
         payment.save()
 
         # replace allocations
@@ -1589,7 +1606,8 @@ def sales_receipt_new(request):
             amount_paid=amount_paid,   # <-- save it
             balance=balance,
         )
-
+        apply_audit_fields(receipt)
+        receipt.save()
         # --- lines (use your posted names) ---
         products_ids = request.POST.getlist("product[]")
         descriptions = request.POST.getlist("description[]")
@@ -1698,6 +1716,7 @@ def sales_receipt_edit(request, pk: int):
         receipt.balance        = receipt.total_amount - receipt.amount_paid
         if receipt.balance < 0:
             receipt.balance = Decimal("0.00")
+        apply_audit_fields(receipt)
         receipt.save()
 
         # replace lines

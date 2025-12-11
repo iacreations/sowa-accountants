@@ -1,0 +1,152 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  /* reuse same styles as supplier_credit_list, shortened */
+  :root{--brand:#39B54B;--brand-600:#2a8b3b;--muted:#6b7280;--line:#e5e7eb;--bg:#f8fafc;--card:#fff;}
+  .page-wrap{margin-left:20%;background:var(--bg);width:79%;margin-top:6%;min-height:100vh;padding:24px 32px;}
+  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
+  .title{font-size:26px;font-weight:800;color:var(--brand);}
+  .subtitle{font-size:12px;color:var(--muted);}
+  .search{position:relative;}
+  .search input{width:240px;max-width:45vw;background:#fff;border:1px solid var(--line);border-radius:10px;
+                padding:8px 32px 8px 32px;outline:none;}
+  .search .icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:18px;color:var(--muted);}
+  .btn{background:var(--brand);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-weight:600;
+       cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:13px;}
+  .btn.secondary{background:#fff;color:#111;border:1px solid var(--line);}
+  .filters-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center;}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid var(--line);font-size:12px;}
+  .filter-field{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);}
+  .filter-field input{padding:4px 6px;border-radius:6px;border:1px solid var(--line);font-size:12px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.04);overflow:hidden;}
+  .card-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:#f9fafb;font-size:13px;}
+  .table-wrap{overflow:auto;}
+  table{width:100%;border-collapse:separate;border-spacing:0;min-width:900px;}
+  thead th{position:sticky;top:0;background:#f3f4f6;color:#111;font-weight:700;text-transform:uppercase;
+           font-size:11px;letter-spacing:.06em;border-bottom:1px solid var(--line);padding:10px 12px;}
+  tbody td{padding:10px 12px;font-size:13px;border-bottom:1px solid #f1f5f9;}
+  tbody tr:nth-child(odd){background:#fff;} tbody tr:nth-child(even){background:#fafafa;}
+  tbody tr:hover{background:#f0fdf4;}
+  .num{text-align:right;white-space:nowrap;}
+  .muted{color:var(--muted);}
+  .action-cell{text-align:right;white-space:nowrap;}
+  .action-link{color:var(--brand-600);text-decoration:none;font-weight:600;margin-left:8px;}
+  .action-link:hover{text-decoration:underline;}
+</style>
+
+<div class="page-wrap">
+  <div class="toolbar">
+    <div style="display:flex;flex-direction:column;gap:4px;margin-right:auto;">
+      <div class="title">Credit Card Payments</div>
+      <div class="subtitle">Pay down credit card balances.</div>
+    </div>
+
+    <form method="get" class="search">
+      <i class='bx bx-search icon'></i>
+      <input type="text" name="q"
+             placeholder="Search ref, card, bank, payee…"
+             value="{{ q }}">
+    </form>
+
+    <a href="{% url 'expenses:pay-down-credit' %}" class="btn">
+      <i class='bx bx-plus'></i> New payment
+    </a>
+  </div>
+
+  <div class="filters-row">
+    <div class="pill">
+      <i class='bx bx-slider'></i> All payments ({{ count_all }})
+    </div>
+    <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="filter-field">
+        <span>From:</span>
+        <input type="date" name="from" value="{{ from }}">
+      </div>
+      <div class="filter-field">
+        <span>To:</span>
+        <input type="date" name="to" value="{{ to }}">
+      </div>
+      {% if q %}
+        <input type="hidden" name="q" value="{{ q }}">
+      {% endif %}
+      <button class="btn secondary" type="submit">
+        <i class='bx bx-filter-alt'></i> Apply
+      </button>
+      <a href="{% url 'expenses:paydown-credit-list' %}" class="btn secondary" style="text-decoration:none;">
+        Clear
+      </a>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div><strong>Total paid:</strong> Ush {{ totals.grand|default:0|floatformat:2|intcomma }}</div>
+      <div class="muted">Subtotal: {{ totals.subtotal|floatformat:2|intcomma }} · Tax: {{ totals.tax|floatformat:2|intcomma }}</div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Ref No.</th>
+            <th>Credit Card</th>
+            <th>Bank / Cash</th>
+            <th>Payee</th>
+            <th>Location</th>
+            <th>Amount</th>
+            <th style="text-align:right;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in payments %}
+          <tr>
+            <td>{{ p.payment_date|date:"d/m/Y" }}</td>
+            <td><strong>{{ p.ref_no }}</strong></td>
+            <td>{{ p.credit_card.account_name }}</td>
+            <td>{{ p.bank_account.account_name }}</td>
+            <td>
+              {% if p.payee_supplier %}
+                {{ p.payee_supplier.company_name }}
+              {% else %}
+                {{ p.payee_name|default:"—" }}
+              {% endif %}
+            </td>
+            <td class="muted">{{ p.location|default:"—" }}</td>
+            <td class="num">{{ p.amount|floatformat:2|intcomma }}</td>
+            <td class="action-cell">
+              <a href="{% url 'expenses:paydown-credit-detail' p.id %}" class="action-link">View</a>
+              <a href="{% url 'expenses:paydown-credit-edit' p.id %}" class="action-link">Edit</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" class="muted" style="text-align:center;padding:16px;">
+              No credit card payments found.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  // live search: auto-submit after typing
+  document.addEventListener('DOMContentLoaded', function(){
+    const form  = document.querySelector('.toolbar .search');
+    if (!form) return;
+    const input = form.querySelector('input[name="q"]');
+    if (!input) return;
+    let timer = null;
+    input.addEventListener('input', function(){
+      clearTimeout(timer);
+      timer = setTimeout(() => form.submit(), 400);
+    });
+  });
+</script>
+
+{% include 'includes/footer.html' %}

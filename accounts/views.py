@@ -12,9 +12,10 @@ from django.urls import reverse
 from django.http import HttpResponse,Http404
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
+from django.db import transaction
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
-from .models import Account, ColumnPreference, JournalEntry, JournalLine
+from .models import (Account, ColumnPreference, JournalEntry, JournalLine, AuditTrail)
 
 
 # default visible columns (match the checkboxes in the template)
@@ -102,6 +103,15 @@ def accounts(request):
         },
     )
 
+# audit trail view
+def audit_trail(request):
+    logs = AuditTrail.objects.select_related("user").all()
+
+    return render(request, "audit_trail.html", {
+        "logs": logs
+    })
+
+
 
 @login_required
 def save_column_prefs(request):
@@ -133,14 +143,15 @@ def save_column_prefs(request):
 
 # ading an account in the coa
 @login_required
+@transaction.atomic
 def add_account(request):
     if request.method == "POST":
-        account_name = request.POST.get("account_name")
+        account_name   = request.POST.get("account_name")
         account_number = request.POST.get("account_number")
-        account_type = request.POST.get("account_type")  # code from select
-        detail_type = request.POST.get("detail_type")
-        tax_category = request.POST.get("tax_category")
-        is_subaccount = request.POST.get("is_subaccount") == "on"
+        account_type   = request.POST.get("account_type")  # code from select
+        detail_type    = request.POST.get("detail_type")
+        tax_category   = request.POST.get("tax_category")
+        is_subaccount  = request.POST.get("is_subaccount") == "on"
 
         parent = None
         parent_id = request.POST.get("parent")
@@ -173,22 +184,20 @@ def add_account(request):
         )
         new_account.save()
 
-        # 2) If opening balance & balance-sheet account, create Journal Entry
+        # 2) Opening balance JE (same as you had)
         if opening_balance != 0:
             level1 = new_account.level1_group  # Assets / Liabilities / Equity / Income / Expenses
 
             if level1 in ["Assets", "Liabilities", "Equity"]:
-                # Get or create the special "Opening Balance Equity" account
                 opening_equity_acct, _ = Account.objects.get_or_create(
                     account_name="Opening Balance Equity",
-                    account_type="OWNER_EQUITY",  # equity type
+                    account_type="OWNER_EQUITY",
                     defaults={
                         "detail_type": "Opening balances",
                         "is_active": True,
                     },
                 )
 
-                # Create Journal Entry
                 je = JournalEntry.objects.create(
                     date=as_of,
                     description=f"Opening balance for {new_account.account_name}",
@@ -198,7 +207,6 @@ def add_account(request):
 
                 amount = abs(opening_balance)
 
-                # Assets normally have debit balance, Liabilities/Equity normally credit
                 if level1 == "Assets":
                     # Debit the asset account, Credit Opening Balance Equity
                     JournalLine.objects.create(
@@ -237,8 +245,146 @@ def add_account(request):
 
         return redirect("accounts:accounts")
 
+    # GET
     parents = Account.objects.all()
-    return render(request, "coa_form.html", {"parents": parents})
+    return render(request, "coa_form.html", {
+        "parents": parents,
+        "account": None,      # important so template knows this is ADD mode
+    })
+
+
+@transaction.atomic
+def edit_account(request, pk):
+    """
+    Edit an existing Account including its opening balance journal entry.
+    """
+    account = get_object_or_404(Account, pk=pk)
+
+    if request.method == "POST":
+        account_name   = request.POST.get("account_name")
+        account_number = request.POST.get("account_number")
+        account_type   = request.POST.get("account_type")
+        detail_type    = request.POST.get("detail_type")
+        tax_category   = request.POST.get("tax_category")
+        is_subaccount  = request.POST.get("is_subaccount") == "on"
+
+        parent = None
+        parent_id = request.POST.get("parent")
+        if is_subaccount and parent_id:
+            parent = Account.objects.filter(id=parent_id).first()
+
+        opening_balance_str = request.POST.get("opening_balance") or "0"
+        try:
+            new_opening_balance = Decimal(opening_balance_str)
+        except Exception:
+            new_opening_balance = Decimal("0")
+
+        as_of_str = request.POST.get("as_of")
+        as_of = as_of_str or timezone.now().date()
+
+        description = request.POST.get("description")
+
+        # ---- update account fields ----
+        account.account_name   = account_name
+        account.account_number = account_number
+        account.account_type   = account_type
+        account.detail_type    = detail_type
+        account.tax_category   = tax_category
+        account.is_subaccount  = is_subaccount
+        account.parent         = parent
+        account.opening_balance = new_opening_balance
+        account.as_of          = as_of
+        account.description    = description
+        account.save()
+
+        # ---- update opening balance journal entry ----
+        # Only for balance-sheet accounts
+        level1 = account.level1_group
+        je = JournalEntry.objects.filter(
+            source_type="OPENING_BALANCE",
+            source_id=account.id
+        ).first()
+
+        if level1 not in ["Assets", "Liabilities", "Equity"]:
+            # Not a balance-sheet account: remove any OB entry
+            if je:
+                je.delete()
+        else:
+            if new_opening_balance == 0:
+                # zero balance: remove any OB entry
+                if je:
+                    je.delete()
+            else:
+                # Ensure Opening Balance Equity exists
+                opening_equity_acct, _ = Account.objects.get_or_create(
+                    account_name="Opening Balance Equity",
+                    account_type="OWNER_EQUITY",
+                    defaults={
+                        "detail_type": "Opening balances",
+                        "is_active": True,
+                    },
+                )
+
+                amount = abs(new_opening_balance)
+
+                if not je:
+                    je = JournalEntry.objects.create(
+                        date=as_of,
+                        description=f"Opening balance for {account.account_name}",
+                        source_type="OPENING_BALANCE",
+                        source_id=account.id,
+                    )
+                else:
+                    je.date = as_of
+                    je.description = f"Opening balance for {account.account_name}"
+                    je.save()
+                    # wipe existing lines and rebuild
+                    JournalLine.objects.filter(entry=je).delete()
+
+                if level1 == "Assets":
+                    # DR asset, CR Opening Balance Equity
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=account,
+                        debit=amount,
+                        credit=Decimal("0"),
+                    )
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=opening_equity_acct,
+                        debit=Decimal("0"),
+                        credit=amount,
+                    )
+                else:
+                    # Liabilities/Equity: CR account, DR Opening Balance Equity
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=account,
+                        debit=Decimal("0"),
+                        credit=amount,
+                    )
+                    JournalLine.objects.create(
+                        entry=je,
+                        account=opening_equity_acct,
+                        debit=amount,
+                        credit=Decimal("0"),
+                    )
+
+        # redirects
+        save_action = request.POST.get("save_action")
+        if save_action == "save&new":
+            return redirect("accounts:add-account")
+        elif save_action == "save&close":
+            return redirect("accounts:accounts")
+
+        return redirect("accounts:accounts")
+
+    # GET: show form with existing values
+    parents = Account.objects.exclude(pk=account.pk)
+    return render(request, "coa_form.html", {
+        "parents": parents,
+        "account": account,
+    })
 # working on the activate and make inactive 
 @login_required
 def deactivate_account(request, pk):
@@ -257,30 +403,97 @@ def activate_account(request, pk):
 
 # the general ledger logic
 # making the general ledger rows linkable
+
 def get_entry_link(entry):
     """
-    Map a JournalEntry to a URL where the transaction was created.
-    Adjust reverse(...) names to match your actual URLs.
+    Map a JournalEntry to the EDIT page of the original transaction.
+    Falls back to a journal entry edit/detail view if we don't know the source.
     """
-    # Opening balances from the Chart of Accounts form
-    if entry.source_type == "OPENING_BALANCE":
-        # Example: maybe later you have an account edit page
-        # return reverse("accounts:edit-account", args=[entry.source_id])
-        return reverse("accounts:accounts")  # for now, send them to COA
 
-    # Example mappings – adjust to your app structure
-    if entry.source_type == "INVOICE":
-        return reverse("sales:invoice-detail", args=[entry.source_id])
+    # normalise source_type to uppercase to handle both 'expense'/'EXPENSE'
+    st = (entry.source_type or "").upper()
+    sid = entry.source_id
 
-    if entry.source_type == "BILL":
-        return reverse("expenses:bill-detail", args=[entry.source_id])
+    # Opening balances from Chart of Accounts -> edit that account
+    if st == "OPENING_BALANCE":
+        if sid:
+            # sid is the Account PK we stored when creating the JE
+            return reverse("accounts:edit-account", args=[sid])
+        # fallback if somehow source_id is missing
+        return reverse("accounts:accounts")
+    
+        # ---- CUSTOMER OPENING BALANCE ---------------------------------------
+    if st == "CUSTOMER_OPENING_BALANCE" and sid:
+        return reverse("sowaf:edit-customer", args=[sid])
 
-    # Fallback: maybe a generic journal entry detail view (you can add later)
+
+    # ---- SALES / INVOICES -------------------------------------------------
+    if st == "INVOICE" and sid:
+        # if you have an invoice-edit view, prefer that:
+        try:
+            return reverse("sales:edit-invoice", args=[sid])
+        except Exception:
+            # fall back to the detail view you already had wired
+            return reverse("sales:invoice-detail", args=[sid])
+# ---- SALES / PAYMENTS -------------------------------------------------
+    if st == "PAYMENT" and sid:
+        # if you have an payment-edit view, prefer that:
+        try:
+            return reverse("sales:payment-edit", args=[sid])
+        except Exception:
+            # fall back to the detail view you already had wired
+            return reverse("sales:payment-detail", args=[sid])
+# ---- SALES / RECEIPTS -------------------------------------------------
+    if st == "SALES_RECEIPT" and sid:
+        # if you have an receipt-edit view, prefer that:
+        try:
+            return reverse("sales:receipt-edit", args=[sid])
+        except Exception:
+            # fall back to the detail view you already had wired
+            return reverse("sales:receipt-detail", args=[sid])
+
+    # ---- EXPENSES MODULE ---------------------------------------------------
+    # Bill
+    if st == "BILL" and sid:
+        return reverse("expenses:bill-edit", args=[sid])
+
+    # Expense
+    if st == "EXPENSE" and sid:
+        return reverse("expenses:expense-edit", args=[sid])
+
+    # Cheque
+    if st == "CHEQUE" and sid:
+        return reverse("expenses:cheque-edit", args=[sid])
+
+    # Purchase Order
+    if st == "PURCHASE_ORDER" and sid:
+        return reverse("expenses:purchase-order-edit", args=[sid])
+
+    # Supplier Credit
+    if st == "SUPPLIER_CREDIT" and sid:
+        return reverse("expenses:supplier-credit-edit", args=[sid])
+
+    # Pay Down Credit Card
+    if st == "PAYDOWN_CREDIT" and sid:
+        return reverse("expenses:paydown-credit-edit", args=[sid])
+
+    # Credit Card Credit
+    if st == "CREDIT_CARD_CREDIT" and sid:
+        return reverse("expenses:credit-card-credit-edit", args=[sid])
+
+    # ---- FALLBACK: MANUAL JOURNALS ---------------------------------------
+    # If we get here, either source_type is empty/unknown,
+    # or we couldn't reverse a URL above.
     try:
-        return reverse("accounts:journal-entry-detail", args=[entry.id])
-    except:
-        return "#"
- 
+        # if you have an edit view for journal entries
+        return reverse("accounts:journal-entry-edit", args=[entry.id])
+    except Exception:
+        try:
+            # fall back to your old detail view if edit doesn't exist
+            return reverse("accounts:journal-entry-detail", args=[entry.id])
+        except Exception:
+            # last resort – no link, but don't break the GL page
+            return "#" 
 
 @login_required
 def general_ledger(request):
@@ -294,10 +507,10 @@ def general_ledger(request):
 
     accounts = Account.objects.filter(is_active=True).order_by("account_name")
 
-    # base filtered queryset
+    # ✅ UPDATED: newest --> oldest (DEC → NOV)
     lines_qs = JournalLine.objects.select_related("entry", "account").order_by(
-        "entry__date",
-        "id"
+        "-entry__date",
+        "-id"
     )
 
     if account_id:
@@ -339,9 +552,14 @@ def general_ledger(request):
             else:
                 balance += ln.credit - ln.debit
 
+            #Rename in export too
+            desc = ln.entry.description or ""
+            if desc.lower().startswith("payment"):
+                desc = desc.replace("Payment", "Sales Collection", 1)
+
             writer.writerow([
                 ln.entry.date.strftime("%Y-%m-%d"),
-                ln.entry.description,
+                desc,
                 ln.account.account_name,
                 ln.entry.id,
                 float(ln.debit),
@@ -365,7 +583,7 @@ def general_ledger(request):
         mt["balance"] = mt["debit"] - mt["credit"]
 
     # ====== PAGINATION ======
-    paginator = Paginator(all_lines, 50)  # 50 lines per page
+    paginator = Paginator(all_lines, 50)
     page_obj  = paginator.get_page(page_num)
     page_lines = page_obj.object_list
 
@@ -391,9 +609,14 @@ def general_ledger(request):
         total_debit += ln.debit
         total_credit += ln.credit
 
+        #FINAL DISPLAY RENAMING (Ledger UI)
+        description = ln.entry.description or ""
+        if description.lower().startswith("payment"):
+            description = description.replace("Payment", "Sales Collection", 1)
+
         running_rows.append({
             "date": ln.entry.date,
-            "description": ln.entry.description,
+            "description": description,
             "account": ln.account.account_name,
             "reference": ln.entry.id,
             "debit": ln.debit,
@@ -415,6 +638,7 @@ def general_ledger(request):
         "date_from": date_from,
         "date_to": date_to,
     })
+
 # journel entry lists
 @login_required
 def journal_entries(request):
@@ -429,11 +653,16 @@ def journal_entries(request):
         grand_credit=Sum("credit"),
     )
 
+    # ADD EDIT URLs JUST LIKE GL
+    for entry in entries:
+        entry.edit_url = get_entry_link(entry)
+
     context = {
         "entries": entries,
         "grand_debit": totals.get("grand_debit") or Decimal("0"),
         "grand_credit": totals.get("grand_credit") or Decimal("0"),
     }
+
     return render(request, "journal_entries.html", context)
 # journal entry detail view
 @login_required
@@ -541,13 +770,6 @@ def general_ledger_print(request):
         "query": query,
     }
     return render(request, "general_ledger_print.html", context)
-
-
-
-
-
-
-
 
 # working on the reports 
 

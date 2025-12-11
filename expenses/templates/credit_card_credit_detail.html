@@ -1,0 +1,104 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{--brand:#39B54B;--muted:#6b7280;--bg:#f8fafc;--card:#fff;--line:#e5e7eb;}
+  .page-wrap{margin-left:20%;background:var(--bg);width:79%;margin-top:6%;min-height:100vh;padding:24px 32px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.04);padding:20px 24px;}
+  .title{font-size:24px;font-weight:800;color:var(--brand);margin-bottom:4px;}
+  .muted{color:var(--muted);font-size:13px;}
+  .row{display:flex;flex-wrap:wrap;margin-top:16px;}
+  .col{flex:1 1 220px;padding:6px 12px;}
+  .label{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.06em;margin-bottom:2px;}
+  .value{font-size:14px;font-weight:500;}
+  .amount{font-size:22px;font-weight:800;margin-top:10px;}
+  .btn{display:inline-block;margin-top:16px;padding:8px 14px;border-radius:8px;border:none;background:var(--brand);color:#fff;font-weight:600;text-decoration:none;}
+  table{width:100%;border-collapse:collapse;margin-top:16px;}
+  th,td{border:1px solid #e5e7eb;padding:8px;font-size:13px;}
+  th{background:#f9fafb;text-transform:uppercase;font-size:11px;letter-spacing:.05em;}
+</style>
+
+<div class="page-wrap">
+  <a href="{% url 'expenses:credit-card-credit-list' %}" style="color:#39B54B;text-decoration:none;">← Back to credits list</a>
+
+  <div class="card">
+    <div class="title">Credit card credit</div>
+    <div class="muted">Ref {{ credit.ref_no }} · {{ credit.credit_date|date:"d/m/Y" }}</div>
+
+    <div class="amount">
+      Ush {{ credit.total_amount|floatformat:2|intcomma }}
+    </div>
+
+    <div class="row">
+      <div class="col">
+        <div class="label">Credit card</div>
+        <div class="value">{{ credit.credit_card.account_name }}</div>
+      </div>
+      <div class="col">
+        <div class="label">Payee</div>
+        <div class="value">
+          {% if credit.payee_supplier %}
+            {{ credit.payee_supplier.company_name }}
+          {% else %}
+            {{ credit.payee_name|default:"—" }}
+          {% endif %}
+        </div>
+      </div>
+      <div class="col">
+        <div class="label">Location</div>
+        <div class="value">{{ credit.location|default:"—" }}</div>
+      </div>
+      <div class="col">
+        <div class="label">Tags</div>
+        <div class="value">{{ credit.tags|default:"—" }}</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col" style="flex:1 1 100%;">
+        <div class="label">Memo</div>
+        <div class="value">
+          {% if credit.memo %}{{ credit.memo }}{% else %}<span class="muted">No memo</span>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if credit.attachments %}
+      <div class="row">
+        <div class="col" style="flex:1 1 100%;">
+          <div class="label">Attachment</div>
+          <a href="{{ credit.attachments.url }}" target="_blank">Download file</a>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if credit.category_lines.exists %}
+      <h4 style="margin-top:16px;">Category lines</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in credit.category_lines.all %}
+          <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ line.category.account_name }}</td>
+            <td>{{ line.description }}</td>
+            <td class="num">{{ line.amount|floatformat:2|intcomma }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    <a href="{% url 'expenses:credit-card-credit-edit' credit.id %}" class="btn">Edit credit</a>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

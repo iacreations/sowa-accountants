@@ -1,0 +1,305 @@
+{% load static humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2a8b3b;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#e5e7eb;
+    --bg:#f8fafc;
+    --card:#ffffff;
+  }
+
+  .page-wrap{
+    margin-left: 20%;
+    margin-top: 6%;
+    background: var(--bg);
+    box-sizing: border-box;
+    width: 79%;
+    min-height: 100vh;
+    padding: 24px 32px;
+  }
+
+  .toolbar{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    margin-bottom:16px;
+  }
+  .title-wrap{ display:flex; align-items:center; gap:10px; margin-right:auto; }
+  .title{
+    font-size:24px; font-weight:800; color:var(--brand); letter-spacing:.2px;
+  }
+  .subtitle{
+    font-size:12px; color:var(--muted);
+    padding:4px 8px; border:1px dashed var(--line); border-radius:999px;
+    background:#fff;
+  }
+
+  .filters-row{
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    margin-bottom:16px;
+  }
+
+  .search-box{
+    position:relative;
+  }
+  .search-box input{
+    padding:8px 30px 8px 30px;
+    border-radius:999px;
+    border:1px solid var(--line);
+    outline:none;
+    min-width:220px;
+  }
+  .search-box i{
+    position:absolute; left:10px; top:50%; transform:translateY(-50%);
+    font-size:16px; color:var(--muted);
+  }
+
+  .date-input{
+    padding:6px 10px;
+    border-radius:8px; border:1px solid var(--line);
+  }
+
+  .btn-sm{
+    padding:7px 12px; border-radius:999px; border:1px solid var(--line);
+    background:#fff; cursor:pointer; font-size:12px; display:inline-flex; align-items:center; gap:6px;
+  }
+  .btn-sm.primary{
+    background:var(--brand); color:#fff; border-color:var(--brand);
+  }
+  .btn-sm.primary:hover{ background:var(--brand-600); }
+
+  .card{
+    background:var(--card); border-radius:16px; border:1px solid var(--line);
+    box-shadow:0 10px 25px rgba(15,23,42,.06);
+    overflow:hidden;
+  }
+  .card-header{
+    padding:12px 16px;
+    display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid #e5e7eb;
+    background:#f9fafb;
+    font-size:13px; color:var(--muted);
+  }
+
+  .table-wrap{ overflow:auto; }
+  table{
+    width:100%; border-collapse:separate; border-spacing:0; min-width:860px;
+  }
+  thead th{
+    position:sticky; top:0; z-index:1;
+    background:#f3f4f6;
+    font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+    padding:10px 12px;
+    border-bottom:1px solid #e5e7eb;
+    color:#111827; font-weight:700;
+  }
+  tbody td{
+    padding:10px 12px; font-size:14px; border-bottom:1px solid #f1f5f9;
+  }
+  tbody tr:nth-child(odd){ background:#fff; }
+  tbody tr:nth-child(even){ background:#fafafa; }
+  tbody tr:hover{ background:#f0fdf4; }
+
+  .num{ text-align:right; white-space:nowrap; }
+  .muted{ color:var(--muted); }
+
+  .status-chip{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; padding:4px 10px; border-radius:999px;
+    border:1px solid transparent;
+  }
+  .status-draft{ background:#f9fafb; border-color:#e5e7eb; color:#4b5563; }
+  .status-sent{ background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+  .status-closed{ background:#ecfdf5; border-color:#bbf7d0; color:#047857; }
+  .status-cancelled{ background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
+
+  .action-cell{ white-space:nowrap; text-align:right; }
+  .link{
+    text-decoration:none; color:var(--brand); font-weight:600; font-size:13px;
+  }
+  .link:hover{ text-decoration:underline; }
+
+  .pagination{
+    padding:10px 16px;
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:13px; color:#4b5563;
+  }
+  .pagination-links a, .pagination-links span{
+    display:inline-block; margin-left:4px; padding:4px 8px;
+    border-radius:6px; text-decoration:none; font-size:13px;
+  }
+  .pagination-links a{ border:1px solid #e5e7eb; color:#111827; }
+  .pagination-links a:hover{ background:#f9fafb; }
+  .pagination-links span.current{
+    background:var(--brand); color:#fff; border:1px solid var(--brand);
+  }
+</style>
+
+<div class="page-wrap">
+  <div class="toolbar">
+    <div class="title-wrap">
+      <div class="title">Purchase Orders</div>
+      <div class="subtitle">List of all purchase orders</div>
+    </div>
+    <a href="{% url 'expenses:purchase_order' %}" style="text-decoration: none;" class="btn-sm primary">
+      <i class='bx bx-plus'></i> New purchase order
+    </a>
+    <a href="{% url 'expenses:expenses' %}" style="text-decoration: none;" class="btn-sm">
+      <i class='bx bx-chevron-left'></i> Back to all expenses
+    </a>
+  </div>
+
+  <form method="get" class="filters-row">
+    <div class="search-box">
+      <i class='bx bx-search'></i>
+      <input type="text" name="q" placeholder="Search vendor, PO no. or location"
+             value="{{ q }}">
+    </div>
+    <div>
+      <span class="muted" style="font-size:12px;">From</span>
+      <input type="date" class="date-input" name="from" value="{{ from }}">
+    </div>
+    <div>
+      <span class="muted" style="font-size:12px;">To</span>
+      <input type="date" class="date-input" name="to" value="{{ to }}">
+    </div>
+    <button type="submit" class="btn-sm">
+      <i class='bx bx-filter'></i> Apply
+    </button>
+    <a href="{% url 'expenses:purchase-order-list' %}" class="btn-sm">
+      Reset
+    </a>
+  </form>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        {% if page_obj.paginator.count %}
+          {{ page_obj.paginator.count }} purchase order{{ page_obj.paginator.count|pluralize }}
+        {% else %}
+          No purchase orders found
+        {% endif %}
+      </div>
+      <div>
+        <span class="muted">Total amount:</span>
+        <strong>UGX {{ totals.grand|default:0|floatformat:2|intcomma }}</strong>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>PO No.</th>
+            <th>Vendor</th>
+            <th>Location</th>
+            <th>Ship To</th>
+            <th class="num">Amount</th>
+            <th>Status</th>
+            <th class="action-cell">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for po in page_obj %}
+          <tr>
+            <td>{{ po.po_date|date:"d/m/Y" }}</td>
+            <td><strong>{{ po.po_number }}</strong></td>
+            <td>
+              {% if po.vendor %}
+                {{ po.vendor.company_name }}
+              {% else %}
+                {{ po.vendor_name }}
+              {% endif %}
+            </td>
+            <td>{{ po.location|default:"—" }}</td>
+            <td class="muted">{{ po.ship_to|default:"—" }}</td>
+            <td class="num">{{ po.total_amount|floatformat:2|intcomma }}</td>
+            <td>
+              {% if po.status == "sent" %}
+                <span class="status-chip status-sent">Sent</span>
+              {% elif po.status == "closed" %}
+                <span class="status-chip status-closed">Closed</span>
+              {% elif po.status == "cancelled" %}
+                <span class="status-chip status-cancelled">Cancelled</span>
+              {% else %}
+                <span class="status-chip status-draft">Draft</span>
+              {% endif %}
+            </td>
+            <td class="action-cell">
+              <a href="{% url 'expenses:purchase-order-detail' po.id %}" class="link">View</a> ·
+              <a href="{% url 'expenses:purchase-order-edit' po.id %}" class="link">Edit</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" style="text-align:center; padding:24px;">
+              No purchase orders yet.
+              <a href="{% url 'expenses:purchase_order' %}" class="link">Create your first purchase order</a>.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if page_obj.paginator.num_pages > 1 %}
+    <div class="pagination">
+      <div>
+        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+      </div>
+      <div class="pagination-links">
+        {% if page_obj.has_previous %}
+          <a href="?page={{ page_obj.previous_page_number }}&q={{ q }}&from={{ from }}&to={{ to }}">&laquo; Prev</a>
+        {% endif %}
+        <span class="current">{{ page_obj.number }}</span>
+        {% if page_obj.has_next %}
+          <a href="?page={{ page_obj.next_page_number }}&q={{ q }}&from={{ from }}&to={{ to }}">Next &raquo;</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+  {% comment %} error popup message {% endcomment %}
+{% if messages %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+  {% for message in messages %}
+    Swal.fire({
+      icon: "{% if 'error' in message.tags %}error{% else %}success{% endif %}",
+      title: "{{ message.tags|capfirst }}",
+      text: "{{ message }}",
+      confirmButtonText: "OK",
+
+      /* --- Custom green theme --- */
+      background: "#f0fff5",        // soft green background
+      color: "#111",                // text color
+      iconColor: "{% if 'error' in message.tags %}#e63946{% else %}#39B54B{% endif %}",
+
+      customClass: {
+          confirmButton: "swal-confirm-btn"
+      }
+    });
+  {% endfor %}
+</script>
+
+<style>
+  .swal-confirm-btn {
+      background-color: #39B54B !important;
+      color: white !important;
+      border-radius: 8px !important;
+      padding: 10px 22px !important;
+      font-size: 16px !important;
+  }
+  .swal-confirm-btn:hover {
+      background-color: #2da73e !important;
+  }
+</style>
+
+{% endif %}
+{% include 'includes/footer.html' %}

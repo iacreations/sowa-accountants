@@ -1,10 +1,11 @@
 {% load static %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chart of Accounts Form</title>
+  <title>{% if account %}Edit Account{% else %}Chart of Accounts Form{% endif %}</title>
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
   <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
   <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
@@ -55,9 +56,10 @@
     }
     input, select, textarea {
       padding: 8px 10px;
-      border: 1px solid #ccc;
+      border: 1px solid green;
       border-radius: 6px;
     }
+    textarea { border: 1px solid green; }
     .checkbox-group {
       display: flex;
       align-items: center;
@@ -81,10 +83,6 @@
     }
     .btn-cancel { background: #f5f5f5; }
     .btn-green { background: #39B54B; color: #fff; }
-    .btn-light-green {
-      background: #d2f4dc;
-      color: #2a8b3f;
-    }
     .dropdown {
       position: relative;
       display: inline-block;
@@ -99,9 +97,7 @@
       z-index: 10;
       box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
-    .dropdown:hover .dropdown-menu {
-      display: block;
-    }
+    .dropdown:hover .dropdown-menu { display: block; }
     .dropdown-menu button {
       width: 100%;
       padding: 10px 16px;
@@ -110,37 +106,41 @@
       text-align: left;
       cursor: pointer;
     }
-    input{
-      border: solid 1px green;
-    }
-    select{
-      border: solid 1px green;
-    }
-    #account{
-      border: solid 1px green;
-    }
-    textarea{
-      border: solid 1px green;
-    }
   </style>
 </head>
 <body>
-<a href="{% url 'accounts:accounts' %}" class="text-decoration-none " id="btn" style="color: #39B54B;font-size: 23px;">Back to Chart of accouts</a>
+<a href="{% url 'accounts:accounts' %}"
+   class="text-decoration-none"
+   id="btn"
+   style="color: #39B54B;font-size: 23px;">
+  Back to Chart of accounts
+</a>
+
 <div class="container">
-  <form method='post' action="{% url 'accounts:add-account' %}" enctype= 'multipart/form-data'>
+  <form method="post"
+        action="{% if account %}{% url 'accounts:edit-account' account.id %}{% else %}{% url 'accounts:add-account' %}{% endif %}">
     {% csrf_token %}
-    <h2 class="title">Chart of Accounts</h2>
+    <h2 class="title">
+      {% if account %}Edit Account{% else %}Chart of Accounts{% endif %}
+    </h2>
 
     <div class="section-wrapper">
       <div class="form-grid">
         <div class="form-group">
           <label>Account Name *</label>
-          <input type="text" name="account_name" id="account" required />
+          <input type="text"
+                 name="account_name"
+                 id="account"
+                 value="{{ account.account_name|default_if_none:'' }}"
+                 required>
         </div>
 
         <div class="form-group">
           <label>Account Number</label>
-          <input type="text" name="account_number" id="account" />
+          <input type="text"
+                 name="account_number"
+                 id="account_number"
+                 value="{{ account.account_number|default_if_none:'' }}">
         </div>
 
         <!-- ACCOUNT TYPE (codes) -->
@@ -148,28 +148,32 @@
           <label>Account Type *</label>
           <select name="account_type" id="account_type" required>
             <option value="">Select account type</option>
-            <option value="CURRENT_ASSET">Current Assets</option>
-            <option value="NON_CURRENT_ASSET">Non Current Assets</option>
+            <option value="CURRENT_ASSET"      {% if account and account.account_type == "CURRENT_ASSET" %}selected{% endif %}>Current Assets</option>
+            <option value="NON_CURRENT_ASSET"  {% if account and account.account_type == "NON_CURRENT_ASSET" %}selected{% endif %}>Non Current Assets</option>
 
-            <option value="CURRENT_LIABILITY">Current Liabilities</option>
-            <option value="NON_CURRENT_LIABILITY">Non Current Liabilities</option>
+            <option value="CURRENT_LIABILITY"     {% if account and account.account_type == "CURRENT_LIABILITY" %}selected{% endif %}>Current Liabilities</option>
+            <option value="NON_CURRENT_LIABILITY" {% if account and account.account_type == "NON_CURRENT_LIABILITY" %}selected{% endif %}>Non Current Liabilities</option>
 
-            <option value="OWNER_EQUITY">Owner's Equity</option>
+            <option value="OWNER_EQUITY" {% if account and account.account_type == "OWNER_EQUITY" %}selected{% endif %}>Owner's Equity</option>
 
-            <option value="OPERATING_INCOME">Operating Income</option>
-            <option value="INVESTING_INCOME">Investing Income</option>
+            <option value="OPERATING_INCOME"  {% if account and account.account_type == "OPERATING_INCOME" %}selected{% endif %}>Operating Income</option>
+            <option value="INVESTING_INCOME"  {% if account and account.account_type == "INVESTING_INCOME" %}selected{% endif %}>Investing Income</option>
 
-            <option value="OPERATING_EXPENSE">Operating Expense</option>
-            <option value="INVESTING_EXPENSE">Investing Expense</option>
-            <option value="FINANCING_EXPENSE">Financing Expense</option>
-            <option value="INCOME_TAX_EXPENSE">Income taxes</option>
+            <option value="OPERATING_EXPENSE"   {% if account and account.account_type == "OPERATING_EXPENSE" %}selected{% endif %}>Operating Expense</option>
+            <option value="INVESTING_EXPENSE"   {% if account and account.account_type == "INVESTING_EXPENSE" %}selected{% endif %}>Investing Expense</option>
+            <option value="FINANCING_EXPENSE"   {% if account and account.account_type == "FINANCING_EXPENSE" %}selected{% endif %}>Financing Expense</option>
+            <option value="INCOME_TAX_EXPENSE"  {% if account and account.account_type == "INCOME_TAX_EXPENSE" %}selected{% endif %}>Income taxes</option>
           </select>
         </div>
 
         <!-- DETAIL TYPE -->
         <div class="form-group">
-          <label>Detail Type *</label>
-          <select name="detail_type" id="detail_type" required>
+          <label>Account Sub-Class</label>
+          <select name="detail_type"
+                  id="detail_type"
+                  required
+                  data-current="{{ account.detail_type|default_if_none:'' }}">
+            <!-- options are injected by JS based on account_type -->
             <option value=""></option>
           </select>
         </div>
@@ -177,26 +181,34 @@
         <div class="form-group">
           <label>Tax Category</label>
           <select name="tax_category">
-            <option value="">None</option>
-            <option value="Capital deductions">Capital deductions</option>
-            <option value="Allowable deduction">Allowable deduction</option>
-            <option value="Non Allowable deduction">Non Allowable deduction</option>
+            <option value="" {% if not account or not account.tax_category %}selected{% endif %}>None</option>
+            <option value="Capital deductions" {% if account and account.tax_category == "Capital deductions" %}selected{% endif %}>Capital deductions</option>
+            <option value="Allowable deduction" {% if account and account.tax_category == "Allowable deduction" %}selected{% endif %}>Allowable deduction</option>
+            <option value="Non Allowable deduction" {% if account and account.tax_category == "Non Allowable deduction" %}selected{% endif %}>Non Allowable deduction</option>
           </select>
         </div>
 
         <div class="form-group my-5">
           <label for="subAccountCheckbox">
             Make this a sub-account.
-            <input type="checkbox" id="subAccountCheckbox" name="is_subaccount">
+            <input type="checkbox"
+                   id="subAccountCheckbox"
+                   name="is_subaccount"
+                   {% if account and account.is_subaccount %}checked{% endif %}>
           </label>
         </div>
 
-        <div id="parent_account_field" style="display: none;">
-          <label for="parent">Parent Account</label> <div></div>
+        <div id="parent_account_field"
+             style="display: {% if account and account.is_subaccount %}block{% else %}none{% endif %};">
+          <label for="parent">Parent Account</label>
+          <div></div>
           <select name="parent" id="parent">
             <option value="">choose parent account</option>
             {% for parent in parents %}
-              <option value="{{ parent.id }}">{{ parent.account_name }}</option>
+              <option value="{{ parent.id }}"
+                      {% if account and account.parent_id == parent.id %}selected{% endif %}>
+                {{ parent.account_name }}
+              </option>
             {% endfor %}
           </select>
         </div>
@@ -204,23 +216,28 @@
         <div class="form-grid my-5">
           <div class="form-group">
             <label>Opening Balance</label>
-            <input type="number" name="opening_balance" />
+            <input type="number"
+                   step="0.01"
+                   name="opening_balance"
+                   value="{{ account.opening_balance|default_if_none:'' }}">
           </div>
         </div>
 
         <div class="form-group">
           <label>As of</label>
-          <input type="date" name="as_of"/>
+          <input type="date"
+                 name="as_of"
+                 value="{% if account and account.as_of %}{{ account.as_of|date:'Y-m-d' }}{% endif %}">
         </div>
       </div>
     </div>
 
-    <!-- More Info Section (now will be toggled too) -->
+    <!-- More Info Section -->
     <div class="section-wrapper" id="more_info_section">
       <h3 style="margin-bottom: 15px; color: #39B54B;">More Info on Opening Balances</h3>
       <div class="form-group">
         <label>Description</label>
-        <textarea name="description" rows="3"></textarea>
+        <textarea name="description" rows="3">{{ account.description|default_if_none:'' }}</textarea>
       </div>
     </div>
 
@@ -231,144 +248,137 @@
       <div class="dropdown">
         <button type="button" class="btn button btn-green">Save ▼</button>
         <div class="dropdown-menu">
-          <button type="submit" name="save_action" style="font-size: 1em;" value="save">Save</button>
-          <button type="submit" name="save_action" style="font-size: 1em;" value="save&new">Save & New</button>
-          <button type="submit" name="save_action" style="font-size: 1em;" value="save&close">Save & Close</button>
+          <button type="submit" name="save_action" value="save">Save</button>
+          <button type="submit" name="save_action" value="save&new">Save & New</button>
+          <button type="submit" name="save_action" value="save&close">Save & Close</button>
         </div>
       </div>
     </div>
   </form>
 </div>
 
-<script src=" {% static 'sowaf/styles/script.js' %} "></script>
+<script src="{% static 'sowaf/styles/script.js' %}"></script>
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-    // ===== Sub-account toggle =====
-    const checkbox = document.getElementById("subAccountCheckbox");
-    const parentField = document.getElementById("parent_account_field");
+  // ===== Sub-account toggle =====
+  const checkbox    = document.getElementById("subAccountCheckbox");
+  const parentField = document.getElementById("parent_account_field");
 
-    checkbox.addEventListener("change", function () {
-        parentField.style.display = this.checked ? "block" : "none";
-    });
+  checkbox.addEventListener("change", function () {
+    parentField.style.display = this.checked ? "block" : "none";
+  });
 
-    // ===== Account Type / Detail Type logic =====
-    const accountTypeDropdown = document.getElementById("account_type");
-    const detailTypeDropdown  = document.getElementById("detail_type");
+  // ===== Account Type / Detail Type logic =====
+  const accountTypeDropdown = document.getElementById("account_type");
+  const detailTypeDropdown  = document.getElementById("detail_type");
 
-    // Mapping of Account Type CODE → Detail Types (labels)
-    const detailOptions = {
-        "CURRENT_ASSET": [
-            "Assets held for sale","Inventory","Prepayments",
-            "Accounts Receivables (A/R)","Other receivables",
-            "Cash and Cash equivalents","Other current assets"
-        ],
+  // Mapping of Account Type CODE → Detail Types (labels)
+  const detailOptions = {
+    "CURRENT_ASSET": [
+      "Assets held for sale","Inventory","Prepayments",
+      "Accounts Receivables (A/R)","Other receivables",
+      "Cash and Cash equivalents","Other current assets"
+    ],
+    "NON_CURRENT_ASSET": [
+      "Property","Plant","Equipment"," Furniture & Fittings","Motor Vehicle",
+      "Investment property","Intangible Assets","Right of Use Assets",
+      "Deffered tax Assets","Other Long term Assets","IT Equipment","Office Equipment ","Bearer Plants","Biological Assets","Deffered Tax Assets"
+    ],
+    "CURRENT_LIABILITY": [
+      "Accounts Payable (A/P)","Other Payables","Provisions",
+      "Short term borrowings","Current tax liabilities",
+      "Accrued expenses","Other Current liabilities"
+    ],
+    "NON_CURRENT_LIABILITY": [
+      "Long term Borrowings","Pension and other employee obligations",
+      "Long term Lease Liabilities","Deffered tax liabilities",
+      "Other Non Curent Liabilities"
+    ],
+    "OWNER_EQUITY": [
+      "Share Capital","Share premium","Retained earnings",
+      "Non controlling interest","Other Equity components"
+    ],
+    "OPERATING_INCOME":[
+      "Revenue", "Other operating income"
+    ],
+    "OPERATING_EXPENSE":[
+      "Cost of Goods sold","Cost of Sales","Selling and distribution",
+      "Administration expenses","Research and development",
+      "Other operating expenses"
+    ],
+    "INVESTING_INCOME":[
+      "Share of profits from associates","Rental Income","Dividends",
+      "Interest income","Depreciation","Impairment", "Losses",
+      "Impairment Reversal","Loss on Disposal of Investments",
+      "Other Investing Income"
+    ],
+    "INVESTING_EXPENSE":[
+      "Gain on Disposal of Investments","Fairvalue Gains",
+      "Fairvalue Losses","Other Investing Expenses"
+    ],
+    "FINANCING_EXPENSE":[
+      "Interest expense","Other Financing Costs"
+    ],
+    "INCOME_TAX_EXPENSE":[
+      "Income Tax Expense","Other Tax Expenses"
+    ],
+  };
 
-        "NON_CURRENT_ASSET": [
-          "Property","Plant","Equipment","Furniture","Motor Vehicle",
-          "Investment property","Intangible Assets","Right of Use Assets",
-          "Deffered tax Assets","Other Long term Assets"
-        ],
+  function updateDetailTypes(accountTypeCode) {
+    const current = detailTypeDropdown.dataset.current || "";
+    detailTypeDropdown.innerHTML = "<option value=''></option>";
 
-        "CURRENT_LIABILITY": [
-            "Accounts Payable (A/P)","Other Payables","Provisions",
-            "Short term borrowings","Current tax liabilities",
-            "Accrued expenses","Other Current liabilities"
-        ],
-
-        "NON_CURRENT_LIABILITY": [
-          "Long term Borrowings","Pension and other employee obligations",
-          "Long term Lease Liabilities","Deffered tax liabilities",
-          "Other Non Curent Liabilities"
-        ],
-
-        "OWNER_EQUITY": [
-            "Share Capital","Share premium","Retained earnings",
-            "Non controlling interest","Other Equity components"
-        ],
-
-        "OPERATING_INCOME":[
-          "Revenue", "Other operating income"
-        ],
-
-        "OPERATING_EXPENSE":[
-          "Cost of Goods sold","Cost of Sales","Selling and distribution",
-          "Administration expenses","Research and development",
-          "Other operating expenses"
-        ],
-
-        "INVESTING_INCOME":[
-          "Share of profits from associates","Rental Income","Dividends",
-          "Interest income","Depreciation","Impairment", "Losses",
-          "Impairment Reversal","Loss on Disposal of Investments",
-          "Other Investing Income"
-        ],
-
-        "INVESTING_EXPENSE":[
-          "Gain on Disposal of Investments","Fairvalue Gains",
-          "Fairvalue Losses","Other Investing Expenses"
-        ],
-
-        "FINANCING_EXPENSE":[
-          "Interest expense","Other Financing Costs"
-        ],
-
-        "INCOME_TAX_EXPENSE":[
-          "Income Tax Expense","Other Tax Expenses"
-        ],
-    };
-
-    function updateDetailTypes(accountTypeCode) {
-        detailTypeDropdown.innerHTML = "<option value=''></option>";
-
-        if (detailOptions[accountTypeCode]) {
-            detailOptions[accountTypeCode].forEach(function (detail) {
-                const option = document.createElement("option");
-                option.value = detail;
-                option.textContent = detail;
-                detailTypeDropdown.appendChild(option);
-            });
-        }
+    if (detailOptions[accountTypeCode]) {
+      detailOptions[accountTypeCode].forEach(function (detail) {
+        const option = document.createElement("option");
+        option.value = detail;
+        option.textContent = detail;
+        detailTypeDropdown.appendChild(option);
+      });
     }
 
-    // ===== Opening Balance / As Of / More Info visibility =====
-    const openingBalanceField = document.querySelector("input[name='opening_balance']").closest(".form-group");
-    const asOfField           = document.querySelector("input[name='as_of']").closest(".form-group");
-    const moreInfoSection     = document.getElementById("more_info_section");
-
-    // Code list of Balance Sheet accounts
-    const balanceSheetTypes = [
-        "CURRENT_ASSET",
-        "NON_CURRENT_ASSET",
-        "CURRENT_LIABILITY",
-        "NON_CURRENT_LIABILITY",
-        "OWNER_EQUITY"
-    ];
-
-    function toggleBalanceFields() {
-        const selectedCode = accountTypeDropdown.value;
-
-        if (balanceSheetTypes.includes(selectedCode)) {
-            openingBalanceField.style.display = "block";
-            asOfField.style.display = "block";
-            moreInfoSection.style.display = "block";
-        } else {
-            openingBalanceField.style.display = "none";
-            asOfField.style.display = "none";
-            moreInfoSection.style.display = "none";
-        }
+    if (current) {
+      detailTypeDropdown.value = current;
     }
+  }
 
-    accountTypeDropdown.addEventListener("change", function () {
-        updateDetailTypes(this.value);
-        toggleBalanceFields();
-    });
+  // ===== Opening Balance / As Of / More Info visibility =====
+  const openingBalanceField = document.querySelector("input[name='opening_balance']").closest(".form-group");
+  const asOfField           = document.querySelector("input[name='as_of']").closest(".form-group");
+  const moreInfoSection     = document.getElementById("more_info_section");
 
-    // ===== Initial run on page load (e.g. edit form) =====
-    if (accountTypeDropdown.value) {
-        updateDetailTypes(accountTypeDropdown.value);
+  const balanceSheetTypes = [
+    "CURRENT_ASSET",
+    "NON_CURRENT_ASSET",
+    "CURRENT_LIABILITY",
+    "NON_CURRENT_LIABILITY",
+    "OWNER_EQUITY"
+  ];
+
+  function toggleBalanceFields() {
+    const selectedCode = accountTypeDropdown.value;
+    if (balanceSheetTypes.includes(selectedCode)) {
+      openingBalanceField.style.display = "block";
+      asOfField.style.display = "block";
+      moreInfoSection.style.display = "block";
+    } else {
+      openingBalanceField.style.display = "none";
+      asOfField.style.display = "none";
+      moreInfoSection.style.display = "none";
     }
+  }
+
+  accountTypeDropdown.addEventListener("change", function () {
+    updateDetailTypes(this.value);
     toggleBalanceFields();
+  });
+
+  // Initial run (add or edit)
+  if (accountTypeDropdown.value) {
+    updateDetailTypes(accountTypeDropdown.value);
+  }
+  toggleBalanceFields();
 });
 </script>
 </body>

@@ -277,9 +277,10 @@ box-sizing: border-box;
             </div>
             <ul>
               <li><a href="{% url 'sowaf:add-supplier' %}">Add Supplier</a></li>
-              <li><a href="{% url 'expenses:add-expense' %}">Record expense</a></li>
+              <li><a href="{% url 'expenses:add-expenses' %}">Record expense</a></li>
               <li><a href="{% url 'expenses:add-cheque' %}">Create cheque</a></li>
               <li><a href="{% url 'expenses:add-bill' %}">Create bill</a></li>
+              <li> <a class="tx-item" role="menuitem" href="{% url 'expenses:purchase_order' %}">Create a purchase order</a></li>
             </ul>
           </div>
 </div>

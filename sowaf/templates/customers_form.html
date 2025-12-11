@@ -172,10 +172,10 @@ small{ color:var(--muted); }
         <div class="collapsible-header">Name and Contact</div>
         <div class="collapsible-content form-row">
           <div class="field"><label for='name'>Customer Display Name <span style="color:red;">*</span></label>
-            <input type="text" name='name' value="{{ customer.customer_name|default_if_none:'' }}" required>
+            <input type="text" name='name' value="{{ customer.customer_name|default_if_none:'' }}">
           </div>
           <div class="field"><label for='company'>Company Name</label>
-            <input type="text" name='company' value="{{ customer.company_name|default_if_none:'' }}" required>
+            <input type="text" name='company' value="{{ customer.company_name|default_if_none:'' }}">
           </div>
           <div class="field"><label for='email'>Email <span style="color:red;">*</span></label>
             <input type="email" name='email' value="{{ customer.email|default_if_none:'' }}">
@@ -192,13 +192,13 @@ small{ color:var(--muted); }
 
           <!-- Moved from Additional Info -->
           <div class="field"><label for='tin'>Sales Tax Registration</label>
-            <input type="text" name='tin' value="{{ customer.tin_number|default_if_none:'' }}" required>
+            <input type="text" name='tin' value="{{ customer.tin_number|default_if_none:'' }}">
           </div>
           <div class="field"><label for='balance'>Opening Balance</label>
-            <input type="number" name='balance' value="{{ customer.opening_balance|default_if_none:'' }}">
+            <input type="number" name='balance' value="{{ customer.opening_balance|default_if_none:0}}">
           </div>
           <div class="field"><label for='today'>As of Date</label>
-            <input type="text" name='today' value="{{ customer.registration_date|date:'d/m/Y'|default_if_none:'' }}" placeholder="dd/mm/yyyy">
+            <input type="date" name='registration_date' value="{{ customer.registration_date|date:'d/m/Y'|default_if_none:'' }}">
           </div>
         </div>
       </div>

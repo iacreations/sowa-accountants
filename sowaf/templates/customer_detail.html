@@ -144,11 +144,11 @@
         <div class="pills">
           <span class="pill">
             <span class="dot dot-open"></span> Open balance
-            <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
+            <span class="val">{{ customer.opening_balance|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
             <span class="dot dot-overdue"></span> Overdue
-            <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
+            <span class="val danger">{{ overdue_balance|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
             <span class="dot dot-inv"></span> Invoices
@@ -176,11 +176,11 @@
         <h4>Financial summary</h4>
         <div class="sum-row">
           <span>Open balance</span>
-          <span class="val">Ush{{ open_balance|floatformat:2|intcomma }}</span>
+          <span class="val">{{ customer.opening_balance|floatformat:2|intcomma }}</span>
         </div>
         <div class="sum-row">
           <span>Overdue payment</span>
-          <span class="val danger">Ush{{ overdue_balance|floatformat:2|intcomma }}</span>
+          <span class="val danger">{{ overdue_balance|floatformat:2|intcomma }}</span>
         </div>
       </aside>
 
@@ -298,20 +298,28 @@
         {% else %}
           <div style="color:#6b7280;">No statements yet.</div>
         {% endif %}
+{% elif tab == 'details' %}
+  <table class="content-table">
+    <tbody>
+      <tr>
+        <th>Company</th>
+        <td>{{ customer.company_name|default:"—" }}</td>
+      </tr>
+      ...
+    </tbody>
+  </table>
 
-      {% elif tab == 'details' %}
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;">
-          <div><strong>Company:</strong> {{ customer.company_name|default:"—" }}</div>
-          <div><strong>Email:</strong> {{ customer.email|default:"—" }}</div>
-          <div><strong>Phone:</strong> {{ customer.phone_number|default:"—" }}</div>
-          <div><strong>City:</strong> {{ customer.city|default:"—" }}</div>
-          <div><strong>Country:</strong> {{ customer.country|default:"—" }}</div>
-          <div style="grid-column:1/-1"><strong>Notes:</strong> {{ customer.notes|default:"—" }}</div>
-        </div>
+{% elif tab == 'tasks' %}
+  <table class="content-table">
+    <tbody>
+      <tr>
+        <th>Tasks</th>
+        <td class="muted">Task list for this customer.</td>
+      </tr>
+    </tbody>
+  </table>
+{% endif %}
 
-      {% elif tab == 'tasks' %}
-        <div class="muted">Task list for this customer.</div>
-      {% endif %}
     </div>
   </section>
 

@@ -2,203 +2,451 @@
 {% load humanize %}
 
 {% include 'includes/navbar.html' %}
-
-<style>
-/* tabs */
-.tabs { display:inline-flex; border:1px solid #ddd; border-radius:8px; overflow:hidden; margin: 12px 0 20px; }
-.tab { padding:10px 20px; font-size:14px; font-weight:500; color:#555; text-decoration:none; background:#f9f9f9; border-right:1px solid #ddd; transition:all .2s; }
-.tab:last-child { border-right:none; }
-.tab:hover { background:#f1f1f1; }
-.tab.active { background:#39B54B; color:#fff; }
-
-/* action dropdown */
-.action-wrapper { display:flex; align-items:center; gap:6px; position:relative; }
-.edit-link { color:#39B54B; font-weight:500; text-decoration:none; }
-.dropdown { position:relative; cursor:pointer; }
-.dropdown i { font-size:18px; color:#444; }
-.dropdown-menu { display:none; position:absolute; right:0; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,.15); min-width:150px; z-index:10; }
-.dropdown-menu a { display:block; padding:8px 12px; font-size:14px; color:#333; text-decoration:none; }
-.dropdown-menu a:hover { background:#f4f6f8; }
-.dropdown:hover .dropdown-menu { display:block; }
-
-/* inactive look */
-.inactive-row { color:#888; background:#f9f9f9; font-style:italic; }
-.edit-link.disabled { pointer-events:none; opacity:.5; }
-
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.badge {
-  background: #eee;
-  color: #333;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 12px;
-}
-.tab.active .badge {
-  background: #fff;
-  color: #39B54B;
-}
-
-/* modal */
-#customizeModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); justify-content:center; align-items:center; z-index:999; }
-.modal-card { background:#fff; padding:20px; border-radius:12px; width:420px; max-width:90%; box-shadow:0 8px 24px rgba(0,0,0,.2); }
-.modal-card h4 { margin:0 0 12px; color:#39B54B; }
-.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
-.btn { padding:8px 14px; border:none; border-radius:6px; cursor:pointer; }
-.btn-outline { background:#fff; border:1px solid #ddd; }
-.btn-primary { background:#39B54B; color:#fff; }
-
-/* child indent */
-.child-row .indent {
-  margin-left: 20px;
-  padding-left: 5px;
-  border-left: 4px dashed #39B54B;
-  font-style: italic;
-  color: #39B54B;
-}
-
-/* Level-1 heading row */
-.level1-row td {
-  background:#e9fbef;
-  font-weight:800;
-  color:#0f5132;
-  text-transform:uppercase;
-}
-
-/* empty text inside category */
-.empty-row td {
-  font-style:italic;
-  color:#6b7280;
-  background:#f9fff9;
-}
-</style>
-
 {% include 'includes/sidebar.html' %}
 
-<div class="main_body" id="main_body" style="margin-top: 5%;">
-  <div class="d-flex align-items-center justify-content-between mb-2">
-    <div>
-      <h1 class="text-success">Chart Of Accounts</h1>
-      <p class="text-muted text-center" style="text-align: center;">
-        Organise and manage your accounts.
-      </p>
+<style>
+  :root{
+    --brand:#39B54B;
+    --brand-soft:#e9fbef;
+    --ink:#0f172a;
+    --muted:#6b7280;
+    --line:#d1fae5;
+    --card:#ffffff;
+    --bg:#ecfff2;
+  }
+
+  .coa-container{
+    margin-left:19%;
+    width:80%;
+    margin-top:6%;
+    padding:20px 24px 40px;
+    background:var(--bg);
+    box-sizing:border-box;
+    min-height:100vh;
+  }
+
+  .coa-card{
+    background:var(--card);
+    border-radius:18px;
+    box-shadow:0 10px 25px rgba(0,0,0,.06);
+    border:1px solid var(--line);
+    padding:18px 20px 24px;
+  }
+
+  .coa-header{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:10px;
+  }
+  .coa-title-block{
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+  }
+  .coa-title{
+    margin:0;
+    font-size:26px;
+    font-weight:800;
+    color:var(--brand);
+  }
+  .coa-subtitle{
+    margin:0;
+    font-size:13px;
+    color:var(--muted);
+  }
+
+  .coa-actions{
+    display:flex;
+    gap:10px;
+    align-items:center;
+  }
+  .btn{
+    border:none;
+    border-radius:999px;
+    padding:8px 16px;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    text-decoration:none;
+    white-space:nowrap;
+  }
+  .btn-green{
+    background:var(--brand);
+    color:#fff;
+  }
+  .btn-green-outline{
+    background:#ffffff;
+    color:var(--brand);
+    border:1px solid var(--brand);
+  }
+  .btn-green:hover{ background:#2ea043; }
+  .btn-green-outline:hover{
+    background:var(--brand-soft);
+  }
+
+  .coa-section-title{
+    margin:8px 0 10px;
+    text-align:left;
+    font-weight:700;
+    color:var(--brand);
+    font-size:18px;
+  }
+
+  /* tabs */
+  .tabs {
+    display:inline-flex;
+    border-radius:999px;
+    overflow:hidden;
+    background:#e5ffe9;
+    padding:2px;
+    margin-bottom:10px;
+  }
+  .tab {
+    padding:6px 14px;
+    font-size:13px;
+    font-weight:500;
+    color:#065f46;
+    text-decoration:none;
+    border-radius:999px;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    transition:background .15s, color .15s;
+  }
+  .tab:hover{
+    background:#d1fae5;
+  }
+  .tab.active{
+    background:#ffffff;
+    color:var(--brand);
+  }
+  .badge{
+    background:#ecfdf3;
+    color:#047857;
+    font-size:11px;
+    padding:1px 8px;
+    border-radius:999px;
+  }
+  .tab.active .badge{
+    background:var(--brand);
+    color:#fff;
+  }
+
+  /* table */
+  .coa-table-wrap{
+    margin-top:6px;
+    overflow-x:auto;
+  }
+  table.content-table{
+    width:100%;
+    border-collapse:collapse;
+    min-width:950px;
+  }
+  table.content-table thead th{
+    background:var(--brand);
+    color:#fff;
+    padding:9px 10px;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    position:sticky;
+    top:0;
+    z-index:1;
+  }
+  table.content-table tbody td,
+  table.content-table tbody th{
+    padding:7px 10px;
+    font-size:13px;
+    border-bottom:1px solid #e5f3ea;
+    background:#ffffff;
+  }
+
+  .section-row th{
+    background:var(--brand-soft);
+    color:#14532d;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+  }
+
+  .inactive-row td{
+    background:#f9fafb;
+    color:#9ca3af;
+    font-style:italic;
+  }
+
+  .indent{
+    margin-left:18px;
+    padding-left:5px;
+    border-left:3px dashed var(--brand);
+    color:#065f46;
+    font-style:italic;
+  }
+
+  .empty-row td{
+    font-style:italic;
+    color:#6b7280;
+    background:#f9fff9;
+  }
+
+  /* actions dropdown */
+  .action-cell{
+    white-space:nowrap;
+  }
+  .action-wrapper{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    position:relative;
+  }
+  .edit-link{
+    color:var(--brand);
+    font-weight:500;
+    text-decoration:none;
+  }
+  .edit-link:hover{
+    text-decoration:underline;
+  }
+  .edit-link.disabled{
+    pointer-events:none;
+    opacity:.5;
+  }
+  .dropdown{
+    position:relative;
+    cursor:pointer;
+  }
+  .dropdown i{
+    font-size:18px;
+    color:#4b5563;
+  }
+  .dropdown-menu{
+    display:none;
+    position:absolute;
+    right:0;
+    top:120%;
+    background:#fff;
+    border:1px solid #d1d5db;
+    border-radius:8px;
+    box-shadow:0 8px 20px rgba(0,0,0,.12);
+    min-width:150px;
+    z-index:20;
+  }
+  .dropdown-menu a{
+    display:block;
+    padding:8px 12px;
+    font-size:13px;
+    color:#111827;
+    text-decoration:none;
+  }
+  .dropdown-menu a:hover{
+    background:#f3f4f6;
+  }
+  .dropdown:hover .dropdown-menu{
+    display:block;
+  }
+
+  /* modal */
+  #customizeModal {
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.45);
+    justify-content:center;
+    align-items:center;
+    z-index:999;
+  }
+  .modal-card {
+    background:#fff;
+    padding:18px 20px;
+    border-radius:14px;
+    width:420px;
+    max-width:92%;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);
+  }
+  .modal-card h4 {
+    margin:0 0 10px;
+    color:var(--brand);
+    font-size:16px;
+  }
+  .modal-card label{
+    display:block;
+    font-size:13px;
+    margin-bottom:4px;
+  }
+  .modal-actions {
+    display:flex;
+    justify-content:flex-end;
+    gap:8px;
+    margin-top:12px;
+  }
+  .btn-outline {
+    background:#fff;
+    border:1px solid #d1d5db;
+    color:#374151;
+  }
+  .btn-primary {
+    background:var(--brand);
+    color:#fff;
+    border:none;
+  }
+
+  @media (max-width:1024px){
+    .coa-container{
+      margin-left:0;
+      width:100%;
+      margin-top:70px;
+      padding:16px;
+    }
+    .coa-header{
+      flex-direction:column;
+      align-items:flex-start;
+    }
+    .coa-actions{
+      width:100%;
+      justify-content:flex-start;
+      flex-wrap:wrap;
+    }
+  }
+</style>
+
+<div class="coa-container">
+
+  <div class="coa-card">
+
+    <!-- HEADER -->
+    <div class="coa-header">
+      <div class="coa-title-block">
+        <h1 class="coa-title">Chart Of Accounts</h1>
+        <p class="coa-subtitle">
+          Organise and manage your accounts.
+        </p>
+      </div>
+
+      <div class="coa-actions">
+        <a href="#" class="btn btn-green-outline">
+          Import
+        </a>
+        <a href="{% url 'accounts:add-account' %}" class="btn btn-green">
+          Add account
+        </a>
+        <button type="button" id="customizeBtn" class="btn btn-green-outline">
+          ⚙ Customize
+        </button>
+      </div>
     </div>
 
-    <button type="button" id="customizeBtn" class="button">
-      ⚙ Customize
-    </button>
-  </div>
+    <h3 class="coa-section-title">Account Lists</h3>
 
-  <!-- top mini menu -->
-  <div class="text-center mb-3">
-    <ul class="d-flex" style="list-style:none; justify-content:center; gap:16px; padding-left:0;">
-      <li><a href="#" class="btn button" style="text-decoration:none;color: #e9fbef">Import</a></li>
-      <li><a href="{% url 'accounts:add-account' %}" class="btn button" style="text-decoration:none; color: #e9fbef;">Add account</a></li>
-    </ul>
-  </div>
+    <!-- TABS -->
+    <div class="tabs">
+      <a href="?status=active" class="tab {% if status == 'active' %}active{% endif %}">
+        Active <span class="badge">{{ active_count }}</span>
+      </a>
+      <a href="?status=inactive" class="tab {% if status == 'inactive' %}active{% endif %}">
+        Inactive <span class="badge">{{ inactive_count }}</span>
+      </a>
+      <a href="?status=all" class="tab {% if status == 'all' %}active{% endif %}">
+        All <span class="badge">{{ all_count }}</span>
+      </a>
+    </div>
 
-  <h3 class="text-center" style="color: #39B54B; font-weight: 800;">Account Lists</h3>
-
-  <!-- tabs -->
-  <div class="tabs">
-    <a href="?status=active" class="tab {% if status == 'active' %}active{% endif %}">
-      Active <span class="badge">{{ active_count }}</span>
-    </a>
-    <a href="?status=inactive" class="tab {% if status == 'inactive' %}active{% endif %}">
-      Inactive <span class="badge">{{ inactive_count }}</span>
-    </a>
-    <a href="?status=all" class="tab {% if status == 'all' %}active{% endif %}">
-      All <span class="badge">{{ all_count }}</span>
-    </a>
-  </div>
-
-  <!-- table -->
-  <table class="content-table">
-    <thead>
-      <tr>
-        <th data-col="account_name"    style="text-transform:uppercase;">Account Name</th>
-        <th data-col="opening_balance" style="text-transform:uppercase;">Open Balance</th>
-        <th data-col="as_of"           style="text-transform:uppercase;">Date</th>
-        <th data-col="account_number"  style="text-transform:uppercase;">Account Number</th>
-        <th data-col="account_type"    style="text-transform:uppercase;">Account Type</th>
-        <th data-col="detail_type"     style="text-transform:uppercase;">Detail Type</th>
-        <th data-col="description"     style="text-transform:uppercase;">Description</th>
-        <th data-col="actions"         style="text-transform:uppercase;">Actions <i class='bx bxs-down-arrow'></i></th>
-      </tr>
-    </thead>
-
-    <tbody>
-      {% for section in level1_sections %}
-        <!-- Level 1 heading row -->
-        <tr class="section-row">
-          <th colspan="8" style="background:#e9fbef; color:#0f5132; text-transform:uppercase; letter-spacing:.04em;">
-            {{ section.label }}
-          </th>
-        </tr>
-
-        {% if section.accounts %}
-          {% for coa in section.accounts %}
-            <tr class="{% if not coa.is_active %}inactive-row{% endif %}">
-              <td>
-                {% if coa.parent %}
-                  <span class="indent">{{ coa.account_name }}</span>
-                {% else %}
-                  {{ coa.account_name }}
-                {% endif %}
-              </td>
-              <td>{{ coa.opening_balance|intcomma }}</td>
-              <td>{{ coa.as_of|date:"d/m/Y" }}</td>
-              <td>{{ coa.account_number }}</td>
-              <!-- show human-readable label from choices -->
-              <td>{{ coa.get_account_type_display }}</td>
-              <td>{{ coa.detail_type }}</td>
-              <td>{{ coa.description }}</td>
-              <td class="action-cell">
-                <div class="action-wrapper">
-                  <a href="#" class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit</a>
-                  <div class="dropdown">
-                    <i class='bx bx-chevron-down'></i>
-                    <div class="dropdown-menu">
-                      {% if coa.is_active %}
-                        <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
-                      {% else %}
-                        <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
-                      {% endif %}
-                    </div>
-                  </div>
-                </div>
-              </td>
-            </tr>
-          {% endfor %}
-        {% else %}
-          <!-- structure visible even when empty -->
-          <tr class="empty-row">
-            <td colspan="8" style="font-style:italic; color:#6b7280; padding:10px 18px;">
-              No accounts under this category yet.
-            </td>
+    <!-- TABLE -->
+    <div class="coa-table-wrap">
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th data-col="account_name">Account Name</th>
+            <th data-col="opening_balance">Open Balance</th>
+            <th data-col="as_of">Date</th>
+            <th data-col="account_number">Account Number</th>
+            <th data-col="account_type">Account Type</th>
+            <th data-col="detail_type">Detail Type</th>
+            <th data-col="description">Description</th>
+            <th data-col="actions">Actions <i class='bx bxs-down-arrow'></i></th>
           </tr>
-        {% endif %}
-      {% endfor %}
-    </tbody>
-  </table>
+        </thead>
+
+        <tbody>
+          {% for section in level1_sections %}
+            <!-- Level-1 heading row -->
+            <tr class="section-row">
+              <th colspan="8">
+                {{ section.label }}
+              </th>
+            </tr>
+
+            {% if section.accounts %}
+              {% for coa in section.accounts %}
+                <tr class="{% if not coa.is_active %}inactive-row{% endif %}">
+                  <td data-col="account_name">
+                    {% if coa.parent %}
+                      <span class="indent">{{ coa.account_name }}</span>
+                    {% else %}
+                      {{ coa.account_name }}
+                    {% endif %}
+                  </td>
+                  <td data-col="opening_balance">
+                    {{ coa.opening_balance|floatformat:2|intcomma }}
+                  </td>
+                  <td data-col="as_of">
+                    {{ coa.as_of|date:"d/m/Y" }}
+                  </td>
+                  <td data-col="account_number">{{ coa.account_number }}</td>
+                  <td data-col="account_type">{{ coa.get_account_type_display }}</td>
+                  <td data-col="detail_type">{{ coa.detail_type }}</td>
+                  <td data-col="description">{{ coa.description }}</td>
+                  <td data-col="actions" class="action-cell">
+                    <div class="action-wrapper">
+                    <a href="{% url 'accounts:edit-account' coa.id %}"
+                     class="edit-link {% if not coa.is_active %}disabled{% endif %}">Edit
+                     </a>
+
+                      <div class="dropdown">
+                        <i class='bx bx-dots-vertical-rounded'></i>
+                        <div class="dropdown-menu">
+                          {% if coa.is_active %}
+                            <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
+                          {% else %}
+                            <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
+                          {% endif %}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr class="empty-row">
+                <td colspan="8">
+                  No accounts under this category yet.
+                </td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div> <!-- /coa-card -->
 
   <!-- Customize Modal -->
   <div id="customizeModal">
     <div class="modal-card">
       <h4>Customize Columns</h4>
-      <div style="line-height: 1.9;">
-        <label><input type="checkbox" class="col-toggle" data-col="account_name"    checked> Account Name</label><br>
-        <label><input type="checkbox" class="col-toggle" data-col="opening_balance" checked> Opening Balance</label><br>
-        <label><input type="checkbox" class="col-toggle" data-col="as_of"           checked> Date</label><br>
-        <label><input type="checkbox" class="col-toggle" data-col="account_number"  checked> Account Number</label><br>
-        <!-- account_type option removed -->
-        <label><input type="checkbox" class="col-toggle" data-col="detail_type"     checked> Detail Type</label><br>
-        <label><input type="checkbox" class="col-toggle" data-col="description"     checked> Description</label><br>
-        <label><input type="checkbox" class="col-toggle" data-col="actions"         checked> Actions</label><br>
+      <div style="line-height:1.9;">
+        <label><input type="checkbox" class="col-toggle" data-col="account_name"    checked> Account Name</label>
+        <label><input type="checkbox" class="col-toggle" data-col="opening_balance" checked> Opening Balance</label>
+        <label><input type="checkbox" class="col-toggle" data-col="as_of"           checked> Date</label>
+        <label><input type="checkbox" class="col-toggle" data-col="account_number"  checked> Account Number</label>
+        <label><input type="checkbox" class="col-toggle" data-col="account_type"    checked> Account Type</label>
+        <label><input type="checkbox" class="col-toggle" data-col="detail_type"     checked> Detail Type</label>
+        <label><input type="checkbox" class="col-toggle" data-col="description"     checked> Description</label>
+        <label><input type="checkbox" class="col-toggle" data-col="actions"         checked> Actions</label>
       </div>
       <div class="modal-actions">
         <button id="closeModal" class="btn btn-outline">Close</button>
@@ -214,13 +462,24 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  // ===== Elements
   const modal     = document.getElementById("customizeModal");
   const openBtn   = document.getElementById("customizeBtn");
   const closeBtn  = document.getElementById("closeModal");
   const selectAll = document.getElementById("selectAll");
 
-  // ===== Load prefs safely
+  // --- default on/off for each column (all true) ---
+  const defaultCols = {
+    account_name:    true,
+    opening_balance: true,
+    as_of:           true,
+    account_number:  true,
+    account_type:    true,
+    detail_type:     true,
+    description:     true,
+    actions:         true,   // <– make sure Actions is ON by default
+  };
+
+  // load saved prefs from JSON
   let savedPrefs = {};
   try {
     savedPrefs = JSON.parse(document.getElementById("col-prefs").textContent) || {};
@@ -228,45 +487,51 @@ document.addEventListener("DOMContentLoaded", () => {
     savedPrefs = {};
   }
 
-  // ===== Helpers
-  function toggleColumn(colName, show) {
-    const header = document.querySelector(`th[data-col='${colName}']`);
-    if (!header) return;
-    const colIndex = header.cellIndex;
-    document.querySelectorAll(`thead th:nth-child(${colIndex+1}), tbody td:nth-child(${colIndex+1})`)
-      .forEach(cell => { cell.style.display = show ? "" : "none"; });
+  function toggleColumn(colName, show){
+    document.querySelectorAll("[data-col='"+colName+"']").forEach(cell=>{
+      cell.style.display = show ? "" : "none";
+    });
   }
 
-  function applyAllPrefs() {
-    document.querySelectorAll(".col-toggle").forEach(cb => {
+  function applyAllPrefs(){
+    document.querySelectorAll(".col-toggle").forEach(cb=>{
       const col = cb.dataset.col;
-      const value = (savedPrefs[col] !== undefined) ? savedPrefs[col] : true;
+
+      // if we have something saved, use it; otherwise use defaultCols
+      let value;
+      if (savedPrefs.hasOwnProperty(col)) {
+        value = savedPrefs[col];
+      } else if (defaultCols.hasOwnProperty(col)) {
+        value = defaultCols[col];
+      } else {
+        value = true;
+      }
+
       cb.checked = !!value;
       toggleColumn(col, cb.checked);
     });
   }
 
-  function savePrefs() {
-    fetch("{% url 'accounts:save_column_prefs' %}", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": "{{ csrf_token }}",
+  function savePrefs(){
+    fetch("{% url 'accounts:save_column_prefs' %}",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "X-CSRFToken":"{{ csrf_token }}",
       },
-      body: JSON.stringify({ preferences: savedPrefs }),
+      body:JSON.stringify({preferences:savedPrefs}),
     }).catch(()=>{});
   }
 
-  // Init
   applyAllPrefs();
 
-  openBtn.addEventListener("click", () => { modal.style.display = "flex"; });
-  closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
-  modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") modal.style.display = "none"; });
+  openBtn.addEventListener("click", ()=>{ modal.style.display="flex"; });
+  closeBtn.addEventListener("click", ()=>{ modal.style.display="none"; });
+  modal.addEventListener("click", e=>{ if(e.target===modal) modal.style.display="none"; });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") modal.style.display="none"; });
 
-  document.querySelectorAll(".col-toggle").forEach(cb => {
-    cb.addEventListener("change", function() {
+  document.querySelectorAll(".col-toggle").forEach(cb=>{
+    cb.addEventListener("change", function(){
       const col = this.dataset.col;
       savedPrefs[col] = this.checked;
       toggleColumn(col, this.checked);
@@ -274,8 +539,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  selectAll.addEventListener("click", () => {
-    document.querySelectorAll(".col-toggle").forEach(cb => {
+  selectAll.addEventListener("click", ()=>{
+    document.querySelectorAll(".col-toggle").forEach(cb=>{
       cb.checked = true;
       savedPrefs[cb.dataset.col] = true;
       toggleColumn(cb.dataset.col, true);

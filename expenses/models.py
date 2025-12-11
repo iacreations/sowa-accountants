@@ -233,3 +233,267 @@ class ChequeItemLine(models.Model):
     is_billable = models.BooleanField(default=False)
     customer    = models.ForeignKey(Newcustomer, null=True, blank=True, on_delete=models.CASCADE)
     class_field = models.ForeignKey(Pclass, null=True, blank=True, on_delete=models.CASCADE)
+
+    # purchase order
+class PurchaseOrder(models.Model):
+        vendor = models.ForeignKey(Newsupplier, null=True, blank=True, on_delete=models.CASCADE)
+        vendor_name    = models.CharField(max_length=255, blank=True)  # free-text vendor if not in list
+        mailing_address= models.CharField(max_length=255, blank=True)
+        po_date        = models.DateField(default=timezone.localdate)
+        deliver_by     = models.DateField(null=True, blank=True)
+        ship_to        = models.CharField(max_length=255, blank=True)
+        location       = models.CharField(max_length=255, blank=True)
+        po_number      = models.CharField(max_length=20, unique=True)
+        memo           = models.TextField(blank=True)
+        attachments    = models.FileField(upload_to="purchase_orders/", null=True, blank=True)
+
+        total_amount   = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+        created_at     = models.DateTimeField(auto_now_add=True)
+        updated_at     = models.DateTimeField(auto_now=True)
+
+        STATUS_CHOICES = (
+        ("draft", "Draft"),
+        ("sent", "Sent"),
+        ("closed", "Closed"),
+        ("cancelled", "Cancelled"),
+        )
+        status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+        class Meta:
+            ordering = ("-po_date", "-id")
+
+        def __str__(self):
+            return f"PO {self.po_number or self.id}"
+
+class PurchaseOrderLine(models.Model):
+    purchase_order = models.ForeignKey(
+        PurchaseOrder,
+        related_name="lines",
+        on_delete=models.CASCADE
+    )
+    product     = models.ForeignKey(Product, on_delete=models.CASCADE)
+    description = models.CharField(max_length=255, blank=True)
+    qty         = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    rate        = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    customer = models.ForeignKey(Newcustomer, null=True, blank=True, on_delete=models.CASCADE)
+    class_field = models.ForeignKey(Pclass, null=True, blank=True, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"{self.product} x{self.qty} @ {self.rate}"
+
+# supplier credit
+
+class SupplierCredit(models.Model):
+    """
+    Supplier Credit (Supplier Credit Note).
+    Reverses part/all of a Bill:
+      DR Accounts Payable
+      CR Expense / COGS accounts
+    """
+
+    supplier = models.ForeignKey(
+        Newsupplier,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="supplier_credits",
+    )
+    # Optional free-text name if not from supplier list
+    supplier_name = models.CharField(max_length=255, blank=True, null=True)
+
+    mailing_address = models.CharField(max_length=255, blank=True, null=True)
+    credit_date     = models.DateField(default=timezone.localdate)
+    ref_no          = models.CharField(max_length=20, unique=True)
+    location        = models.CharField(max_length=120, blank=True, null=True)
+    memo            = models.TextField(blank=True, null=True)
+    attachments     = models.FileField(upload_to="attachments/",blank=True, null=True)
+
+    total_amount    = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-credit_date", "-id")
+
+    def __str__(self):
+        return f"Supplier Credit {self.ref_no or self.id}"
+
+
+class SupplierCreditLine(models.Model):
+    supplier_credit = models.ForeignKey(
+        SupplierCredit,
+        related_name="lines",
+        on_delete=models.CASCADE
+    )
+    line_date   = models.DateField(blank=True, null=True)
+    category    = models.ForeignKey(Account, on_delete=models.CASCADE)
+    description = models.CharField(max_length=255, blank=True, null=True)
+    amount      = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    is_billable = models.BooleanField(default=False)
+    customer    = models.ForeignKey(Newcustomer, null=True, blank=True, on_delete=models.CASCADE)
+    class_field = models.ForeignKey(Pclass, null=True, blank=True, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"Supplier Credit Line {self.id} ({self.amount})"
+    
+# pay down credit
+
+class PayDownCredit(models.Model):
+    """
+    Payment from a bank/cash account to a credit card account.
+    """
+    credit_card    = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name="credit_card_paydowns"
+    )
+    bank_account   = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name="paydown_bank_accounts"
+    )
+
+    payee_supplier = models.ForeignKey(
+        Newsupplier, null=True, blank=True, on_delete=models.CASCADE
+    )
+    payee_name     = models.CharField(max_length=255, blank=True)
+
+    payment_date   = models.DateField(default=timezone.localdate)
+    amount         = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00")
+    )
+    ref_no         = models.CharField(max_length=20, blank=True)
+    location       = models.CharField(max_length=120, blank=True)
+    memo           = models.TextField(blank=True)
+    attachments    = models.FileField(
+        upload_to="attachments/", null=True, blank=True
+    )
+
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-payment_date", "-id")
+
+    def __str__(self):
+        return f"Pay down {self.credit_card.account_name} ({self.amount})"
+    
+# credit card credit
+
+class CreditCardCredit(models.Model):
+    """
+    Vendor credit/refund on a credit card.
+    Similar to SupplierCredit but the liability account is a credit card.
+    """
+    credit_card = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name="credit_card_credits",
+        help_text="The credit card account this credit applies to.",
+    )
+
+    payee_supplier = models.ForeignKey(
+        Newsupplier,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="credit_card_credits",
+    )
+    payee_name = models.CharField(max_length=255, blank=True)
+
+    credit_date = models.DateField(default=timezone.localdate)
+    ref_no      = models.CharField(max_length=30, blank=True)
+    location    = models.CharField(max_length=120, blank=True)
+    tags        = models.CharField(max_length=255, blank=True)
+    memo        = models.TextField(blank=True)
+
+    attachments = models.FileField(
+        upload_to="attachments/",
+        null=True,
+        blank=True,
+    )
+
+    total_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-credit_date", "-id")
+
+    def __str__(self):
+        return f"CC Credit {self.ref_no or self.id} ({self.total_amount})"
+    
+class CreditCardCreditCategoryLine(models.Model):
+    credit = models.ForeignKey(
+        CreditCardCredit,
+        on_delete=models.CASCADE,
+        related_name="category_lines",
+    )
+    category = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        related_name="cc_credit_category_lines",
+    )
+    description = models.CharField(max_length=255, blank=True)
+    amount      = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    billable    = models.BooleanField(default=False)
+
+    customer = models.ForeignKey(
+        Newcustomer,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="cc_credit_category_lines",
+    )
+    pclass = models.ForeignKey(
+        Pclass,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="cc_credit_category_lines",
+    )
+
+    def __str__(self):
+        return f"CC Credit Cat Line {self.id} ({self.amount})"
+
+
+class CreditCardCreditItemLine(models.Model):
+    credit = models.ForeignKey(
+        CreditCardCredit,
+        on_delete=models.CASCADE,
+        related_name="item_lines",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="cc_credit_item_lines",
+    )
+    description = models.CharField(max_length=255, blank=True)
+    quantity    = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    rate        = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    amount      = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    billable    = models.BooleanField(default=False)
+
+    customer = models.ForeignKey(
+        Newcustomer,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="cc_credit_item_lines",
+    )
+    pclass = models.ForeignKey(
+        Pclass,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="cc_credit_item_lines",
+    )
+
+    def __str__(self):
+        return f"CC Credit Item Line {self.id} ({self.amount})"
+

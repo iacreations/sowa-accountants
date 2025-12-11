@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Cheque Form</title>
+  <title>{% if cheque %}Edit Cheque{% else %}Cheque Form{% endif %}</title>
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
   <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
   <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
@@ -46,9 +46,10 @@
   <a href="{% url 'expenses:expenses' %}" class="btn btn-lg" style="color: #39B54B;">← Back to Expense lists</a>
 
   <div class="container">
-    <h2 class="title">Cheque Form</h2>
+    <h2 class="title">{% if cheque %}Edit Cheque{% else %}Cheque Form{% endif %}</h2>
 
-    <form method="post" enctype="multipart/form-data" action="{% url 'expenses:add-cheque' %}">
+    <form method="post" enctype="multipart/form-data"
+          action="{% if cheque %}{% url 'expenses:cheque-edit' cheque.id %}{% else %}{% url 'expenses:add-cheque' %}{% endif %}">
       {% csrf_token %}
 
       <!-- Top Fields -->
@@ -56,44 +57,57 @@
         <div class="form-grid">
           <div class="form-group">
             <label>Payee</label>
-            <select name="payee_supplier"  id="supplier-select">
+            <select name="payee_supplier" id="supplier-select">
               <option value="">— Choose supplier —</option>
               {% for s in suppliers %}
-                <option value="{{ s.id }}">{{ s.company_name }}</option>
+                <option value="{{ s.id }}"
+                        {% if cheque and cheque.payee_supplier_id == s.id %}selected{% endif %}>
+                  {{ s.company_name }}
+                </option>
               {% endfor %}
               <option value="add_new">➕ Add New</option>
             </select>
             <small>Or enter name:</small>
-            <input type="text" name="payee_name" placeholder="Free text (optional)">
+            <input type="text" name="payee_name"
+                   value="{% if cheque %}{{ cheque.payee_name }}{% endif %}"
+                   placeholder="Free text (optional)">
           </div>
 
           <div class="form-group">
             <label>Bank Account</label>
-             <select name="bank_account" required>
+            <select name="bank_account" required>
               {% for acc in bank_accounts %}
-              <option value="{{ acc.id }}">{{ acc.account_name }}</option>
+                <option value="{{ acc.id }}"
+                        {% if cheque and cheque.bank_account_id == acc.id %}selected{% endif %}>
+                  {{ acc.account_name }}
+                </option>
               {% endfor %}
-              </select>
-            </div>
+            </select>
+          </div>
 
           <div class="form-group">
             <label>Mailing Address</label>
-            <input type="text" name="mailing_address" />
+            <input type="text" name="mailing_address"
+                   value="{% if cheque %}{{ cheque.mailing_address }}{% endif %}"/>
           </div>
 
           <div class="form-group">
             <label>Payment Date</label>
-            <input type="date" name="payment_date" value="{{ today|date:'Y-m-d' }}">
+            <input type="date" name="payment_date"
+                   value="{% if cheque %}{{ cheque.payment_date|date:'Y-m-d' }}{% else %}{{ today|date:'Y-m-d' }}{% endif %}">
           </div>
 
           <div class="form-group">
             <label>Cheque No.</label>
-            <input type="text" name="cheque_no" value="{{ generated_cheque_no }}" readonly style="color: #39B54B; font-weight: 700;">
+            <input type="text" name="cheque_no"
+                   value="{% if cheque %}{{ cheque.cheque_no }}{% else %}{{ generated_cheque_no }}{% endif %}"
+                   readonly style="color: #39B54B; font-weight: 700;">
           </div>
 
           <div class="form-group">
             <label>Location</label>
-            <input type="text" name="location">
+            <input type="text" name="location"
+                   value="{% if cheque %}{{ cheque.location }}{% endif %}">
           </div>
         </div>
       </div>
@@ -101,13 +115,83 @@
       <!-- Category Details -->
       <div class="section-wrapper">
         <button class="collapsible" type="button">Category Details</button>
-        <div class="content">
+        <div class="content {% if cat_lines %}active{% endif %}">
           <div class="table-responsive">
             <table id="categoryTable">
               <thead>
                 <tr><th>#</th><th>Category</th><th>Description</th><th>Amount</th><th>Billable</th><th>Customer / Project</th><th>Class</th><th>Operations</th></tr>
               </thead>
-              <tbody></tbody>
+              <tbody>
+                {% if cat_lines %}
+                  {% for row in cat_lines %}
+                  <tr>
+                    <td></td>
+                    <td>
+                      <select name="cat_category[]">
+                        <option value="">-- Select --</option>
+                        {% for acc in expense_accounts %}
+                          <option value="{{ acc.id }}" {% if row.category_id == acc.id %}selected{% endif %}>
+                            {{ acc.account_name }}
+                          </option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><input type="text" name="cat_desc[]" value="{{ row.description }}"></td>
+                    <td><input type="number" step="0.01" name="cat_amount[]" value="{{ row.amount }}"></td>
+                    <td><input type="checkbox" name="cat_billable[]" value="{{ forloop.counter0 }}" {% if row.is_billable %}checked{% endif %}></td>
+                    <td>
+                      <select name="cat_customer[]">
+                        <option value="">-- Customer/Project --</option>
+                        {% for c in customers %}
+                          <option value="{{ c.id }}" {% if row.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td>
+                      <select name="cat_class[]">
+                        <option value="">-- Class --</option>
+                        {% for cl in classes %}
+                          <option value="{{ cl.id }}" {% if row.class_field_id == cl.id %}selected{% endif %}>{{ cl.class_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td></td>
+                    <td>
+                      <select name="cat_category[]">
+                        <option value="">-- Select --</option>
+                        {% for acc in expense_accounts %}
+                          <option value="{{ acc.id }}">{{ acc.account_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><input type="text" name="cat_desc[]"/></td>
+                    <td><input type="number" step="0.01" name="cat_amount[]"/></td>
+                    <td><input type="checkbox" name="cat_billable[]" value="0"/></td>
+                    <td>
+                      <select name="cat_customer[]">
+                        <option value="">-- Customer/Project --</option>
+                        {% for c in customers %}
+                          <option value="{{ c.id }}">{{ c.customer_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td>
+                      <select name="cat_class[]">
+                        <option value="">-- Class --</option>
+                        {% for cl in classes %}
+                          <option value="{{ cl.id }}">{{ cl.class_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+                  </tr>
+                {% endif %}
+              </tbody>
             </table>
           </div>
           <div class="actions">
@@ -120,13 +204,85 @@
       <!-- Item Details -->
       <div class="section-wrapper">
         <button class="collapsible" type="button">Item Details</button>
-        <div class="content">
+        <div class="content {% if item_lines %}active{% endif %}">
           <div class="table-responsive">
             <table id="itemTable">
               <thead>
                 <tr><th>#</th><th>Product / Service</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Billable</th><th>Customer / Project</th><th>Class</th><th>Operations</th></tr>
               </thead>
-              <tbody></tbody>
+              <tbody>
+                {% if item_lines %}
+                  {% for row in item_lines %}
+                  <tr>
+                    <td></td>
+                    <td>
+                      <select name="item_product[]">
+                        <option value="">-- Select --</option>
+                        {% for p in products %}
+                          <option value="{{ p.id }}" {% if row.product_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><input type="text" name="item_desc[]" value="{{ row.description }}"/></td>
+                    <td><input type="number" step="0.01" name="item_qty[]" value="{{ row.qty }}"/></td>
+                    <td><input type="number" step="0.01" name="item_rate[]" value="{{ row.rate }}"/></td>
+                    <td><input type="number" step="0.01" name="item_amount[]" value="{{ row.amount }}"/></td>
+                    <td><input type="checkbox" name="item_billable[]" value="{{ forloop.counter0 }}" {% if row.is_billable %}checked{% endif %}/></td>
+                    <td>
+                      <select name="item_customer[]">
+                        <option value="">-- Customer/Project --</option>
+                        {% for c in customers %}
+                          <option value="{{ c.id }}" {% if row.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td>
+                      <select name="item_class[]">
+                        <option value="">-- Class --</option>
+                        {% for cl in classes %}
+                          <option value="{{ cl.id }}" {% if row.class_field_id == cl.id %}selected{% endif %}>{{ cl.class_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+                  </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td></td>
+                    <td>
+                      <select name="item_product[]">
+                        <option value="">-- Select --</option>
+                        {% for p in products %}
+                          <option value="{{ p.id }}">{{ p.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><input type="text" name="item_desc[]"/></td>
+                    <td><input type="number" step="0.01" name="item_qty[]"/></td>
+                    <td><input type="number" step="0.01" name="item_rate[]"/></td>
+                    <td><input type="number" step="0.01" name="item_amount[]"/></td>
+                    <td><input type="checkbox" name="item_billable[]" value="0"/></td>
+                    <td>
+                      <select name="item_customer[]">
+                        <option value="">-- Customer/Project --</option>
+                        {% for c in customers %}
+                          <option value="{{ c.id }}">{{ c.customer_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td>
+                      <select name="item_class[]">
+                        <option value="">-- Class --</option>
+                        {% for cl in classes %}
+                          <option value="{{ cl.id }}">{{ cl.class_name }}</option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                    <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+                  </tr>
+                {% endif %}
+              </tbody>
             </table>
           </div>
           <div class="actions">
@@ -139,11 +295,18 @@
       <!-- Memo -->
       <div class="form-group" style="margin-bottom: 30px;">
         <label>Memo</label>
-        <textarea rows="3" style="width:100%" name="memo"></textarea>
+        <textarea rows="3" style="width:100%" name="memo">{% if cheque %}{{ cheque.memo }}{% endif %}</textarea>
       </div>
 
       <!-- Attachments -->
       <div class="attachments">
+        {% if cheque and cheque.attachments %}
+          <p>Existing file:
+            <a href="{{ cheque.attachments.url }}" target="_blank">
+              {{ cheque.attachments.name|cut:'attachments/' }}
+            </a>
+          </p>
+        {% endif %}
         <input type="file" name="attachments" multiple />
         <i class='bx bx-upload' style="font-size: 30px;"></i>
         <p>Drag/Drop files here or click to upload (Max size: 20MB)</p>
@@ -165,112 +328,115 @@
   </div>
 
   <script>
-
-// open Add supplier in new tab if chosen
+  // open Add supplier in new tab if chosen
   (function(){
-    const addCustomerUrl = "{% url 'sowaf:add-supplier' %}";
+    const addSupplierUrl = "{% url 'sowaf:add-supplier' %}";
     const sel = document.getElementById('supplier-select');
     if (sel){
       sel.addEventListener('change', function(){
         if (this.value === 'add_new'){
-          window.open(addCustomerUrl, '_blank', 'noopener');
+          window.open(addSupplierUrl, '_blank', 'noopener');
           this.value = '';
         }
       });
     }
   })();
 
-  
-    document.querySelectorAll(".collapsible").forEach(btn => {
-      btn.addEventListener("click", () => btn.nextElementSibling.classList.toggle("active"));
-    });
+  document.querySelectorAll(".collapsible").forEach(btn => {
+    btn.addEventListener("click", () => btn.nextElementSibling.classList.toggle("active"));
+  });
 
-    function addCategoryRow() {
-      const tbody = document.querySelector("#categoryTable tbody");
-      const tr = tbody.insertRow();
-      tr.innerHTML = `
-        <td></td>
-        <td>
-          <select name="cat_category[]">
-            <option value="">-- Select --</option>
-            {% for acc in expense_accounts %}
-              <option value="{{ acc.id }}">{{ acc.account_name }}</option>
-            {% endfor %}
-          </select>
-        </td>
-        <td><input type="text" name="cat_desc[]"/></td>
-        <td><input type="number" step="0.01" name="cat_amount[]"/></td>
-        <td><input type="checkbox" name="cat_billable[]" value="0"/></td>
-        <td>
-          <select name="cat_customer[]">
-            <option value="">-- Customer/Project --</option>
-            {% for c in customers %}
-              <option value="{{ c.id }}">{{ c.customer_name }}</option>
-            {% endfor %}
-          </select>
-        </td>
-        <td>
-          <select name="cat_class[]">
-            <option value="">-- Class --</option>
-            {% for cl in classes %}
-              <option value="{{ cl.id }}">{{ cl.class_name }}</option>
-            {% endfor %}
-          </select>
-        </td>
-        <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
-      `;
-      renumber(tbody);
-    }
-    function clearCategoryTable(){ document.querySelector("#categoryTable tbody").innerHTML=""; }
+  function deleteRow(btn){
+    const tb = btn.closest("tbody");
+    btn.closest("tr").remove();
+    renumber(tb);
+  }
+  function renumber(tbody){
+    [...tbody.querySelectorAll("tr")].forEach((tr,i)=> tr.cells[0].textContent = i+1);
+  }
 
-    function addItemRow() {
-      const tbody = document.querySelector("#itemTable tbody");
-      const tr = tbody.insertRow();
-      tr.innerHTML = `
-        <td></td>
-        <td>
-          <select name="item_product[]">
-            <option value="">-- Select --</option>
-            {% for p in products %}
-              <option value="{{ p.id }}">{{ p.name }}</option>
-            {% endfor %}
-          </select>
-        </td>
-        <td><input type="text" name="item_desc[]"/></td>
-        <td><input type="number" step="0.01" name="item_qty[]"/></td>
-        <td><input type="number" step="0.01" name="item_rate[]"/></td>
-        <td><input type="number" step="0.01" name="item_amount[]"/></td>
-        <td><input type="checkbox" name="item_billable[]" value="0"/></td>
-        <td>
-          <select name="item_customer[]">
-            <option value="">-- Customer/Project --</option>
-            {% for c in customers %}
-              <option value="{{ c.id }}">{{ c.customer_name }}</option>
-            {% endfor %}
-          </select>
-        </td>
-        <td>
-          <select name="item_class[]">
-            <option value="">-- Class --</option>
-            {% for cl in classes %}
-              <option value="{{ cl.id }}">{{ cl.class_name }}</option>
-            {% endfor %}
-          </select>
-        </td>
-        <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
-      `;
-      renumber(tbody);
-    }
-    function clearItemTable(){ document.querySelector("#itemTable tbody").innerHTML=""; }
+  function addCategoryRow() {
+    const tbody = document.querySelector("#categoryTable tbody");
+    const tr = tbody.insertRow();
+    tr.innerHTML = `
+      <td></td>
+      <td>
+        <select name="cat_category[]">
+          <option value="">-- Select --</option>
+          {% for acc in expense_accounts %}
+            <option value="{{ acc.id }}">{{ acc.account_name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td><input type="text" name="cat_desc[]"/></td>
+      <td><input type="number" step="0.01" name="cat_amount[]"/></td>
+      <td><input type="checkbox" name="cat_billable[]" value="0"/></td>
+      <td>
+        <select name="cat_customer[]">
+          <option value="">-- Customer/Project --</option>
+          {% for c in customers %}
+            <option value="{{ c.id }}">{{ c.customer_name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td>
+        <select name="cat_class[]">
+          <option value="">-- Class --</option>
+          {% for cl in classes %}
+            <option value="{{ cl.id }}">{{ cl.class_name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+    `;
+    renumber(tbody);
+  }
+  function clearCategoryTable(){ document.querySelector("#categoryTable tbody").innerHTML=""; }
 
-    function deleteRow(btn){
-      const tb = btn.closest("tbody");
-      btn.closest("tr").remove();
-      renumber(tb);
-    }
-    function renumber(tbody){
-      [...tbody.querySelectorAll("tr")].forEach((tr,i)=> tr.cells[0].textContent = i+1);
-    }
+  function addItemRow() {
+    const tbody = document.querySelector("#itemTable tbody");
+    const tr = tbody.insertRow();
+    tr.innerHTML = `
+      <td></td>
+      <td>
+        <select name="item_product[]">
+          <option value="">-- Select --</option>
+          {% for p in products %}
+            <option value="{{ p.id }}">{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td><input type="text" name="item_desc[]"/></td>
+      <td><input type="number" step="0.01" name="item_qty[]"/></td>
+      <td><input type="number" step="0.01" name="item_rate[]"/></td>
+      <td><input type="number" step="0.01" name="item_amount[]"/></td>
+      <td><input type="checkbox" name="item_billable[]" value="0"/></td>
+      <td>
+        <select name="item_customer[]">
+          <option value="">-- Customer/Project --</option>
+          {% for c in customers %}
+            <option value="{{ c.id }}">{{ c.customer_name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td>
+        <select name="item_class[]">
+          <option value="">-- Class --</option>
+          {% for cl in classes %}
+            <option value="{{ cl.id }}">{{ cl.class_name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
+    `;
+    renumber(tbody);
+  }
+  function clearItemTable(){ document.querySelector("#itemTable tbody").innerHTML=""; }
+
+  window.addEventListener("load", () => {
+    renumber(document.querySelector("#categoryTable tbody"));
+    renumber(document.querySelector("#itemTable tbody"));
+  });
   </script>
 </body>
 </html>

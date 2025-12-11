@@ -7,6 +7,7 @@ app_name='accounts'
 urlpatterns = [  
     path('accounts/', views.accounts, name='accounts'),
     path('accounts/add/account', views.add_account, name='add-account'),
+    path("accounts/<int:pk>/edit/", views.edit_account, name="edit-account"),
     path("accounts/<int:pk>/deactivate/", views.deactivate_account, name="deactivate-account"),
     path("accounts/<int:pk>/activate/", views.activate_account, name="activate-account"),
     # general ledger
@@ -26,4 +27,7 @@ urlpatterns = [
     path("reports/cashflow/", views.report_cashflow, name="report-cashflow"),
     # to save the customized columns
     path("save-prefs/", views.save_column_prefs, name="save_column_prefs"),
+
+    path("audit-trail/", views.audit_trail, name="audit-trail"),
+
 ]
