@@ -48,11 +48,11 @@
   <a href="{% url 'sales:sales' %}" class="back text-decoration-none">&lt; Back to sales</a>
 
   <div class="container" id="container">
-    <h2>{% if edit_mode %}Edit Payment{% else %}Receive Payment{% endif %}</h2>
+    <h2 style="color: #39B54B; margin-top: 3%;">{% if edit_mode %}Edit Collection{% else %}Make a Collection{% endif %}</h2>
 
     {% if form_error %}<div class="err">{{ form_error }}</div>{% endif %}
 
-    <form method="post"
+    <form style="margin-top: 3%;" method="post"
           action="{% if edit_mode and payment %}{% url 'sales:payment-edit' payment.id %}{% else %}{% url 'sales:receive-payment' %}{% endif %}">
       {% csrf_token %}
 
@@ -184,7 +184,7 @@
           <button type="button" class="btn btn-light button">Cancel</button>
         </a>
         <button type="submit" class="btn btn-green button" style="width: 20%;">
-          {% if edit_mode %}Save Changes{% else %}Save Payment{% endif %}
+          {% if edit_mode %}Save Changes{% else %}Save Collection{% endif %}
         </button>
       </div>
     </form>

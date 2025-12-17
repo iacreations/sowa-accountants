@@ -5,10 +5,10 @@
   /* new */
   .num{text-align:right}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:12px;color:#fff}
-  .pill-brown{background:#6b4f3a}
-  .pill-orange{background:#f59e0b}
-  .pill-blue{background:#3b82f6}
-  .status-chip{display:inline-block;background:#e8f5e9;color:#185a2e;padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px}
+  .pill-brown{ color: #185a2e;}
+  .pill-orange{ color: #185a2e;}
+  .pill-blue{ color: #185a2e;}
+  .status-chip{display:inline-block;color: #185a2e;padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px}
 
   .action-cell{white-space:nowrap}
   .row-actions{display:inline-flex;align-items:center;gap:10px}
@@ -122,7 +122,7 @@
 }
 </style>
 {% include 'includes/sidebar.html' %}
-<a href="{% url 'sales:payments_list' %}">Payments list</a>
+<a href="{% url 'sales:payments_list' %}">Sales Collection</a>
     <div class="action" id="action">
       <h1 style="color: #39B54B; font-weight: 600;">SALES</h1>
       <div class="search_bar" id="search" style="width: 25%;">
@@ -134,9 +134,9 @@
           <span class="button_icon"><i class='bx bx-chevron-down'></i></span>
         </button>
         <div class="dropdown-content">
-          <a href="{% url 'sales:add-invoice' %}">Invoice</a>
-          <a href="{% url 'sales:add-receipt' %}">Receipt</a>
-          <a href="{% url 'sales:receive-payment' %}">Receive payment</a>
+          <a href="{% url 'sales:add-invoice' %}">Create an Invoice</a>
+          <a href="{% url 'sales:add-receipt' %}">Create a Receipt</a>
+          <a href="{% url 'sales:receive-payment' %}">Make a collection</a>
         </div>
       </div>
 
@@ -156,200 +156,191 @@
         </button> 
     </div>
     <div class="main_body" id="body" style="margin-top: 12%;">
-      <div class="tabs" id="tab">
-        <input type="radio" class="tabs_radio" name="tabs-example" id="tab1" checked>
-        <label for="tab1" class="tabs_label">Sales Overview</label>
-          <div class="tab-content" id="sales-overview">
-            <div class="sales-overview">
-              <div id="Overview">          
-                 <div class="banner-grid" style="background:#fff3e0;">
-                  <h5 class="title" style="color: #889e8b;font-weight: 900;">Invoice Analytics</h5>
-                <a class="mini-banner brown"  href="{% url 'sales:invoices' %}?status=overdue">
-                 <span class="kicker">Overdue</span>
-                  <span class="value">{{ inv_analytics.over_amount|floatformat:2|intcomma }}</span>
-                    <span class="sub">{{ inv_analytics.over_count }} invoices</span>
-                    </a>
+  <div class="tabs" id="tab">
 
-                     <a class="mini-banner orange" href="{% url 'sales:invoices' %}?status=unpaid">
-                      <span class="kicker">Unpaid</span>
-                       <span class="value">{{ inv_analytics.unpaid_amount|floatformat:2|intcomma }}</span>
-                        <span class="sub">{{ inv_analytics.unpaid_count }} invoices</span>
-                    </a>
+    <!-- TAB 1: SALES ACTIVITIES (now first + default) -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab1" checked>
+    <label for="tab1" class="tabs_label">Sales Activities</label>
+    <div class="tab-content" id="sales-activities">
+      <div class="sa-wrap">
+        <!-- Green navbar -->
+        <nav class="sa-nav">
+          <a class="sa-item" href="{% url 'sowaf:customers' %}">
+            <i class='bx bx-user-voice'></i>View Customers
+          </a>
 
-                    <a class="mini-banner blue"   href="{% url 'sales:invoices' %}?status=paid">
-                     <span class="kicker">Paid</span>
-                      <span class="value">{{ inv_analytics.paid_amount|floatformat:2|intcomma }}</span>
-                       <span class="sub">{{ inv_analytics.paid_count }} invoices</span>
-                        </a>
+          <a class="sa-item" href="{% url 'sales:add-invoice' %}">
+            <i class='bx bx-file'></i>Create an Invoice
+          </a>
+
+          <a class="sa-item" href="#">
+            <i class='bx bx-refresh'></i>Add a Recurring invoice
+          </a>
+
+          <a class="sa-item" href="{% url 'sales:add-receipt' %}">
+            <i class='bx bx-receipt'></i>Create a Receipt
+          </a>
+
+          <a class="sa-item" href="{% url 'sales:receive-payment' %}">
+            <i class='bx bx-credit-card'></i> Make a Collection
+          </a>
+
+          <a class="sa-item" href="#">
+            <i class='bx bx-trending-up'></i> Bank deposit
+          </a>
+
+          <a class="sa-item" href="{% url 'sales:statement-new' %}">
+            <i class='bx bx-spreadsheet'></i> Create a statement
+          </a>
+        </nav>
+
+        <!-- Info rail -->
+        <div class="sa-rail">
+          <span class="sa-chip">Invoices • Overdue: {{ inv_analytics.over_count|default:0 }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: SALES OVERVIEW (moved second) -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
+    <label for="tab2" class="tabs_label">Sales Overview</label>
+    <div class="tab-content" id="sales-overview">
+      <div class="sales-overview">
+        <div id="Overview">
+          <div class="banner-grid" style="background:#fff3e0;">
+            <h5 class="title" style="color: #889e8b;font-weight: 900;">Invoice Analytics</h5>
+
+            <a class="mini-banner brown" href="{% url 'sales:invoices' %}?status=overdue">
+              <span class="kicker">Overdue</span>
+              <span class="value">{{ inv_analytics.over_amount|floatformat:2|intcomma }}</span>
+              <span class="sub">{{ inv_analytics.over_count }} invoices</span>
+            </a>
+
+            <a class="mini-banner orange" href="{% url 'sales:invoices' %}?status=unpaid">
+              <span class="kicker">Unpaid</span>
+              <span class="value">{{ inv_analytics.unpaid_amount|floatformat:2|intcomma }}</span>
+              <span class="sub">{{ inv_analytics.unpaid_count }} invoices</span>
+            </a>
+
+            <a class="mini-banner blue" href="{% url 'sales:invoices' %}?status=paid">
+              <span class="kicker">Paid</span>
+              <span class="value">{{ inv_analytics.paid_amount|floatformat:2|intcomma }}</span>
+              <span class="sub">{{ inv_analytics.paid_count }} invoices</span>
+            </a>
+          </div>
+
+          <div class="income-overtime" id="income">INCOME OVERTIME</div>
+          <div class="estimates" id="income">ESTIMATES</div>
+        </div>
+      </div>
+
+      <section>
+        <h3 class="" style="color: rgb(7, 142, 36);">ALL SALES</h3>
+        <table class="content-table">
+          <thead>
+            <tr>
+              <th>DATE</th>
+              <th>TYPE</th>
+              <th>TRANSACTION ID</th>
+              <th>CUSTOMER</th>
+              <th>MEMO</th>
+              <th>AMOUNT</th>
+              <th>STATUS</th>
+              <th>ACTIONS <i class='bx bxs-down-arrow'></i></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in sales_rows %}
+            <tr>
+              <td>{{ r.date|date:"d/m/Y" }}</td>
+              <td>
+                {% if r.type == "Invoice" %}
+                  <span class="pill pill-brown">Invoice</span>
+                {% elif r.type == "Sales Collection" or r.type == "Payment" %}
+                  <span class="pill pill-blue">Sales Collection</span>
+                {% else %}
+                  <span class="pill pill-orange">Sales Receipt</span>
+                {% endif %}
+              </td>
+              <td><a href="{{ r.edit_url }}">{{ r.no }}</a></td>
+              <td>{{ r.customer }}</td>
+              <td>{{ r.memo }}</td>
+              <td class="num">{{ r.amount|floatformat:2|intcomma }}</td>
+              <td><span class="status-chip">{{ r.status }}</span></td>
+              <td class="action-cell">
+                <div class="row-actions">
+                  <a class="edit-link" href="{{ r.edit_url }}">Edit</a>
+                  <div class="menu-wrap" tabindex="-1">
+                    <strong class="kebab" aria-haspopup="true" style="border: none;" aria-expanded="false">▾</strong>
+                    <div class="flyout" role="menu">
+                      <a role="menuitem" href="{{ r.view_url }}">View</a>
+                      <a role="menuitem" href="{{ r.print_url }}">Print</a>
+                    </div>
+                  </div>
                 </div>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="8">No sales yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
 
-                <div class="income-overtime" id="income">INCOME OVERTIME</div>
-                <div class="estimates" id="income">ESTIMATES</div>
-              </div>
-            </div>
-          
-            <section>
-                <h3 class="" style="color: rgb(7, 142, 36);">ALL SALES</h3>
+    <!-- TAB 3: PRODUCTS & SERVICES (unchanged, just third) -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab3">
+    <label for="tab3" class="tabs_label">Products and Services</label>
+    <div class="tab-content">
       <table class="content-table">
         <thead>
           <tr>
-                      <th>DATE</th>
-                      <th>TYPE</th>
-                      <th>TRANSACTION ID</th>
-                      <th>CUSTOMER</th>
-                      <th>MEMO</th>
-                      <th>AMOUNT</th>
-                      <th>STATUS</th>
-                      <th>ACTIONS <i class='bx bxs-down-arrow' ></i></th>
-            </tr>
+            <th>PRODUCT NAME</th>
+            <th>SKU</th>
+            <th>TYPE</th>
+            <th>SALES DESCRIPTION</th>
+            <th>PURCHASE DESCRIPTION</th>
+            <th>SALES PRICE</th>
+            <th class="action-cell">ACTIONS <i class='bx bxs-down-arrow'></i></th>
+          </tr>
         </thead>
-       <tbody>
-  {% for r in sales_rows %}
-  <tr>
-    <td>{{ r.date|date:"d/m/Y" }}</td>
-    <td>
-      {% if r.type == "Invoice" %}
-        <span class="pill pill-brown">Invoice</span>
-      {% elif r.type == "Payment" %}
-        <span class="pill pill-blue">Payment</span>
-      {% else %}
-        <span class="pill pill-orange">Sales Receipt</span>
-      {% endif %}
-    </td>
-    <td><a href="{{r.view_url}}">{{ r.no }}</a></td>
-    <td>{{ r.customer }}</td>
-    <td>{{ r.memo }}</td>
-    <td class="num">{{ r.amount|floatformat:2|intcomma }}</td>
-    <td><span class="status-chip">{{ r.status }}</span></td>
-    <td class="action-cell">
-      <div class="row-actions">
-        <a class="edit-link" href="{{ r.edit_url }}">Edit</a>
-        <div class="menu-wrap" tabindex="-1">
-          <strong class="kebab" aria-haspopup="true"style="border: none;" aria-expanded="false">▾</strong>
-          <div class="flyout" role="menu">
-            <a role="menuitem" href="{{ r.view_url }}">View</a>
-            <a role="menuitem" href="{{ r.print_url }}">Print</a>
-          </div>
-        </div>
-      </div>
-    </td>
-  </tr>
-  {% empty %}
-  <tr><td colspan="8">No sales yet.</td></tr>
-  {% endfor %}
-</tbody>
+        <tbody>
+          {% for product in products %}
+          <tr>
+            <td>{{ product.name }}</td>
+            <td>{{ product.sku }}</td>
+            <td>{{ product.type }}</td>
+            <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ product.sales_description }}
+            </td>
+            <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ product.purchase_description }}
+            </td>
+            <td class="num">{{ product.sales_price|default:0|floatformat:2|intcomma }}</td>
+
+            <td class="action-cell">
+              <div class="row-actions">
+                <a href="{% url 'inventory:product-edit' product.id %}">Edit</a>
+
+                <div class="menu-wrap" tabindex="-1">
+                  <button class="kebab" aria-haspopup="true" aria-expanded="false">More ▾</button>
+                  <div class="flyout" role="menu">
+                    <a role="menuitem" href="{% url 'inventory:product-detail' product.id %}">View</a>
+                    <a role="menuitem" href="{% url 'sales:add-invoice' %}?product_id={{ product.id }}">Create Invoice</a>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" style="color:#6b7280;padding:14px;">No products found.</td></tr>
+          {% endfor %}
+        </tbody>
       </table>
-  </section>
-</div>
-
-      <input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
-          <label for="tab2" class="tabs_label">Sales Activities</label>
-           <div class="tab-content" id="sales-activities">
-  <div class="sa-wrap">
-    <!-- Green navbar -->
-    <nav class="sa-nav">
-      <a class="sa-item" href="{% url 'sowaf:customers' %}">
-        <i class='bx bx-user-voice'></i> Customers
-      </a>
-
-      <a class="sa-item" href="{% url 'sales:add-invoice' %}">
-        <i class='bx bx-file'></i> Invoice
-      </a>
-
-      <a class="sa-item" href="#">
-        <i class='bx bx-refresh'></i> Recurring invoice
-      </a>
-
-      <a class="sa-item" href="{% url 'sales:add-receipt' %}">
-        <i class='bx bx-receipt'></i> Sales receipts
-      </a>
-
-      <a class="sa-item" href="{% url 'sales:receive-payment' %}">
-        <i class='bx bx-credit-card'></i> Receive payment
-      </a>
-
-      <a class="sa-item" href="#">
-        <i class='bx bx-trending-up'></i> Bank deposit
-      </a>
-
-      <a class="sa-item" href="{% url 'sales:statement-new' %}">
-        <i class='bx bx-spreadsheet'></i> Create statement
-      </a>
-
-      <div class="sa-spacer"></div>
-
-      <!-- New dropdown (keeps to the right) -->
-      <div class="sa-new" id="saNew">
-        <div class="sa-menu">
-          <a href="{% url 'sales:add-invoice' %}"><i class='bx bx-file'></i> Create Invoice</a>
-          <a href="{% url 'sales:add-receipt' %}"><i class='bx bx-receipt'></i> Create Sales Receipt</a>
-          <a href="{% url 'sales:receive-payment' %}"><i class='bx bx-credit-card'></i> Receive Payment</a>
-        </div>
-      </div>
-    </nav>
-
-    <!-- Optional: small info rail below the navbar (you can remove if you prefer) -->
-    <div class="sa-rail">
-      <span class="sa-chip">Quick links</span>
-      <span class="sa-chip">Invoices • Overdue: {{ inv_analytics.over_count|default:0 }}</span>
-      <span class="sa-chip">Unpaid Invoices: {{ inv_analytics.unpaid_count|default:0 }}</span>
-      <span class="sa-chip">Paid Invoices: {{ inv_analytics.paid_count|default:0 }}</span>
     </div>
+
   </div>
 </div>
-
-            <input type="radio" class="tabs_radio" name="tabs-example" id="tab3">
-            <label for="tab3" class="tabs_label">Products and Services</label>
-              <div class="tab-content">
-               <table class="content-table">
-  <thead>
-    <tr>
-      <th>PRODUCT NAME</th>
-      <th>SKU</th>
-      <th>TYPE</th>
-      <th>SALES DESCRIPTION</th>
-      <th>PURCHASE DESCRIPTION</th>
-      <th>SALES PRICE</th>
-      <th class="action-cell">ACTIONS <i class='bx bxs-down-arrow'></i></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for product in products %}
-      <tr>
-        <td>{{ product.name }}</td>
-        <td>{{ product.sku }}</td>
-        <td>{{ product.type }}</td>
-        <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-          {{ product.sales_description }}
-        </td>
-        <td style="max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-          {{ product.purchase_description }}
-        </td>
-        <td class="num">{{ product.sales_price|default:0|floatformat:2|intcomma }}</td>
-
-        <td class="action-cell">
-          <div class="row-actions">
-            <a href="{% url 'inventory:product-edit' product.id %}">Edit</a>
-
-            <div class="menu-wrap" tabindex="-1">
-              <button class="kebab" aria-haspopup="true" aria-expanded="false">More ▾</button>
-              <div class="flyout" role="menu">
-                <a role="menuitem" href="{% url 'inventory:product-detail' product.id %}">View</a>
-                <!-- optional: keep your create-invoice action -->
-                <a role="menuitem" href="{% url 'sales:add-invoice' %}?product_id={{ product.id }}">Create Invoice</a>
-              </div>
-            </div>
-          </div>
-        </td>
-      </tr>
-    {% empty %}
-      <tr><td colspan="6" style="color:#6b7280;padding:14px;">No products found.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-              </div>
-      </div>
     </div>
     <script>
   document.addEventListener('click', (e)=>{

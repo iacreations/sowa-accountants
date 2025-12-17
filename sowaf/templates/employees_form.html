@@ -279,8 +279,8 @@
   {% csrf_token %}
   <div class="header">
     
-    <div class="field"><label>First Name *</label><input name="first_name" value="{{ employee.first_name|default_if_none:'' }}" type="text" required></div>
-    <div class="field"><label>Last Name *</label><input name="last_name" value="{{ employee.last_name|default_if_none:'' }}" type="text" required></div>
+    <div class="field"><label>First Name *</label><input name="first_name" value="{{ employee.first_name|default_if_none:'' }}" type="text"></div>
+    <div class="field"><label>Last Name *</label><input name="last_name" value="{{ employee.last_name|default_if_none:'' }}" type="text"></div>
     <div class="field">
       <label>Gender</label>
       <select name="gender">
@@ -288,10 +288,10 @@
         <option value="Female" {% if employee.gender == "Female" %}selected{% endif %}>Female</option>
       </select>
     </div>
-    <div class="field"><label>Date of Birth</label><input name="dob" value="{{ employee.dob|date:'d/m/Y'|default_if_none:'' }}" type="text" placeholder="dd/mm/yyyy"></div>
+    <div class="field"><label>Date of Birth</label><input name="dob" value="{{ employee.dob|date:'d/m/Y'|default_if_none:'' }}" type="date" placeholder="dd/mm/yyyy"></div>
     <div class="field"><label>Nationality</label><input name="nationality" value="{{ employee.nationality|default_if_none:'' }}" type="text"></div>
-    <div class="field"><label>National ID / SSN / NIN *</label><input name="nin_number" value="{{ employee.nin_number|default_if_none:'' }}" type="text" required></div>
-    <div class="field"><label>Tax ID / TIN *</label><input name="tin_number" value="{{ employee.tin_number|default_if_none:'' }}" type="text" required></div>
+    <div class="field"><label>National ID / SSN / NIN *</label><input name="nin_number" value="{{ employee.nin_number|default_if_none:'' }}" type="text"></div>
+    <div class="field"><label>Tax ID / TIN *</label><input name="tin_number" value="{{ employee.tin_number|default_if_none:'' }}" type="text"></div>
     <div class="field">
       <label>Profile Picture</label>
        {% if employee.profile_picture %}
@@ -312,8 +312,8 @@
     <h3 class="collapsible-header">Contact Details</h3>
     <div class="collapsible-content">
       <div class="header">
-        <div class="field"><label>Phone Number *</label><input name="phone_number" value="{{ employee.phone_number|default_if_none:'' }}" type="tel" required></div>
-        <div class="field"><label>Email Address *</label><input name="email_address" value="{{ employee.email_address|default_if_none:'' }}" type="email" required></div>
+        <div class="field"><label>Phone Number *</label><input name="phone_number" value="{{ employee.phone_number|default_if_none:'' }}" type="tel"></div>
+        <div class="field"><label>Email Address *</label><input name="email_address" value="{{ employee.email_address|default_if_none:'' }}" type="email"></div>
         <div class="field"><label>Residential Address</label><input name="residential_address" value="{{ employee.residential_address|default_if_none:'' }}" type="text"></div>
         <div class="field"><label>Emergency Contact Name</label><input name="emergency_person" value="{{ employee.emergency_person|default_if_none:'' }}" type="text"></div>
         <div class="field"><label>Emergency Contact Phone</label><input name="emergency_contact" value="{{ employee.emergency_contact|default_if_none:'' }}" type="tel"></div>
@@ -327,10 +327,10 @@
     <h3 class="collapsible-header">Employment Details</h3>
     <div class="collapsible-content">
       <div class="header">
-        <div class="field"><label>Job Title *</label><input name="job_title" value="{{ employee.job_title|default_if_none:'' }}" type="text" required></div>
-        <div class="field"><label>Department *</label><input name="department" value="{{ employee.department|default_if_none:'' }}" type="text" required></div>
+        <div class="field"><label>Job Title</label><input name="job_title" value="{{ employee.job_title|default_if_none:'' }}" type="text"></div>
+        <div class="field"><label>Department *</label><input name="department" value="{{ employee.department|default_if_none:'' }}" type="text"></div>
         <div class="field">
-          <label>Employment Type *</label>
+          <label>Employment Type</label>
           <select name="employment_type">
             <option value="Full-Time" {% if employee.department == "Full-Time" %}selected{% endif %}>Full-Time</option>
             <option value="Part-Time" {% if employee.department == "Part-Time" %}selected{% endif %}>Part-Time</option>
@@ -346,7 +346,7 @@
             <option value="Terminated" {% if employee.status == "Terminated" %}selected{% endif %} >Terminated</option>
           </select>
         </div>
-        <div class="field"><label>Date of Hire *</label><input name="hire_date" value="{{ employee.hire_date|date:'d/m/Y'|default_if_none:'' }}" type="text" placeholder="dd/mm/yyyy" required></div>
+        <div class="field"><label>Date of Hire *</label><input name="hire_date" value="{{ employee.hire_date|date:'d/m/Y'|default_if_none:'' }}" type="date" placeholder="dd/mm/yyyy"></div>
         <div class="field"><label>Supervisor</label><input name="supervisor" value="{{ employee.supervisor|default_if_none:'' }}" type="text"></div>
       </div>
     </div>
@@ -357,8 +357,8 @@
     <h3 class="collapsible-header">Payroll Information</h3>
     <div class="collapsible-content">
       <div class="header">
-        <div class="field"><label>Basic Salary *</label><input name="salary" value="{{ employee.salary|default_if_none:'' }}" type="number" required></div>
-        <div class="field"><label>Pay Frequency *</label><input name="payment_frequency" value="{{ employee.payment_frequency|default_if_none:'' }}" type="text" placeholder="e.g. Monthly" required></div>
+        <div class="field"><label>Basic Salary *</label><input name="salary" value="{{ employee.salary|default_if_none:'' }}" type="number"></div>
+        <div class="field"><label>Pay Frequency *</label><input name="payment_frequency" value="{{ employee.payment_frequency|default_if_none:'' }}" type="text" placeholder="e.g. Monthly"></div>
         <div class="field">
           <label>Payment Method *</label>
           <select name="payment_method">

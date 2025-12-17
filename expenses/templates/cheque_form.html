@@ -145,6 +145,7 @@
                         {% for c in customers %}
                           <option value="{{ c.id }}" {% if row.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td>
@@ -153,6 +154,7 @@
                         {% for cl in classes %}
                           <option value="{{ cl.id }}" {% if row.class_field_id == cl.id %}selected{% endif %}>{{ cl.class_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -178,6 +180,7 @@
                         {% for c in customers %}
                           <option value="{{ c.id }}">{{ c.customer_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td>
@@ -186,6 +189,7 @@
                         {% for cl in classes %}
                           <option value="{{ cl.id }}">{{ cl.class_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -221,6 +225,7 @@
                         {% for p in products %}
                           <option value="{{ p.id }}" {% if row.product_id == p.id %}selected{% endif %}>{{ p.name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><input type="text" name="item_desc[]" value="{{ row.description }}"/></td>
@@ -234,6 +239,7 @@
                         {% for c in customers %}
                           <option value="{{ c.id }}" {% if row.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td>
@@ -242,6 +248,7 @@
                         {% for cl in classes %}
                           <option value="{{ cl.id }}" {% if row.class_field_id == cl.id %}selected{% endif %}>{{ cl.class_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -256,6 +263,7 @@
                         {% for p in products %}
                           <option value="{{ p.id }}">{{ p.name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><input type="text" name="item_desc[]"/></td>
@@ -269,6 +277,7 @@
                         {% for c in customers %}
                           <option value="{{ c.id }}">{{ c.customer_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td>
@@ -277,6 +286,7 @@
                         {% for cl in classes %}
                           <option value="{{ cl.id }}">{{ cl.class_name }}</option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -328,31 +338,90 @@
   </div>
 
   <script>
-  // open Add supplier in new tab if chosen
+  // URLs for "+ Add New" options
+  const ADD_SUPPLIER_URL = "{% url 'sowaf:add-supplier' %}";
+  const ADD_CUSTOMER_URL = "{% url 'sowaf:add-customer' %}";
+  const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
+  const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
+
+  // CSRF helper (for class ajax create)
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  function openAddSupplier(selectEl){ window.open(ADD_SUPPLIER_URL, "_blank", "noopener"); selectEl.value = ""; }
+  function openAddCustomer(selectEl){ window.open(ADD_CUSTOMER_URL, "_blank", "noopener"); selectEl.value = ""; }
+  function openAddProduct(selectEl){ window.open(ADD_PRODUCT_URL, "_blank", "noopener"); selectEl.value = ""; }
+
+  function addNewClassInline(selectEl){
+    const name = (prompt("Enter new class name:") || "").trim();
+    if(!name){ selectEl.value = ""; return; }
+
+    fetch(ADD_CLASS_AJAX_URL, {
+      method: "POST",
+      headers: {
+        "X-CSRFToken": getCookie("csrftoken"),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: "name=" + encodeURIComponent(name)
+    })
+    .then(res => res.json())
+    .then(data => {
+      if(data && data.success){
+        const opt = document.createElement("option");
+        opt.value = data.id;
+        opt.textContent = data.name;
+        opt.selected = true;
+        selectEl.appendChild(opt);
+        selectEl.value = String(data.id);
+      } else {
+        alert((data && data.error) ? data.error : "Failed to add class");
+        selectEl.value = "";
+      }
+    })
+    .catch(() => {
+      alert("Network error. Try again.");
+      selectEl.value = "";
+    });
+  }
+
+  // supplier dropdown "+ Add New"
   (function(){
-    const addSupplierUrl = "{% url 'sowaf:add-supplier' %}";
     const sel = document.getElementById('supplier-select');
     if (sel){
       sel.addEventListener('change', function(){
-        if (this.value === 'add_new'){
-          window.open(addSupplierUrl, '_blank', 'noopener');
-          this.value = '';
-        }
+        if (this.value === 'add_new'){ openAddSupplier(this); }
       });
     }
   })();
 
+  // collapsibles
   document.querySelectorAll(".collapsible").forEach(btn => {
     btn.addEventListener("click", () => btn.nextElementSibling.classList.toggle("active"));
   });
 
+  // row ops
   function deleteRow(btn){
     const tb = btn.closest("tbody");
     btn.closest("tr").remove();
     renumber(tb);
   }
+
   function renumber(tbody){
     [...tbody.querySelectorAll("tr")].forEach((tr,i)=> tr.cells[0].textContent = i+1);
+    // keep billable values aligned to row index
+    tbody.querySelectorAll('input[type="checkbox"]').forEach((cb, i)=> cb.value = i);
   }
 
   function addCategoryRow() {
@@ -377,6 +446,7 @@
           {% for c in customers %}
             <option value="{{ c.id }}">{{ c.customer_name }}</option>
           {% endfor %}
+          <option value="add_new">➕ Add New</option>
         </select>
       </td>
       <td>
@@ -385,6 +455,7 @@
           {% for cl in classes %}
             <option value="{{ cl.id }}">{{ cl.class_name }}</option>
           {% endfor %}
+          <option value="add_new">➕ Add New</option>
         </select>
       </td>
       <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -404,6 +475,7 @@
           {% for p in products %}
             <option value="{{ p.id }}">{{ p.name }}</option>
           {% endfor %}
+          <option value="add_new">➕ Add New</option>
         </select>
       </td>
       <td><input type="text" name="item_desc[]"/></td>
@@ -417,6 +489,7 @@
           {% for c in customers %}
             <option value="{{ c.id }}">{{ c.customer_name }}</option>
           {% endfor %}
+          <option value="add_new">➕ Add New</option>
         </select>
       </td>
       <td>
@@ -425,6 +498,7 @@
           {% for cl in classes %}
             <option value="{{ cl.id }}">{{ cl.class_name }}</option>
           {% endfor %}
+          <option value="add_new">➕ Add New</option>
         </select>
       </td>
       <td><button class="delete-btn" type="button" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -432,6 +506,24 @@
     renumber(tbody);
   }
   function clearItemTable(){ document.querySelector("#itemTable tbody").innerHTML=""; }
+
+  // Event delegation so it works for NEW rows too
+  document.addEventListener("change", function(e){
+    const el = e.target;
+    if(!el || el.tagName !== "SELECT") return;
+
+    const name = el.getAttribute("name") || "";
+    const val  = el.value;
+
+    // category: customer + class
+    if(name === "cat_customer[]" && val === "add_new"){ openAddCustomer(el); return; }
+    if(name === "cat_class[]" && val === "add_new"){ addNewClassInline(el); return; }
+
+    // item: product + customer + class
+    if(name === "item_product[]" && val === "add_new"){ openAddProduct(el); return; }
+    if(name === "item_customer[]" && val === "add_new"){ openAddCustomer(el); return; }
+    if(name === "item_class[]" && val === "add_new"){ addNewClassInline(el); return; }
+  });
 
   window.addEventListener("load", () => {
     renumber(document.querySelector("#categoryTable tbody"));

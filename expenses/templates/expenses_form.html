@@ -44,10 +44,10 @@
 </head>
 <body>
   <a href="{% url 'expenses:expenses' %}" class="btn btn-lg" style="color: #39B54B;">← Back to Expense lists</a>
+
   <div class="container" id="container">
     <h2 class="title">Expenses</h2>
 
-    <!-- Dynamic action: add vs edit -->
     <form method="POST" enctype="multipart/form-data"
           action="{% if expense %}{% url 'expenses:expense-edit' expense.id %}{% else %}{% url 'expenses:add-expenses' %}{% endif %}">
       {% csrf_token %}
@@ -152,6 +152,7 @@
                       {% for c in customers %}
                         <option value="{{ c.id }}" {% if cl.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td>
@@ -160,13 +161,13 @@
                       {% for clz in classes %}
                         <option value="{{ clz.id }}" {% if cl.class_field_id == clz.id %}selected{% endif %}>{{ clz.class_name }}</option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
                 </tr>
                 {% endfor %}
               {% else %}
-                <!-- starter row for new -->
                 <tr>
                   <td>1</td>
                   <td>
@@ -184,12 +185,14 @@
                     <select name="cat_customer[]">
                       <option value="">-- Customer --</option>
                       {% for c in customers %}<option value="{{ c.id }}">{{ c.customer_name }}</option>{% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td>
                     <select name="cat_class[]">
                       <option value="">-- Class --</option>
                       {% for cl in classes %}<option value="{{ cl.id }}">{{ cl.class_name }}</option>{% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -229,7 +232,7 @@
                 <tr>
                   <td>{{ forloop.counter }}</td>
                   <td>
-                    <select name="item_product[]" onchange="fillItemFromProduct(this)">
+                    <select name="item_product[]" onchange="handleItemProductSelect(this)">
                       <option value="">-- Select --</option>
                       {% for p in products %}
                         <option value="{{ p.id }}"
@@ -239,6 +242,7 @@
                           {{ p.name }}
                         </option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><input type="text" name="item_desc[]" value="{{ il.description }}"></td>
@@ -252,12 +256,14 @@
                     <select name="item_customer[]">
                       <option value="">-- Customer --</option>
                       {% for c in customers %}<option value="{{ c.id }}" {% if il.customer_id == c.id %}selected{% endif %}>{{ c.customer_name }}</option>{% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td>
                     <select name="item_class[]">
                       <option value="">-- Class --</option>
                       {% for clz in classes %}<option value="{{ clz.id }}" {% if il.class_field_id == clz.id %}selected{% endif %}>{{ clz.class_name }}</option>{% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -267,7 +273,7 @@
                 <tr>
                   <td>1</td>
                   <td>
-                    <select name="item_product[]" onchange="fillItemFromProduct(this)">
+                    <select name="item_product[]" onchange="handleItemProductSelect(this)">
                       <option value="">-- Select --</option>
                       {% for p in products %}
                         <option value="{{ p.id }}"
@@ -276,6 +282,7 @@
                           {{ p.name }}
                         </option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><input type="text" name="item_desc[]"></td>
@@ -287,12 +294,14 @@
                     <select name="item_customer[]">
                       <option value="">-- Customer --</option>
                       {% for c in customers %}<option value="{{ c.id }}">{{ c.customer_name }}</option>{% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td>
                     <select name="item_class[]">
                       <option value="">-- Class --</option>
                       {% for cl in classes %}<option value="{{ cl.id }}">{{ cl.class_name }}</option>{% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -335,8 +344,6 @@
             {% if not expense %}
               <button type="submit" name="save_action" value="save&new">Save & New</button>
               <button type="submit" name="save_action" value="save&close">Save & Close</button>
-            {% else %}
-              <!-- on edit we just show Save; you can add a Save & Close if you like -->
             {% endif %}
           </div>
         </div>
@@ -345,11 +352,31 @@
   </div>
 
   <script>
+    // URLs for "Add New" actions (shared across rows)
+    const ADD_CUSTOMER_URL = "{% url 'sowaf:add-customer' %}";
+    const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
+    const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
+
+    // CSRF helper (works everywhere, even in dynamic rows)
+    function getCookie(name) {
+      let cookieValue = null;
+      if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+          const cookie = cookies[i].trim();
+          if (cookie.substring(0, name.length + 1) === (name + '=')) {
+            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+            break;
+          }
+        }
+      }
+      return cookieValue;
+    }
+
     function nextIndex(tbody){ return tbody.querySelectorAll("tr").length; }
 
     function renumber(tbody){
       [...tbody.querySelectorAll("tr")].forEach((tr,i)=> tr.cells[0].textContent = i+1);
-      // re-sync billable checkbox values to their row index
       [...tbody.querySelectorAll('input[type="checkbox"]')].forEach((cb, i)=> cb.value = i);
     }
 
@@ -362,7 +389,53 @@
     function clearCategoryTable(){ document.querySelector("#categoryTable tbody").innerHTML=""; }
     function clearItemTable(){ document.querySelector("#itemTable tbody").innerHTML=""; }
 
-    // NEW: auto-fill description & rate from selected product (uses purchase fields)
+    // === "Add New" handlers (no style changes) ===
+    function openAddCustomer(selectEl){
+      window.open(ADD_CUSTOMER_URL, "_blank", "noopener");
+      selectEl.value = "";
+    }
+
+    function openAddProduct(selectEl){
+      window.open(ADD_PRODUCT_URL, "_blank", "noopener");
+      selectEl.value = "";
+    }
+
+    function addNewClassInline(selectEl){
+      const name = (prompt("Enter new class name:") || "").trim();
+      if(!name){
+        selectEl.value = "";
+        return;
+      }
+
+      fetch(ADD_CLASS_AJAX_URL, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCookie("csrftoken"),
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "name=" + encodeURIComponent(name)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data && data.success){
+          const opt = document.createElement("option");
+          opt.value = data.id;
+          opt.textContent = data.name;
+          opt.selected = true;
+          selectEl.appendChild(opt);
+          selectEl.value = String(data.id);
+        } else {
+          alert((data && data.error) ? data.error : "Failed to add class");
+          selectEl.value = "";
+        }
+      })
+      .catch(() => {
+        alert("Network error. Try again.");
+        selectEl.value = "";
+      });
+    }
+
+    // === Item: auto-fill description & rate from selected product (purchase fields) ===
     function fillItemFromProduct(selectEl){
       const row = selectEl.closest("tr");
       const opt = selectEl.options[selectEl.selectedIndex];
@@ -382,10 +455,18 @@
 
         calcItemAmount(rateInput);
       } else {
-        // keep rate if you want; we only clear description & amount
         descInput.value = "";
         row.querySelector('[name="item_amount[]"]').value = "";
       }
+    }
+
+    // Item product select: supports "Add New"
+    function handleItemProductSelect(selectEl){
+      if(selectEl.value === "add_new"){
+        openAddProduct(selectEl);
+        return;
+      }
+      fillItemFromProduct(selectEl);
     }
 
     function addCategoryRow() {
@@ -407,12 +488,14 @@
           <select name="cat_customer[]">
             <option value="">-- Customer --</option>
             {% for c in customers %}<option value="{{ c.id }}">{{ c.customer_name }}</option>{% endfor %}
+            <option value="add_new">➕ Add New</option>
           </select>
         </td>
         <td>
           <select name="cat_class[]">
             <option value="">-- Class --</option>
             {% for cl in classes %}<option value="{{ cl.id }}">{{ cl.class_name }}</option>{% endfor %}
+            <option value="add_new">➕ Add New</option>
           </select>
         </td>
         <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -427,7 +510,7 @@
       row.innerHTML = `
         <td></td>
         <td>
-          <select name="item_product[]" onchange="fillItemFromProduct(this)">
+          <select name="item_product[]" onchange="handleItemProductSelect(this)">
             <option value="">-- Select --</option>
             {% for p in products %}
               <option value="{{ p.id }}"
@@ -436,6 +519,7 @@
                 {{ p.name }}
               </option>
             {% endfor %}
+            <option value="add_new">➕ Add New</option>
           </select>
         </td>
         <td><input type="text" name="item_desc[]"></td>
@@ -447,12 +531,14 @@
           <select name="item_customer[]">
             <option value="">-- Customer --</option>
             {% for c in customers %}<option value="{{ c.id }}">{{ c.customer_name }}</option>{% endfor %}
+            <option value="add_new">➕ Add New</option>
           </select>
         </td>
         <td>
           <select name="item_class[]">
             <option value="">-- Class --</option>
             {% for cl in classes %}<option value="{{ cl.id }}">{{ cl.class_name }}</option>{% endfor %}
+            <option value="add_new">➕ Add New</option>
           </select>
         </td>
         <td><button type="button" class="delete-btn" onclick="deleteRow(this)"><i class='bx bx-trash'></i></button></td>
@@ -467,15 +553,27 @@
       tr.querySelector('[name="item_amount[]"]').value = (qty * rate).toFixed(2);
     }
 
-    function regenRef(){
-      document.querySelector('input[name="ref_no"]').value = "";
-      alert("A new reference will be generated when you save.");
-    }
+    // Event delegation: works for existing + newly added rows
+    document.addEventListener("change", function(e){
+      const el = e.target;
+      if(!el || el.tagName !== "SELECT") return;
+
+      const nm = el.getAttribute("name") || "";
+
+      // Category line: customer + class
+      if(nm === "cat_customer[]" && el.value === "add_new"){ openAddCustomer(el); return; }
+      if(nm === "cat_class[]" && el.value === "add_new"){ addNewClassInline(el); return; }
+
+      // Item line: product + customer + class
+      if(nm === "item_product[]" && el.value === "add_new"){ openAddProduct(el); return; }
+      if(nm === "item_customer[]" && el.value === "add_new"){ openAddCustomer(el); return; }
+      if(nm === "item_class[]" && el.value === "add_new"){ addNewClassInline(el); return; }
+    });
 
     // Optional: prefill edit rows on load (keeps user edits intact)
     document.addEventListener('DOMContentLoaded', function(){
       document.querySelectorAll('#itemTable tbody select[name="item_product[]"]').forEach(sel => {
-        if (sel.value) fillItemFromProduct(sel);
+        if (sel.value && sel.value !== "add_new") fillItemFromProduct(sel);
       });
     });
   </script>

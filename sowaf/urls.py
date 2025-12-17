@@ -38,7 +38,6 @@ urlpatterns = [
     path('employees/', views.employee, name='employees'),
     path('employees/add/employee', views.add_employees, name='add-employee'),
     path('employees/edit/<str:pk>/', views.edit_employee, name='edit-employee'),
-    path('employees/delete/<str:pk>/', views.delete_employee, name='delete-employee'),
     path('employees/import/import-employees', views.import_employees, name='import-employees'),
     path('templates/employees/', views.download_employees_template, name='import_employees_template'),
   

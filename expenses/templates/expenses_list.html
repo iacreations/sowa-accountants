@@ -84,6 +84,14 @@
   <!-- Toolbar -->
   <div class="toolbar">
     <div class="title" style="color: #39B54B;">Expenses</div>
+    <a href="{% url 'expenses:add-expenses' %}" style="text-decoration: none;">
+    <button class="button" style="width: fit-content;">
+      <span class="button_text">New Expense</span>
+      <span class="button_icon">
+        <i class='bx bx-folder-plus'></i>
+      </span>
+    </button>
+  </a>
     <div class="search">
       <i class='bx bx-search'></i>
       <input type="text" placeholder="Search payee / ref / category…" oninput="filterRows(this.value)">

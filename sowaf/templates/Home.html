@@ -1,18 +1,127 @@
 {% load static %}
+{% load humanize %}
 {% include 'includes/navbar.html' %}
-  <style>
-    body { background:#f5fbf8; }
+<style>
+  body { background:#f5fbf8; }
 
-/* Container that holds the little tiles */
+  /* ====== keep your existing styles (unchanged) ====== */
+
+  .dashboard-grid{
+    display:grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap:14px;
+  }
+
+  .kpi-card{
+    grid-column: span 6;
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:14px 16px;
+    min-height:170px;
+    color: #39B54B;
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+  }
+  .kpi-card.wide{ grid-column: span 12; }
+
+  .kpi-head{
+    display:flex; align-items:baseline; justify-content:space-between;
+    gap:10px; margin-bottom:8px;
+  }
+  .kpi-title{ font-weight:700; letter-spacing:.2px; color:#39B54B; }
+  .kpi-sub{ font-size:12px; color:#6b7a90; }
+
+  .kpi-body{ position:relative; }
+  .kpi-body canvas{ width:100% !important; height:100% !important; }
+
+  @media (max-width: 900px){
+    .kpi-card, .kpi-card.wide{ grid-column: span 12; }
+  }
+
+  /* ====== QB-style Business Overview tiles (NEW, light styles only) ====== */
+  .qb-grid{
+    display:grid;
+    grid-template-columns:repeat(12, 1fr);
+    gap:14px;
+  }
+  .qb-card{
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:14px 16px;
+    color:#0f172a;
+    min-height:200px;
+  }
+  .qb-card h4{
+    margin:0;
+    font-size:13px;
+    letter-spacing:.06em;
+    color:#111827;
+    text-transform:uppercase;
+    font-weight:900;
+  }
+  .qb-top{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:10px;
+  }
+  .qb-range{ font-size:12px; color:#6b7280; }
+
+  .qb-money{
+    font-size:28px;
+    font-weight:900;
+    color:#0b1324;
+    margin:6px 0 10px;
+  }
+  .qb-muted{ color:#6b7280; font-size:13px; }
+  .qb-link a{ color:#2563eb; text-decoration:none; font-size:13px; }
+  .qb-link a:hover{ text-decoration:underline; }
+
+  .bar{
+    height:10px; background:#e5e7eb; border-radius:999px; overflow:hidden;
+  }
+  .bar > span{
+    display:block; height:100%;
+    background:#39B54B;
+    width:40%;
+  }
+
+  .bank-row{
+    display:flex; justify-content:space-between; gap:10px;
+    padding:10px 0;
+    border-bottom:1px solid #f1f5f9;
+  }
+  .bank-row:last-child{ border-bottom:none; }
+  .bank-name{ font-weight:800; color:#0b1324; }
+  .bank-sub{ font-size:12px; color:#6b7280; }
+  .bank-bal{ font-weight:900; color:#0b1324; white-space:nowrap; }
+
+  .mini-2col{
+    display:flex; justify-content:space-between; gap:14px;
+  }
+  .mini-2col .box{ flex:1; }
+  .mini-amt{ font-weight:900; color:#0b1324; }
+
+  /* chart heights */
+  .donut-wrap{ height:170px; }
+  .line-wrap{ height:220px; }
+
+ body { background:#f5fbf8; }
+
 .dashboard-grid{
   display:grid;
   grid-template-columns: repeat(12, 1fr);
   gap:14px;
 }
 
-/* Card */
 .kpi-card{
-  grid-column: span 6;                /* 2 per row on desktop */
+  grid-column: span 6;
   background:#fff;
   border:1px solid #e9edf3;
   border-radius:14px;
@@ -25,10 +134,8 @@
   justify-content:space-between;
 }
 
-/* Make some cards wider (e.g. Sales line) */
 .kpi-card.wide{ grid-column: span 12; }
 
-/* Header (title + sub) */
 .kpi-head{
   display:flex; align-items:baseline; justify-content:space-between;
   gap:10px; margin-bottom:8px;
@@ -41,19 +148,16 @@
   font-size:12px; color:#6b7a90;
 }
 
-/* Tiny green pill accent */
 .kpi-pill{
-  background:#e8fbef; color:#1a9d46; 
-  border:1px solid #c7f1d6; 
-  padding:2px 8px; border-radius:999px; 
+  background:#e8fbef; color:#1a9d46;
+  border:1px solid #c7f1d6;
+  padding:2px 8px; border-radius:999px;
   font-size:11px; font-weight:700;
 }
 
-/* Canvas area: keeps charts tight */
 .kpi-body{ position:relative; height:130px; }
 .kpi-body canvas{ width:100% !important; height:100% !important; }
 
-/* Mobile */
 @media (max-width: 900px){
   .kpi-card, .kpi-card.wide{ grid-column: span 12; }
 }
@@ -99,7 +203,7 @@ padding: 3%;
 #things{
    margin: 3%;
    width: 100%;
-   
+
 }
 #Overview{
 display: block;
@@ -111,25 +215,22 @@ padding: 3%;
    width: 100%;
 }
 }
-/* Laptops & small desktops */
 @media only screen and (min-width: 1024px) and (max-width: 1600px) {
-/* html, body { overflow: hidden; }  */
 #main_body{
   margin-top: 13%;
-box-sizing: border-box; 
+box-sizing: border-box;
 }
 .overviews{
   width:100%;
   background:#fff;
   border:1px solid #e7e7e7;
   border-radius:14px;
-  padding:14px;                 /* <— was missing */
+  padding:14px;
   box-shadow:0 8px 22px rgba(0,0,0,.05);
   margin-bottom:14px;
 }
 }
 
-/* --- Get things done: QB-style tiles (keep our green) --- */
 .shortcuts-grid{
   display:grid;
   grid-template-columns:repeat(4,minmax(180px,1fr));
@@ -137,7 +238,7 @@ box-sizing: border-box;
 }
 
 .shortcut-card{
-  background:#0d943e;                 /* our green */
+  background:#0d943e;
   color:#fff;
   border-radius:16px;
   padding:22px 18px;
@@ -162,7 +263,7 @@ box-sizing: border-box;
   width:66px;height:66px;
   border-radius:50%;
   display:grid;place-items:center;
-  background:rgba(255,255,255,.14);   /* soft inner circle */
+  background:rgba(255,255,255,.14);
   outline:3px solid rgba(255,255,255,.18);
   margin-bottom:10px;
 }
@@ -177,12 +278,10 @@ box-sizing: border-box;
   letter-spacing:.2px;
 }
 
-/* small helper for two-line labels on narrow tiles */
 .shortcut-label small{
   display:block; opacity:.9; font-weight:500;
 }
 
-/* Responsive */
 @media (max-width: 1200px){
   .shortcuts-grid{ grid-template-columns:repeat(3,minmax(160px,1fr)); }
 }
@@ -194,7 +293,7 @@ box-sizing: border-box;
 }
 #actions{
   display: grid !important;
-    grid-template-columns: repeat(2, 1fr) !important;  /* exactly 2 columns */
+    grid-template-columns: repeat(2, 1fr) !important;
     gap: 20px !important;
     max-width: 1200px !important;
     margin: 18px auto !important;
@@ -208,11 +307,11 @@ box-sizing: border-box;
     padding: 20px !important;
     box-shadow: 0 6px 22px rgba(16, 142, 61, 0.08) !important;
     transition: transform .22s ease, box-shadow .22s ease !important;
-    border-left: 6px solid #39B54B !important; /* richer green accent */
+    border-left: 6px solid #39B54B !important;
     display: flex !important;
     flex-direction: column !important;
     justify-content: flex-start !important;
-    min-height: 220px !important; /* equal heights */
+    min-height: 220px !important;
     box-sizing: border-box !important;
     overflow: hidden !important;
 
@@ -230,29 +329,35 @@ box-sizing: border-box;
 .gtd-card ul li a:hover { text-decoration: underline; }
 .gtd-card:focus-within { outline: 3px solid rgba(17,122,43,0.08); }
 </style>
+
 {% include 'includes/sidebar.html' %}
-    <div class="action" id="action">
-      <h1 style="color: #39B54B; font-weight: 600;">HOME</h1>
-      <div class="search_bar" id="search"  style="width: 25%;">
-        <input type="text" placeholder="Search Home" />
-      </div>
-        <button class="button">
-          <span id="customize" class="button_text">CUSTOMIZE</span>
-          <span id="customize" class="button_icon">
-            <i class='bx bxs-customize' ></i>
-          </span>
-        </button>
-    </div>
-    <div class="main_body" id="main_body">
-      <div class="tabs" style="overflow: hidden;">
-        <input type="radio" class="tabs_radio" name="tabs-example" id="tab1" checked>
-        <label for="tab1" class="tabs_label">Get things done</label>
-<div class="tab-content">
-   <h4 style="color: #0d943e; text-align: center; font-weight: 800;">Create actions</h4>
-<div id="actions">
-<div id="create-actions">
- 
-          <!-- Customers -->
+
+<div class="action" id="action">
+  <h1 style="color: #39B54B; font-weight: 600;">HOME</h1>
+  <div class="search_bar" id="search" style="width: 25%;">
+    <input type="text" placeholder="Search Home" />
+  </div>
+  <button class="button">
+    <span id="customize" class="button_text">CUSTOMIZE</span>
+    <span id="customize" class="button_icon">
+      <i class='bx bxs-customize'></i>
+    </span>
+  </button>
+</div>
+
+<div class="main_body" id="main_body">
+  <div class="tabs" style="overflow: hidden;">
+
+    <!-- TAB 1 (unchanged): Get things done -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab1"
+           {% if request.GET.tab != "tab2" %}checked{% endif %}>
+    <label for="tab1" class="tabs_label">Get things done</label>
+
+    <div class="tab-content">
+      <h4 style="color: #0d943e; text-align: center; font-weight: 800;">Create actions</h4>
+      <div id="actions">
+
+        <div id="create-actions">
           <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-customers">
             <div class="gtd-head">
               <div class="icon" aria-hidden="true"><i class='bx bx-user-circle'></i></div>
@@ -260,311 +365,299 @@ box-sizing: border-box;
             </div>
             <ul>
               <li><a href="{% url 'sowaf:add-customer' %}">Add Customer</a></li>
-              <li><a href="{% url 'sales:add-receipt' %}">Create sales receipt</a></li>
-              <li><a href="{% url 'sales:add-invoice' %}">Create Invoice</a></li>
-              <li><a href="{% url 'sales:receive-payment' %}">Record payment</a></li>
-              <li><a href="{% url 'sales:statement-new' %}">Create statement</a></li>
-              
+              <li><a href="{% url 'sales:add-receipt' %}">Create a Sales Receipt</a></li>
+              <li><a href="{% url 'sales:add-invoice' %}">Create an Invoice</a></li>
+              <li><a href="{% url 'sales:receive-payment' %}">Make a Sales Collection</a></li>
+              <li><a href="{% url 'sales:statement-new' %}">Create a statement</a></li>
             </ul>
           </div>
-</div>
-<div id="create-actions">
-<!-- Suppliers -->
-          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-customers">
+        </div>
+
+        <div id="create-actions">
+          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-suppliers">
             <div class="gtd-head">
               <div class="icon" aria-hidden="true"><i class='bx bx-store-alt'></i></div>
-              <h3 id="gtd-customers">Suppliers</h3>
+              <h3 id="gtd-suppliers">Suppliers</h3>
             </div>
             <ul>
-              <li><a href="{% url 'sowaf:add-supplier' %}">Add Supplier</a></li>
-              <li><a href="{% url 'expenses:add-expenses' %}">Record expense</a></li>
-              <li><a href="{% url 'expenses:add-cheque' %}">Create cheque</a></li>
-              <li><a href="{% url 'expenses:add-bill' %}">Create bill</a></li>
-              <li> <a class="tx-item" role="menuitem" href="{% url 'expenses:purchase_order' %}">Create a purchase order</a></li>
+              <li><a href="{% url 'expenses:add-bill' %}">Create a Bill</a></li>
+              <li><a href="{% url 'expenses:add-expenses' %}">Make an Expense</a></li>
+              <li><a href="{% url 'expenses:add-cheque' %}">Create a Cheque</a></li>
+              <li><a href="{% url 'expenses:purchase_order' %}">Make Purchase order</a></li>
+              <li><a href="{% url 'expenses:supplier-credit' %}">Create a Supplier credit</a></li>
+              <li><a href="{% url 'expenses:pay-down-credit' %}">Create a Pay down credit</a></li>
+              <li><a href="{% url 'expenses:credit-card' %}">Create a Credit card credit</a></li>
+              <li><a href="{% url 'expenses:import-bills' %}">Import bills</a></li>
             </ul>
           </div>
-</div>
-<div id="create-actions">
-<!-- Employees -->
-          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-customers">
+        </div>
+
+        <div id="create-actions">
+          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-employees">
             <div class="gtd-head">
               <div class="icon" aria-hidden="true"><i class='bx bx-group'></i></div>
-              <h3 id="gtd-customers">Employees</h3>
+              <h3 id="gtd-employees">Employees</h3>
             </div>
             <ul>
               <li><a href="{% url 'sowaf:add-employee' %}">Add employee</a></li>
-              <!-- <li><a href="{% url 'sowaf:customers' %}">Customer List</a></li>
-              <li><a href="{% url 'sales:add-invoice' %}">Create Invoice</a></li>
-              <li><a href="{% url 'sales:invoices' %}">Invoice List</a></li> -->
             </ul>
           </div>
-</div>
-<div id="create-actions">
-<!-- Company -->
-          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-customers">
+        </div>
+
+        <div id="create-actions">
+          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-company">
             <div class="gtd-head">
               <div class="icon" aria-hidden="true"><i class='bx bx-user-circle'></i></div>
-              <h3 id="gtd-customers">Company</h3>
+              <h3 id="gtd-company">Company</h3>
             </div>
             <ul>
               <li><a href="{% url 'accounts:add-account' %}">Add account</a></li>
               <li><a href="{% url 'accounts:general-ledger' %}">General Ledger</a></li>
-              <!-- <li><a href="{% url 'sowaf:customers' %}">Day book</a></li>
-              <li><a href="{% url 'sales:add-invoice' %}">Create Invoice</a></li>
-              <li><a href="{% url 'sales:invoices' %}">Invoice List</a></li> -->
             </ul>
           </div>
-</div>
-<div id="create-actions">
-<!-- Bank -->
-          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-customers">
+        </div>
+
+        <div id="create-actions">
+          <div class="gtd-card" tabindex="0" role="group" aria-labelledby="gtd-bank">
             <div class="gtd-head">
               <div class="icon" aria-hidden="true"><i class='bx bx-bank'></i></div>
-              <h3 id="gtd-customers">Bank</h3>
+              <h3 id="gtd-bank">Bank</h3>
             </div>
-            <ul>
-              <!-- <li><a href="{% url 'sowaf:add-customer' %}">Add Customer</a></li>
-              <li><a href="{% url 'sowaf:customers' %}">Customer List</a></li>
-              <li><a href="{% url 'sales:add-invoice' %}">Create Invoice</a></li>
-              <li><a href="{% url 'sales:invoices' %}">Invoice List</a></li> -->
-            </ul>
+            <ul></ul>
           </div>
-</div>
-
-  </div>
-</div>
-<input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
-<label for="tab2" class="tabs_label">Business Overview</label>
-<div class="tab-content">
-  <div class="dashboard-grid">
-
-    <!-- Bank balances (donut) -->
-    <section class="kpi-card">
-      <div class="kpi-head">
-        <div class="kpi-title">Bank Account Balance</div>
-        
-      </div>
-      <div class="kpi-sub">{{ range_text }}</div>
-      <div class="kpi-body"><canvas id="bankChart"></canvas></div>
-    </section>
-
-    <!-- Invoices (stacked bar) -->
-    <section class="kpi-card">
-      <div class="kpi-head">
-        <div class="kpi-title">Invoices</div>
-        <div class="kpi-sub">
-          {{ inv_counts.paid }} paid • {{ inv_counts.unpaid }} unpaid • {{ inv_counts.over }} overdue
         </div>
+
       </div>
-      <div class="kpi-body"><canvas id="invChart"></canvas></div>
-    </section>
+    </div>
 
-    <!-- Outstanding bills (placeholder) -->
-    <!-- Bills (line) -->
-<section class="kpi-card">
-  <div class="kpi-head">
-    <div class="kpi-title">Bills (Last 30 days)</div>
-    <div class="kpi-sub">{{ range_text }}</div>
-  </div>
-  <div class="kpi-body"><canvas id="billsChart"></canvas></div>
-</section>
+    <!-- TAB 2: Business Overview -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab2"
+           {% if request.GET.tab == "tab2" %}checked{% endif %}>
+    <label for="tab2" class="tabs_label">Business Overview</label>
 
-<!-- Expenses line - wide -->
-<section class="kpi-card wide">
-  <div class="kpi-head">
-    <div class="kpi-title">Expenses (Last 30 days)</div>
-    <div class="kpi-sub">{{ range_text }}</div>
-  </div>
-  <div class="kpi-body"><canvas id="expLineChart"></canvas></div>
-</section>
+    <div class="tab-content">
+      <!-- Anchor to return here after refresh -->
+      <div id="business-overview"></div>
 
-<!-- Profit/Loss line - wide -->
-<section class="kpi-card wide">
-  <div class="kpi-head">
-    <div class="kpi-title">Profit/Loss (Last 30 days)</div>
-    <div class="kpi-sub">{{ range_text }}</div>
-  </div>
-  <div class="kpi-body"><canvas id="plLineChart"></canvas></div>
-</section>
->
+      <div class="qb-grid">
 
-    
-    <!-- Sales (line) - wide -->
-    <section class="kpi-card wide">
-      <div class="kpi-head">
-        <div class="kpi-title">Sales (Last 30 days)</div>
-        <div class="kpi-sub">{{ range_text }}</div>
+        <!-- PROFIT & LOSS -->
+        <div class="qb-card" style="grid-column: span 4;">
+          <div class="qb-top">
+            <h4>Profit &amp; Loss</h4>
+
+            <div class="qb-range">
+              <select
+                onchange="setRangeParam('pnl_range', this.value)"
+                style="border:1px solid #e5e7eb; border-radius:8px; padding:4px 8px; font-size:12px;">
+                {% for k, label in range_options %}
+                  <option value="{{ k }}" {% if k == pnl_range_key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="qb-muted">Net profit for {{ pnl_tile.range_label }}</div>
+          <div class="qb-money">{{ pnl_tile.net_profit|floatformat:0|intcomma }}</div>
+
+          <div style="display:grid; gap:10px;">
+            <div>
+              <div class="qb-muted">Income</div>
+              <div class="mini-amt">{{ pnl_tile.income|floatformat:0|intcomma }}</div>
+              <div class="bar"><span style="width:70%;"></span></div>
+            </div>
+
+            <div>
+              <div class="qb-muted">Expenses</div>
+              <div class="mini-amt">{{ pnl_tile.expense|floatformat:0|intcomma }}</div>
+              <div class="bar"><span style="width:45%; background:#0ea5e9;"></span></div>
+            </div>
+          </div>
+
+          <div class="qb-link" style="margin-top:10px;">
+            <a href="{% url pnl_tile.pnl_url %}{{ pnl_tile.pnl_params }}">See profit and loss report</a>
+          </div>
+        </div>
+
+        <!-- EXPENSES (donut) -->
+        <div class="qb-card" style="grid-column: span 4;">
+          <div class="qb-top">
+            <h4>Expenses</h4>
+
+            <div class="qb-range">
+              <select
+                onchange="setRangeParam('exp_range', this.value)"
+                style="border:1px solid #e5e7eb; border-radius:8px; padding:4px 8px; font-size:12px;">
+                {% for k, label in range_options %}
+                  <option value="{{ k }}" {% if k == exp_range_key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="qb-muted">Spending for {{ expenses_tile.range_label|lower }}</div>
+          <div class="qb-money">{{ expenses_tile.total|floatformat:0|intcomma }}</div>
+
+          <div class="donut-wrap">
+            <canvas id="expDonut"></canvas>
+          </div>
+
+          <div class="qb-link" style="margin-top:10px;">
+            <a href="{% url expenses_tile.spending_url %}">View all spending</a>
+          </div>
+        </div>
+
+        <!-- BANK ACCOUNTS (list) -->
+        <div class="qb-card" style="grid-column: span 4;">
+          <div class="qb-top">
+            <h4>Bank Accounts</h4>
+            <div class="qb-range">As of today</div>
+          </div>
+
+          <div style="margin-top:6px;">
+            {% for b in bank_rows %}
+              <div class="bank-row">
+                <div>
+                  <div class="bank-name">{{ b.name }}</div>
+                  <div class="bank-sub">In YoAccountant</div>
+                </div>
+                <div class="bank-bal">{{ b.balance|floatformat:0|intcomma }}</div>
+              </div>
+            {% empty %}
+              <div class="qb-muted">No bank/cash accounts found.</div>
+            {% endfor %}
+          </div>
+
+          <div class="qb-link" style="margin-top:10px;">
+            <a href="{% url 'accounts:report-balance-sheet' %}">Go to balance sheet</a>
+          </div>
+        </div>
+
+        <!-- INVOICES -->
+        <div class="qb-card" style="grid-column: span 4;">
+          <div class="qb-top">
+            <h4>Invoices</h4>
+            <div class="qb-range">{{ invoices_tile.range_label }}</div>
+          </div>
+
+          <div class="qb-muted">Unpaid</div>
+          <div class="qb-money">
+            {{ invoices_tile.overdue_amount|add:invoices_tile.not_due_amount|floatformat:0|intcomma }}
+          </div>
+
+          <div class="mini-2col">
+            <div class="box">
+              <div class="qb-muted">Overdue</div>
+              <div class="mini-amt">{{ invoices_tile.overdue_amount|floatformat:0|intcomma }}</div>
+            </div>
+            <div class="box">
+              <div class="qb-muted">Not due yet</div>
+              <div class="mini-amt">{{ invoices_tile.not_due_amount|floatformat:0|intcomma }}</div>
+            </div>
+          </div>
+
+          <div style="margin-top:10px;" class="bar">
+            <span style="width:65%; background:#f59e0b;"></span>
+          </div>
+
+          <div class="qb-link" style="margin-top:10px;">
+            <a href="{% url invoices_tile.invoices_url %}">See all activity</a>
+          </div>
+        </div>
+
+        <!-- SALES (line) -->
+        <div class="qb-card" style="grid-column: span 8;">
+          <div class="qb-top">
+            <h4>Sales</h4>
+
+            <div class="qb-range">
+              <select
+                onchange="setRangeParam('sales_range', this.value)"
+                style="border:1px solid #e5e7eb; border-radius:8px; padding:4px 8px; font-size:12px;">
+                {% for k, label in range_options %}
+                  <option value="{{ k }}" {% if k == sales_range_key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="qb-muted">Total Amount ({{ sales_tile.range_label }})</div>
+          <div class="qb-money">{{ sales_tile.total|floatformat:0|intcomma }}</div>
+
+          <div class="line-wrap">
+            <canvas id="salesLine"></canvas>
+          </div>
+        </div>
+
       </div>
-      <div class="kpi-body"><canvas id="salesChart"></canvas></div>
-    </section>
+    </div>
 
   </div>
 </div>
 
-<!-- JSON blobs (ids MUST match below) -->
-{{ chart_labels|json_script:"labelsJson" }}
-{{ sales_series|json_script:"salesJson" }}
+<!-- JSON blobs for the QB tiles charts only -->
 {{ exp_labels|json_script:"expLabelsJson" }}
 {{ exp_values|json_script:"expValuesJson" }}
-{{ bank_labels|json_script:"bankLabelsJson" }}
-{{ bank_values|json_script:"bankValuesJson" }}
-{{ inv_amounts|json_script:"invAmountsJson" }}
-{{ pl_summary|json_script:"plJson" }}
-{{ bills_series|json_script:"billsJson" }}
-{{ expenses_series|json_script:"expSeriesJson" }}
-{{ profit_series|json_script:"profitSeriesJson" }}
+{{ sales_tile.labels|json_script:"salesLabelsJson" }}
+{{ sales_tile.values|json_script:"salesValuesJson" }}
 
-
-<!-- Load Chart.js BEFORE the chart code -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-Chart.defaults.font.family = "'Poppins','Segoe UI',system-ui,-apple-system,Arial";
-Chart.defaults.plugins.legend.position = 'bottom';
-Chart.defaults.responsive = true;
-Chart.defaults.maintainAspectRatio = false;    // lets the card control the height
-</script>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  // Safe JSON reader
+function setRangeParam(paramName, val){
+  const url = new URL(window.location.href);
+  url.searchParams.set(paramName, val);
+
+  // ✅ keep Business Overview tab active after reload
+  url.searchParams.set("tab", "tab2");
+
+  // ✅ jump back to business overview section after reload
+  url.hash = "business-overview";
+
+  window.location.href = url.toString();
+}
+
+document.addEventListener('DOMContentLoaded', function(){
   const safeParse = (id, fb) => {
     const el = document.getElementById(id);
     if (!el) return fb;
     try { return JSON.parse(el.textContent) ?? fb; } catch { return fb; }
   };
 
-  // Existing blobs
-  const L  = safeParse("labelsJson", []);
-  const S  = safeParse("salesJson", []).map(n => Number(n)||0);
-  const EL = safeParse("expLabelsJson", []);
-  const EV = safeParse("expValuesJson", []).map(n => Number(n)||0);
-  const BL = safeParse("bankLabelsJson", []);
-  const BV = safeParse("bankValuesJson", []).map(n => Number(n)||0);
-  const IA = safeParse("invAmountsJson", {paid:0,unpaid:0,overdue:0});
-  const PL = safeParse("plJson", {income:0,expense:0,profit:0});
+  // ✅ If user loaded page with ?tab=tab2, ensure browser jumps to business overview
+  const u = new URL(window.location.href);
+  if (u.searchParams.get("tab") === "tab2") {
+    const anchor = document.getElementById("business-overview");
+    if (anchor) anchor.scrollIntoView({behavior:"auto", block:"start"});
+  }
 
-  // NEW daily series
-  const BS  = safeParse("billsJson", []).map(n => Number(n)||0);        // bills per day
-  const EXS = safeParse("expSeriesJson", []).map(n => Number(n)||0);    // expenses per day
-  const PLS = safeParse("profitSeriesJson", []).map(n => Number(n)||0); // net profit per day (+/-)
+  const expLabels = safeParse("expLabelsJson", []);
+  const expValues = safeParse("expValuesJson", []).map(n => Number(n)||0);
+  const salesLabels = safeParse("salesLabelsJson", []);
+  const salesValues = safeParse("salesValuesJson", []).map(n => Number(n)||0);
 
-  // Split profit series into profit vs loss bars
-  const profitData = PLS.map(v => v > 0 ? v : 0);
-  const lossData   = PLS.map(v => v < 0 ? Math.abs(v) : 0);
+  // Expenses donut
+  const expCanvas = document.getElementById("expDonut");
+  if (expCanvas){
+    new Chart(expCanvas, {
+      type: "doughnut",
+      data: { labels: expLabels, datasets: [{ data: expValues }] },
+      options: { cutout: "60%", plugins:{ legend:{ position:"right" } } }
+    });
+  }
 
-  // Chart.js globals
-  Chart.defaults.font.family = "'Poppins','Segoe UI',system-ui,-apple-system,Arial";
-  Chart.defaults.plugins.legend.position = 'bottom';
-  Chart.defaults.responsive = true;
-  Chart.defaults.maintainAspectRatio = false;
-
-  const make = (id, cfg) => {
-    const c = document.getElementById(id);
-    if (!c) return;
-    new Chart(c, cfg);
-  };
-
-  // Bank donut (unchanged)
-  make("bankChart", {
-    type: 'doughnut',
-    data: { labels: BL, datasets: [{ data: BV }] },
-    options: { cutout: '60%' }
-  });
-
-  // Sales line (unchanged)
-  make("salesChart", {
-    type: 'line',
-    data: {
-      labels: L,
-      datasets: [{ label: 'Sales', data: S, tension: .35, fill: false }]
-    },
-    options: {
-      plugins:{ legend:{ display:false }},
-      scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } }
-    }
-  });
-
-  // BILLS -> vertical BAR
-  make("billsChart", {
-    type: 'bar',
-    data: {
-      labels: L,
-      datasets: [{ label: 'Bills', data: BS, borderRadius: 6, maxBarThickness: 18 }]
-    },
-    options: {
-      plugins:{ legend:{ display:false }},
-      scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } }
-    }
-  });
-
-  // Expenses donut by account (unchanged)
-  make("expChart", {
-    type: 'doughnut',
-    data: { labels: EL, datasets: [{ data: EV }] },
-    options: { cutout: '55%' }
-  });
-
-  // Invoices stacked bars (unchanged)
-  make("invChart", {
-    type: 'bar',
-    data: {
-      labels: ['Invoices'],
-      datasets: [
-        { label: 'Paid',    data: [Number(IA.paid)||0] },
-        { label: 'Unpaid',  data: [Number(IA.unpaid)||0] },
-        { label: 'Overdue', data: [Number(IA.overdue)||0] },
-      ]
-    },
-    options: {
-      scales: {
-        x: { stacked: true },
-        y: { stacked: true, ticks:{ callback:v=>v.toLocaleString() } }
+  // Sales line
+  const salesCanvas = document.getElementById("salesLine");
+  if (salesCanvas){
+    new Chart(salesCanvas, {
+      type: "line",
+      data: { labels: salesLabels, datasets: [{ label:"Amount", data: salesValues, tension:.35, fill:false }] },
+      options: {
+        plugins:{ legend:{ display:true } },
+        scales:{ y:{ ticks:{ callback:(v)=>v.toLocaleString() } } }
       }
-    }
-  });
-
-  // P&L snapshot bars (30-day totals, unchanged)
-  make("plChart", {
-    type: 'bar',
-    data: {
-      labels: ['Income','Expenses','Net Profit'],
-      datasets: [{ data: [Number(PL.income)||0, Number(PL.expense)||0, Number(PL.profit)||0], borderRadius: 6 }]
-    },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } } }
-  });
-
-  // EXPENSES -> AREA (line with fill)
-  make("expLineChart", {
-    type: 'line',
-    data: {
-      labels: L,
-      datasets: [{ label: 'Expenses', data: EXS, tension: .35, fill: true }]
-    },
-    options: {
-      plugins:{ legend:{ display:false }},
-      scales:{ y:{ ticks:{ callback:v=>v.toLocaleString() } } }
-    }
-  });
-
-  // PROFIT/LOSS -> STACKED BAR (profit vs loss)
-  make("plLineChart", {
-    type: 'bar',
-    data: {
-      labels: L,
-      datasets: [
-        { label: 'Profit', data: profitData, borderRadius: 6, maxBarThickness: 18 },
-        { label: 'Loss',   data: lossData,   borderRadius: 6, maxBarThickness: 18 }
-      ]
-    },
-    options: {
-      scales: {
-        x: { stacked: true },
-        y: { stacked: true, ticks:{ callback:v=>v.toLocaleString() } }
-      }
-    }
-  });
-
+    });
+  }
 });
 </script>
 
-
- {% include 'includes/footer.html' %}
+{% include 'includes/footer.html' %}

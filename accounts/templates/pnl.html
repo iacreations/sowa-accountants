@@ -92,9 +92,17 @@
         – {% if dto %}{{ dto|date:"M j, Y" }}{% else %}None{% endif %}
       </span>
       <br><br>
-      <form method="get"  style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;" class="ms-auto">
+
+      <form method="get" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;" class="ms-auto">
         From <input type="date" name="from" value="{{ dfrom|date:'Y-m-d' }}">
         To <input type="date" name="to" value="{{ dto|date:'Y-m-d' }}">
+
+        <!-- ✅ CASH / ACCRUAL TOGGLE -->
+        <select name="basis" style="border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;background:#fff">
+          <option value="accrual" {% if basis == "accrual" %}selected{% endif %}>Accrual</option>
+          <option value="cash" {% if basis == "cash" %}selected{% endif %}>Cash</option>
+        </select>
+
         <button class="btn run" type="submit">Run</button>
         <a class="btn clear" href="{% url 'accounts:report-pnl' %}">Clear</a>
       </form>
@@ -119,13 +127,13 @@
               <tr>
                 <td>
                   <a class="gl-link"
-                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&basis={{ basis }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
                     {{ row.account }}
                   </a>
                 </td>
                 <td class="num">
                   <a class="gl-link"
-                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&basis={{ basis }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
                     {{ row.amount|floatformat:2|intcomma }}
                   </a>
                 </td>
@@ -147,13 +155,13 @@
               <tr>
                 <td>
                   <a class="gl-link"
-                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&basis={{ basis }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
                     {{ row.account }}
                   </a>
                 </td>
                 <td class="num">
                   <a class="gl-link"
-                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&basis={{ basis }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
                     {{ row.amount|floatformat:2|intcomma }}
                   </a>
                 </td>
@@ -181,13 +189,13 @@
               <tr>
                 <td>
                   <a class="gl-link"
-                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&basis={{ basis }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
                     {{ row.account }}
                   </a>
                 </td>
                 <td class="num">
                   <a class="gl-link"
-                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&basis={{ basis }}{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
                     {{ row.amount|floatformat:2|intcomma }}
                   </a>
                 </td>

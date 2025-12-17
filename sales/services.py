@@ -9,9 +9,27 @@ import random
 from django.db.models import Q
 from accounts.models import Account
 from .models import Payment
-
+from datetime import datetime, date, time
+from django.utils import timezone
 logger = logging.getLogger(__name__)
 
+def as_aware_datetime(value):
+    """
+    Convert:
+      - date -> aware datetime at 00:00
+      - naive datetime -> aware datetime
+      - aware datetime -> unchanged
+      - None -> None
+    """
+    if not value:
+        return None
+
+    if isinstance(value, date) and not isinstance(value, datetime):
+        value = datetime.combine(value, time.min)
+
+    if timezone.is_naive(value):
+        return timezone.make_aware(value, timezone.get_current_timezone())
+    return value
 
 def ensure_default_accounts():
     """
@@ -80,18 +98,36 @@ TERMS_DAYS = {
 
 # util for invoice status
 
+def _as_date(d):
+    """
+    Normalize a value to datetime.date.
+    Handles datetime.datetime, datetime.date, or None.
+    """
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return None
+
+
 def status_for_invoice(inv, total_due: Decimal, total_paid: Decimal, balance: Decimal) -> str:
-    today = date.today()
+    # ✅ timezone-safe today
+    today = timezone.localdate()
+
+    # ✅ normalize due_date (DateTimeField can return datetime)
+    due = _as_date(getattr(inv, "due_date", None))
+
     overdue_days = None
-    if inv.due_date and balance > 0 and today > inv.due_date:
-        overdue_days = (today - inv.due_date).days
+    if due and balance > 0 and today > due:
+        overdue_days = (today - due).days
 
     deposited = False
     if total_due > 0 and balance == 0:
         aps = inv.payments_applied.select_related("payment__deposit_to").all()
         if aps:
             def is_bankish(acc):
-                if not acc: return False
+                if not acc:
+                    return False
                 at = (acc.account_type or "").lower()
                 dt = (acc.detail_type or "").lower()
                 return (
@@ -106,14 +142,19 @@ def status_for_invoice(inv, total_due: Decimal, total_paid: Decimal, balance: De
         return "Deposited" if deposited else "Paid"
 
     if overdue_days:
-        return f"Overdue by {overdue_days} days — {'Partially paid. ' if total_paid > 0 else ''}{balance:,.0f} is remaining"
+        return (
+            f"Overdue by {overdue_days} days — "
+            f"{'Partially paid. ' if total_paid > 0 else ''}{balance:,.0f} is remaining"
+        )
 
-    if inv.due_date and inv.due_date == today and balance > 0:
+    if due and due == today and balance > 0:
         return f"Due today — {balance:,.0f} is remaining"
 
-    return f"Partially paid. {balance:,.0f} is remaining" if total_paid > 0 else f"{balance:,.0f} is remaining"
-
-
+    return (
+        f"Partially paid. {balance:,.0f} is remaining"
+        if total_paid > 0
+        else f"{balance:,.0f} is remaining"
+    )
 def _payment_prefill_rows(payment):
     """
     Returns a dict the template expects:

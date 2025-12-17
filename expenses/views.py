@@ -627,7 +627,6 @@ def expenses(request):
         .order_by("-payment_date", "-id")
     )
 
-    # Optional: cache line counts for old template bits
     for e in exp_qs:
         e._total_lines = len(list(e.cat_lines.all())) + len(list(e.item_lines.all()))
 
@@ -655,21 +654,22 @@ def expenses(request):
         .order_by("-po_date", "-id")
     )
 
-# supplier credit
+    # ---------------- Supplier Credits ----------------
     supplier_credit_qs = (
         SupplierCredit.objects
         .select_related("supplier")
         .prefetch_related("lines__category")
         .order_by("-credit_date", "-id")
-        )
+    )
 
-# ---------------- Pay Down Credit ----------------
+    # ---------------- Pay Down Credit ----------------
     paydown_qs = (
         PayDownCredit.objects
         .select_related("credit_card", "bank_account", "payee_supplier")
         .order_by("-payment_date", "-id")
     )
-        # ---------------- Credit Card Credits ----------------
+
+    # ---------------- Credit Card Credits ----------------
     cc_credit_qs = (
         CreditCardCredit.objects
         .select_related("credit_card", "payee_supplier")
@@ -677,7 +677,7 @@ def expenses(request):
     )
 
     # ---------------- Normalize into one list ----------------
-    rows = [] 
+    rows = []
 
     # Expenses
     for e in exp_qs:
@@ -744,23 +744,23 @@ def expenses(request):
                 po.vendor.company_name
                 if po.vendor else (po.vendor_name or "")
             ),
-            # Only item lines → pass [] for cat_lines
             "category": _cat_label_from_lines([], po.lines.all()),
             "total_before_tax": po.total_amount,
             "sales_tax": Decimal("0.00"),
             "total": po.total_amount,
             "edit_url": reverse("expenses:purchase-order-edit", args=[po.id]),
         })
-        # Supplier Credits
-        for sc in supplier_credit_qs:
-            rows.append({
+
+    # Supplier Credits
+    for sc in supplier_credit_qs:
+        rows.append({
             "id": sc.id,
             "kind": "Supplier Credit",
             "date": sc.credit_date,
             "number": sc.ref_no or "",
             "payee": (
-            sc.supplier.company_name
-            if sc.supplier else (sc.supplier_name or "")
+                sc.supplier.company_name
+                if sc.supplier else (sc.supplier_name or "")
             ),
             "category": _cat_label_from_lines(sc.lines.all(), []),
             "total_before_tax": sc.total_amount,
@@ -768,7 +768,8 @@ def expenses(request):
             "total": sc.total_amount,
             "edit_url": reverse("expenses:supplier-credit-edit", args=[sc.id]),
         })
-            # paydown credits
+
+    # Paydown credit
     for pdc in paydown_qs:
         rows.append({
             "id": pdc.id,
@@ -785,7 +786,8 @@ def expenses(request):
             "total": pdc.amount,
             "edit_url": reverse("expenses:paydown-credit-edit", args=[pdc.id]),
         })
-#    credit card credits
+
+    # Credit Card Credits
     for c in cc_credit_qs:
         rows.append({
             "id": c.id,
@@ -806,10 +808,9 @@ def expenses(request):
             "edit_url": reverse("expenses:credit-card-credit-edit", args=[c.id]),
         })
 
-    # Sort all transactions together: newest date, then newest id
     rows = sorted(rows, key=lambda r: (r["date"], r["id"]), reverse=True)
 
-    # ---------------- Column prefs (unchanged) ----------------
+    # Column prefs as before
     if getattr(request.user, "is_authenticated", False):
         prefs, _ = ColumnPreference.objects.get_or_create(
             user=request.user,

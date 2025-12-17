@@ -6,21 +6,22 @@ from tempfile import NamedTemporaryFile
 from datetime import datetime, timedelta
 from django.urls import reverse, NoReverseMatch
 from django.utils import timezone
-
+from django.utils.dateparse import parse_date
 import openpyxl
 import csv
 import io
 import os
-from datetime import timedelta, date
+from datetime import datetime, time, timedelta, date
 from decimal import Decimal
+from django.db.models import FloatField
 from django.utils import timezone
 from django.shortcuts import render
 from django.db.models import Sum, Value, F, Q, DecimalField,ExpressionWrapper,Count 
-from django.db.models.functions import Coalesce, Cast, TruncDate
+from django.db.models.functions import Coalesce, Cast
+from collections import OrderedDict
 from django.core.files import File
 from django.conf import settings
 from django.contrib import messages
-from datetime import timedelta
 from decimal import Decimal
 from django.utils import timezone
 from django.db.models import Sum, F, Value, When,Case
@@ -33,23 +34,17 @@ from accounts.models import Account,JournalEntry,JournalLine
 from sowaf.models import Newcustomer, Newsupplier
 from expenses.models import Bill,Expense,Cheque
 from . models import Newcustomer, Newsupplier,Newclient,Newemployee,Newasset
-
+from accounts.utils import deposit_accounts_qs, expense_accounts_qs
+from accounts.date_ranges import resolve_date_range, RANGE_LABELS, RANGE_OPTIONS
 # Create your views here.
 # Constants / helpers
-ZERO = Decimal("0.00")
-INCOME_TYPES  = {"income", "other income"}
-EXPENSE_TYPES = {"expense", "other expense", "cost of goods sold"}
-BANK_TYPES    = {"bank", "cash and cash equivalents"}
-ZERO_DEC      = Value(Decimal("0.00"), output_field=DecimalField(max_digits=18, decimal_places=2))
 
-DEC = DecimalField(max_digits=18, decimal_places=2)
-ZERO_DEC = Value(Decimal("0.00"), output_field=DEC)
-def _to_float(x):
-    try:
-        return float(x or 0)
-    except Exception:
-        return 0.0
-
+def _as_date(d):
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return None
 def status_for_invoice(inv, total: Decimal, paid: Decimal, balance: Decimal) -> str:
     """
     Simple, consistent status for an invoice.
@@ -66,195 +61,292 @@ def status_for_invoice(inv, total: Decimal, paid: Decimal, balance: Decimal) -> 
         return "Partially paid"
     return "Open"
 
+
+# HOME CHARTS
+
+
+DEC = DecimalField(max_digits=18, decimal_places=2)
+ZERO = Value(Decimal("0.00"), output_field=DEC)
+
+# COA codes (preferred)
+INCOME_TYPES = ["OPERATING_INCOME", "INVESTING_INCOME"]
+EXPENSE_TYPES = ["OPERATING_EXPENSE", "INVESTING_EXPENSE", "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"]
+
+# fallback keywords (because your P&L report uses text matching)
+INCOME_KW_RE = r"income|revenue|sales"
+EXPENSE_KW_RE = r"expense|expenses|cogs|cost of sales|cost of goods"
+
+
+def dec(v) -> Decimal:
+    """Safe Decimal converter."""
+    try:
+        return Decimal(str(v or "0"))
+    except Exception:
+        return Decimal("0.00")
+
+
+def bankish_q():
+    return (
+        Q(detail_type__icontains="bank") |
+        Q(detail_type__icontains="cash") |
+        Q(detail_type__icontains="cash and cash equivalents") |
+        Q(detail_type__icontains="cash on hand")
+    )
+
+
+
+def _income_jl_filter():
+    return (
+        Q(account__account_type__in=INCOME_TYPES) |
+        Q(account__parent__account_type__in=INCOME_TYPES) |
+        Q(account__account_name__iregex=INCOME_KW_RE) |
+        Q(account__detail_type__iregex=INCOME_KW_RE) |
+        Q(account__parent__account_name__iregex=INCOME_KW_RE) |
+        Q(account__parent__detail_type__iregex=INCOME_KW_RE)
+    )
+
+
+def _expense_jl_filter():
+    return (
+        Q(account__account_type__in=EXPENSE_TYPES) |
+        Q(account__parent__account_type__in=EXPENSE_TYPES) |
+        Q(account__account_name__iregex=EXPENSE_KW_RE) |
+        Q(account__detail_type__iregex=EXPENSE_KW_RE) |
+        Q(account__parent__account_name__iregex=EXPENSE_KW_RE) |
+        Q(account__parent__detail_type__iregex=EXPENSE_KW_RE)
+    )
+def _to_decimal_number(x) -> Decimal:
+    """
+    Convert DB numeric (float/int/Decimal/None) safely to Decimal.
+    Using str(...) avoids float binary issues more than Decimal(float).
+    """
+    if x is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(x))
+    except Exception:
+        return Decimal("0")
+
+
+# ===========================
+# HOME VIEW
+# ===========================
+
 def home(request):
     today = timezone.localdate()
-    start = today - timedelta(days=29)
-    end   = today
 
-    # # ---------------------------
-    # # Sales (invoices) per day
-    # # ---------------------------
-    # inv_qs = (
-    #     Newinvoice.objects
-    #     .filter(date_created__gte=start, date_created__lte=end)
-    #     .values("date_created", "total_due")
-    #     .order_by("date_created", "id")
-    # )
-    # sales_day_totals = {}
-    # for row in inv_qs:
-    #     d = row["date_created"]
-    #     sales_day_totals[d] = sales_day_totals.get(d, 0.0) + _to_float(row["total_due"])
+    # QB-style dropdowns per tile (like QuickBooks)
+    pnl_range_key   = request.GET.get("pnl_range", "last_month")
+    exp_range_key   = request.GET.get("exp_range", "last_30_days")
+    sales_range_key = request.GET.get("sales_range", "this_financial_year_to_date")
 
-    # chart_labels = [(start + timedelta(days=i)).strftime("%b %d") for i in range(30)]
-    # label_dates  = [start + timedelta(days=i) for i in range(30)]
-    # sales_series = [_to_float(sales_day_totals.get(d, 0.0)) for d in label_dates]
+    # invoices range key (default "as of today" feel)
+    inv_range_key = request.GET.get("inv_range", "this_month_to_date")
 
-    # # ---------------------------
-    # # Bills per day (Bill.bill_date / Bill.total_amount)
-    # # ---------------------------
-    # bills_qs = (
-    #     Bill.objects
-    #     .filter(bill_date__gte=start, bill_date__lte=end)
-    #     .values("bill_date", "total_amount")
-    #     .order_by("bill_date", "id")
-    # )
-    # bills_day_totals = {}
-    # for row in bills_qs:
-    #     d = row["bill_date"]
-    #     bills_day_totals[d] = bills_day_totals.get(d, 0.0) + _to_float(row["total_amount"])
-    # bills_series = [_to_float(bills_day_totals.get(d, 0.0)) for d in label_dates]
+    pnl_from, pnl_to     = resolve_date_range(pnl_range_key)
+    exp_from, exp_to     = resolve_date_range(exp_range_key)
+    sales_from, sales_to = resolve_date_range(sales_range_key)
+    inv_from, inv_to     = resolve_date_range(inv_range_key)
 
-    # # ---------------------------
-    # # Expenses per day (from GL)
-    # # Use JournalLines so it always reconciles with P&L/Bal Sheet.
-    # # Daily expense = sum(debit - credit) for EXPENSE_TYPES
-    # # ---------------------------
-    # jl_exp_daily = (
-    #     JournalLine.objects
-    #     .select_related("entry", "account")
-    #     .filter(entry__date__gte=start, entry__date__lte=end,
-    #             account__account_type__in=EXPENSE_TYPES)
-    #     .values("entry__date")
-    #     .annotate(
-    #         deb=Coalesce(Sum("debit"),  ZERO_DEC),
-    #         cre=Coalesce(Sum("credit"), ZERO_DEC),
-    #     )
-    #     .order_by("entry__date")
-    # )
-    # exp_day_map = {row["entry__date"]: _to_float((row["deb"] or 0) - (row["cre"] or 0))
-    #                for row in jl_exp_daily}
-    # expenses_series = [_to_float(exp_day_map.get(d, 0.0)) for d in label_dates]
+    pnl_label   = RANGE_LABELS.get(pnl_range_key, "Last month")
+    exp_label   = RANGE_LABELS.get(exp_range_key, "Last 30 days")
+    sales_label = RANGE_LABELS.get(sales_range_key, "This financial year to date")
+    inv_label   = RANGE_LABELS.get(inv_range_key, "This month to date")
 
-    # # ---------------------------
-    # # Profit/Loss per day (from GL)
-    # # Daily income = sum(credit - debit) for INCOME_TYPES
-    # # Daily expense = sum(debit - credit) for EXPENSE_TYPES
-    # # Daily profit = income - expense
-    # # ---------------------------
-    # jl_inc_daily = (
-    #     JournalLine.objects
-    #     .select_related("entry", "account")
-    #     .filter(entry__date__gte=start, entry__date__lte=end,
-    #             account__account_type__in=INCOME_TYPES)
-    #     .values("entry__date")
-    #     .annotate(
-    #         deb=Coalesce(Sum("debit"),  ZERO_DEC),
-    #         cre=Coalesce(Sum("credit"), ZERO_DEC),
-    #     )
-    #     .order_by("entry__date")
-    # )
-    # inc_day_map = {row["entry__date"]: _to_float((row["cre"] or 0) - (row["deb"] or 0))
-    #                for row in jl_inc_daily}
+    # =========================================================
+    # 1) PROFIT & LOSS TILE (selected range)
+    # =========================================================
+    jl_pnl = (
+        JournalLine.objects
+        .select_related("entry", "account", "account__parent")
+        .filter(entry__date__gte=pnl_from, entry__date__lte=pnl_to)
+    )
 
-    # profit_series = []
-    # for d in label_dates:
-    #     daily_income  = _to_float(inc_day_map.get(d, 0.0))
-    #     daily_expense = _to_float(exp_day_map.get(d, 0.0))
-    #     profit_series.append(round(daily_income - daily_expense, 2))
+    income_lines  = jl_pnl.filter(_income_jl_filter())
+    expense_lines = jl_pnl.filter(_expense_jl_filter())
 
-    # # ---------------------------
-    # # Expenses donut (last 30 days)
-    # # ---------------------------
-    # jl_exp = (
-    #     JournalLine.objects
-    #     .select_related("entry","account")
-    #     .filter(entry__date__gte=start, entry__date__lte=end,
-    #             account__account_type__in=EXPENSE_TYPES)
-    #     .values("account__account_name")
-    #     .annotate(
-    #         deb=Coalesce(Sum("debit"),  ZERO_DEC),
-    #         cre=Coalesce(Sum("credit"), ZERO_DEC),
-    #     )
-    #     .order_by("account__account_name")
-    # )
-    # exp_labels = [r["account__account_name"] for r in jl_exp]
-    # exp_values = [_to_float((r["deb"] or 0) - (r["cre"] or 0)) for r in jl_exp]
+    inc_agg = income_lines.aggregate(
+        deb=Coalesce(Sum("debit"), ZERO, output_field=DEC),
+        cre=Coalesce(Sum("credit"), ZERO, output_field=DEC),
+    )
+    exp_agg = expense_lines.aggregate(
+        deb=Coalesce(Sum("debit"), ZERO, output_field=DEC),
+        cre=Coalesce(Sum("credit"), ZERO, output_field=DEC),
+    )
 
-    # # ---------------------------
-    # # Bank balances donut (as of end)
-    # # ---------------------------
-    # bank_labels, bank_values = [], []
-    # bank_accounts = Account.objects.filter(
-    #     account_type__in=["Bank", "Cash and Cash Equivalents"]
-    # ).order_by("account_name")
-    # for acc in bank_accounts:
-    #     agg = acc.journalline_set.filter(entry__date__lte=end).aggregate(
-    #         deb=Coalesce(Sum("debit"), ZERO_DEC),
-    #         cre=Coalesce(Sum("credit"), ZERO_DEC),
-    #     )
-    #     bal = _to_float((agg["deb"] or 0) - (agg["cre"] or 0))
-    #     bank_labels.append(acc.account_name or "Bank")
-    #     bank_values.append(bal)
+    income_amt  = dec(inc_agg["cre"]) - dec(inc_agg["deb"])      # credit - debit
+    expense_amt = dec(exp_agg["deb"]) - dec(exp_agg["cre"])      # debit - credit
+    net_profit  = income_amt - expense_amt
 
-    # # ---------------------------
-    # # Invoices: amounts + counts
-    # # ---------------------------
-    # paid_amount_dec = (
-    #     Newinvoice.objects
-    #     .filter(date_created__lte=end)
-    #     .aggregate(v=Coalesce(Sum("payments_applied__amount_paid"), ZERO_DEC))
-    # )["v"] or Decimal("0")
-    # paid_amount = _to_float(paid_amount_dec)
+    pnl_tile = {
+        "range_label": pnl_label,
+        "net_profit": net_profit,
+        "income": income_amt,
+        "expense": expense_amt,
+        "pnl_url": "accounts:report-pnl",
+        "pnl_params": f"?from={pnl_from:%Y-%m-%d}&to={pnl_to:%Y-%m-%d}",
+    }
 
-    # total_due_sum = _to_float(Newinvoice.objects.aggregate(v=Coalesce(Sum("total_due"), 0.0))["v"])
-    # unpaid_amount = max(total_due_sum - paid_amount, 0.0)
+    # =========================================================
+    # 2) EXPENSES TILE (donut, selected range)
+    # =========================================================
+    jl_exp = (
+        JournalLine.objects
+        .select_related("entry", "account", "account__parent")
+        .filter(entry__date__gte=exp_from, entry__date__lte=exp_to)
+        .filter(_expense_jl_filter())
+        .values("account__account_name")
+        .annotate(
+            deb=Coalesce(Sum("debit"), ZERO, output_field=DEC),
+            cre=Coalesce(Sum("credit"), ZERO, output_field=DEC),
+        )
+        .order_by("account__account_name")
+    )
 
-    # overdue_amount = 0.0
-    # paid_count = unpaid_count = overdue_count = 0
-    # for inv in Newinvoice.objects.all().select_related("customer"):
-    #     bal = (inv.total_due or 0.0) - _to_float(getattr(inv, "amount_paid", 0.0))
-    #     if bal <= 0.00001:
-    #         paid_count += 1
-    #     elif inv.due_date and inv.due_date < today:
-    #         overdue_amount += _to_float(bal)
-    #         overdue_count  += 1
-    #     else:
-    #         unpaid_count += 1
+    exp_labels     = [r["account__account_name"] or "Expense" for r in jl_exp]
+    exp_values_dec = [(dec(r["deb"]) - dec(r["cre"])) for r in jl_exp]
+    exp_values     = [float(v) for v in exp_values_dec]
+    exp_total      = sum(exp_values_dec, Decimal("0.00"))
 
-    # inv_amounts = {
-    #     "paid": round(paid_amount, 2),
-    #     "unpaid": round(unpaid_amount, 2),
-    #     "overdue": round(overdue_amount, 2),
-    # }
-    # inv_counts = {"paid": paid_count, "unpaid": unpaid_count, "over": overdue_count}
+    expenses_tile = {
+        "range_label": exp_label,
+        "total": exp_total,
+        "spending_url": "expenses:expenses",
+    }
 
-    # # ---------------------------
-    # # P&L summary (bars) last 30 days
-    # # ---------------------------
-    # jl_30 = JournalLine.objects.select_related("entry","account").filter(
-    #     entry__date__gte=start, entry__date__lte=end
-    # )
-    # inc = jl_30.filter(account__account_type__in=INCOME_TYPES).aggregate(
-    #     deb=Coalesce(Sum("debit"), ZERO_DEC), cre=Coalesce(Sum("credit"), ZERO_DEC)
-    # )
-    # income = _to_float((inc["cre"] or 0) - (inc["deb"] or 0))
+    # =========================================================
+    # 3) BANK ACCOUNTS TILE (as of today)
+    # =========================================================
+    bank_accounts = (
+        Account.objects
+        .filter(is_active=True)
+        .filter(bankish_q())
+        .order_by("account_name")
+    )
 
-    # exp = jl_30.filter(account__account_type__in=EXPENSE_TYPES).aggregate(
-    #     deb=Coalesce(Sum("debit"), ZERO_DEC), cre=Coalesce(Sum("credit"), ZERO_DEC)
-    # )
-    # expense = _to_float((exp["deb"] or 0) - (exp["cre"] or 0))
+    bank_rows = []
+    for acc in bank_accounts:
+        agg = acc.journalline_set.filter(entry__date__lte=today).aggregate(
+            deb=Coalesce(Sum("debit"), ZERO, output_field=DEC),
+            cre=Coalesce(Sum("credit"), ZERO, output_field=DEC),
+        )
+        bal = dec(agg["deb"]) - dec(agg["cre"])
+        bank_rows.append({
+            "id": acc.id,
+            "name": acc.account_name or "Bank",
+            "balance": bal,
+            "gl_url": "accounts:general-ledger",
+            "gl_params": f"?account_id={acc.id}&to={today:%Y-%m-%d}",
+        })
 
-    # pl_summary = {"income": income, "expense": expense, "profit": round(income - expense, 2)}
+    bs_url = "accounts:report-balance-sheet"
+
+    # =========================================================
+    # 4) INVOICES TILE (✅ FIXED: no __date, SQLite-safe range)
+    # =========================================================
+    tz = timezone.get_current_timezone()
+
+    inv_from_dt = timezone.make_aware(datetime.combine(inv_from, time.min), tz)
+    inv_to_dt   = timezone.make_aware(datetime.combine(inv_to + timedelta(days=1), time.min), tz)  # exclusive end
+
+    inv_qs = (
+        Newinvoice.objects
+        .filter(date_created__gte=inv_from_dt, date_created__lt=inv_to_dt)
+        .annotate(
+            total_due_f=Coalesce(Cast("total_due", FloatField()), Value(0.0), output_field=FloatField()),
+            total_paid_f=Coalesce(
+                Sum(Cast("payments_applied__amount_paid", FloatField())),
+                Value(0.0),
+                output_field=FloatField(),
+            ),
+        )
+        .order_by("-date_created", "-id")
+    )
+
+    overdue_amount = Decimal("0.00")
+    unpaid_amount  = Decimal("0.00")
+    paid_amount    = Decimal("0.00")
+
+    overdue_count = 0
+    unpaid_count  = 0
+    paid_count    = 0
+
+    for inv in inv_qs:
+        total = _to_decimal_number(inv.total_due_f)
+        paid  = _to_decimal_number(inv.total_paid_f)
+        bal   = total - paid
+
+        if bal <= Decimal("0.00001"):
+            paid_count += 1
+            paid_amount += total
+        else:
+            due = _as_date(getattr(inv, "due_date", None))
+            if due and due < today:
+                overdue_count += 1
+                overdue_amount += bal
+            else:
+                unpaid_count += 1
+                unpaid_amount += bal
+
+    invoices_tile = {
+        "range_label": inv_label,
+        "overdue_amount": overdue_amount,
+        "not_due_amount": unpaid_amount,
+        "paid_30_amount": paid_amount,
+        "overdue_count": overdue_count,
+        "not_due_count": unpaid_count,
+        "paid_count": paid_count,
+        "invoices_url": "sales:invoices",
+    }
+
+    # =========================================================
+    # 5) SALES TILE (✅ FIXED: no __date, same logic)
+    # =========================================================
+    sales_from_dt = timezone.make_aware(datetime.combine(sales_from, time.min), tz)
+    sales_to_dt   = timezone.make_aware(datetime.combine(sales_to + timedelta(days=1), time.min), tz)  # exclusive end
+
+    inv_rows = (
+        Newinvoice.objects
+        .filter(date_created__gte=sales_from_dt, date_created__lt=sales_to_dt)
+        .values_list("date_created", "total_due")
+        .order_by("date_created")
+    )
+
+    months = OrderedDict()
+    for created_dt, total_due in inv_rows:
+        if not created_dt:
+            continue
+        key = created_dt.strftime("%b")
+        months.setdefault(key, Decimal("0.00"))
+        months[key] += dec(total_due)
+
+    sales_tile = {
+        "range_label": sales_label,
+        "total": sum(months.values(), Decimal("0.00")),
+        "labels": list(months.keys()),
+        "values": [float(v) for v in months.values()],
+    }
 
     context = {
-        "range_text": f"{start:%b %d} – {end:%b %d}",
+        "pnl_tile": pnl_tile,
+        "expenses_tile": expenses_tile,
+        "bank_rows": bank_rows,
+        "bs_url": bs_url,
+        "invoices_tile": invoices_tile,
+        "sales_tile": sales_tile,
 
-        # Sales (existing)
-        # "chart_labels": chart_labels,
-        # "sales_series": sales_series,
+        "exp_labels": exp_labels,
+        "exp_values": exp_values,
 
-        # NEW series
-        # "bills_series": bills_series,
-        # "expenses_series": expenses_series,
-        # "profit_series": profit_series,
-
-        # # Donuts / Bars (existing)
-        # "exp_labels": exp_labels, "exp_values": exp_values,
-        # "bank_labels": bank_labels, "bank_values": bank_values,
-        # "inv_amounts": inv_amounts, "inv_counts": inv_counts,
-        # "pl_summary": pl_summary,
+        "range_options": RANGE_OPTIONS,
+        "pnl_range_key": pnl_range_key,
+        "exp_range_key": exp_range_key,
+        "sales_range_key": sales_range_key,
+        "inv_range_key": inv_range_key,
     }
+
     return render(request, "Home.html", context)
+  # assets view
 def assets(request):
     assets = Newasset.objects.all()
       
@@ -1435,46 +1527,57 @@ def employee(request):
 # add employee form 
 def add_employees(request):
     if request.method == 'POST':
+
         first_name = request.POST.get('first_name')
         last_name = request.POST.get('last_name')
         gender = request.POST.get('gender')
-        dob_str = request.POST.get('dob')
-        dob = None
-        if dob_str:
-            try:
-               dob = datetime.strptime(dob_str, '%d/%m/%Y')
-            except ValueError:
-               dob = None
+        dob = parse_date(request.POST.get('dob') or "")
         nationality = request.POST.get('nationality')
         nin_number = request.POST.get('nin_number')
         tin_number = request.POST.get('tin_number')
+
         profile_picture = request.FILES.get('profile_picture')
         if profile_picture:
             if not profile_picture.name.lower().endswith('.png'):
-                messages.error(request, "Only PNG files are allowed for the profile_picture.")
+                messages.error(request, "Only PNG files are allowed for the profile picture.")
                 return redirect(request.path)
             if profile_picture.size > 1048576:
-                messages.error(request, "profile_picture file size must not exceed 1MB.")
+                messages.error(request, "Profile picture file size must not exceed 1MB.")
                 return redirect(request.path)
+
         phone_number = request.POST.get('phone_number')
         email_address = request.POST.get('email_address')
         residential_address = request.POST.get('residential_address')
         emergency_person = request.POST.get('emergency_person')
         emergency_contact = request.POST.get('emergency_contact')
         relationship = request.POST.get('relationship')
+
         job_title = request.POST.get('job_title')
         department = request.POST.get('department')
         employment_type = request.POST.get('employment_type')
-        status = request.POST.get('status')
-        hire_date_str = request.POST.get('hire_date')
-        hire_date = None
-        if hire_date_str:
-            try:
-               hire_date = datetime.strptime(hire_date_str, '%d/%m/%Y')
-            except ValueError:
-               hire_date = None
+        hire_date = parse_date(request.POST.get('hire_date') or "")
         supervisor = request.POST.get('supervisor')
-        salary = request.POST.get('salary')
+
+        # ----- DECIMAL FIELDS (FIXED) -----
+        raw_salary = request.POST.get('salary')
+        try:
+            salary = Decimal(raw_salary) if raw_salary else Decimal("0.00")
+        except:
+            salary = Decimal("0.00")
+
+        raw_taxable = request.POST.get('taxable_allowances')
+        try:
+            taxable_allowances = Decimal(raw_taxable) if raw_taxable else Decimal("0.00")
+        except:
+            taxable_allowances = Decimal("0.00")
+
+        raw_intaxable = request.POST.get('intaxable_allowances')
+        try:
+            intaxable_allowances = Decimal(raw_intaxable) if raw_intaxable else Decimal("0.00")
+        except:
+            intaxable_allowances = Decimal("0.00")
+        # ----------------------------------
+
         payment_frequency = request.POST.get('payment_frequency')
         payment_method = request.POST.get('payment_method')
         bank_name = request.POST.get('bank_name')
@@ -1482,61 +1585,100 @@ def add_employees(request):
         bank_branch = request.POST.get('bank_branch')
         nssf_number = request.POST.get('nssf_number')
         insurance_provider = request.POST.get('insurance_provider')
-        taxable_allowances = request.POST.get('taxable_allowances')
-        intaxable_allowances = request.POST.get('intaxable_allowances')
         additional_notes = request.POST.get('additional_notes')
         doc_attachments = request.FILES.get('doc_attachments')
-        # saving the new employee
-        employee = Newemployee(first_name=first_name,last_name=last_name,gender=gender,dob=dob,nationality=nationality,nin_number=nin_number,tin_number=tin_number,profile_picture=profile_picture,phone_number=phone_number,email_address=email_address,residential_address=residential_address,emergency_person=emergency_person,emergency_contact=emergency_contact,relationship=relationship,job_title=job_title,department=department,employment_type=employment_type,status=status,hire_date=hire_date,supervisor=supervisor,salary=salary,payment_frequency=payment_frequency,payment_method=payment_method,bank_name=bank_name,bank_account=bank_account,bank_branch=bank_branch,nssf_number=nssf_number,insurance_provider=insurance_provider,taxable_allowances=taxable_allowances,intaxable_allowances=intaxable_allowances,additional_notes=additional_notes,doc_attachments=doc_attachments,)
+
+        employee = Newemployee(
+            first_name=first_name,
+            last_name=last_name,
+            gender=gender,
+            dob=dob,
+            nationality=nationality,
+            nin_number=nin_number,
+            tin_number=tin_number,
+            profile_picture=profile_picture,
+            phone_number=phone_number,
+            email_address=email_address,
+            residential_address=residential_address,
+            emergency_person=emergency_person,
+            emergency_contact=emergency_contact,
+            relationship=relationship,
+            job_title=job_title,
+            department=department,
+            employment_type=employment_type,
+            hire_date=hire_date,
+            supervisor=supervisor,
+            salary=salary,
+            payment_frequency=payment_frequency,
+            payment_method=payment_method,
+            bank_name=bank_name,
+            bank_account=bank_account,
+            bank_branch=bank_branch,
+            nssf_number=nssf_number,
+            insurance_provider=insurance_provider,
+            taxable_allowances=taxable_allowances,
+            intaxable_allowances=intaxable_allowances,
+            additional_notes=additional_notes,
+            doc_attachments=doc_attachments,
+        )
 
         employee.save()
-        # adding button save actions
+
         save_action = request.POST.get('save_action')
         if save_action == 'save&new':
-            return redirect('employees')
-        if save_action == 'save&new':
-            return redirect('add-employee')
-        elif save_action == 'save&close':
+            return redirect('sowaf:add-employee')
+        if save_action in ['save', 'save&close']:
             return redirect('sowaf:employees')
-    
-    return render(request, 'employees_form.html', {})
 
-# editing the employee
+    return render(request, 'employees_form.html')
+
+
 def edit_employee(request, pk):
     employee = get_object_or_404(Newemployee, pk=pk)
 
     if request.method == 'POST':
+
         employee.first_name = request.POST.get('first_name', employee.first_name)
         employee.last_name = request.POST.get('last_name', employee.last_name)
         employee.gender = request.POST.get('gender', employee.gender)
-        dob_str = request.POST.get('dob')
-        if dob_str:
-            try:
-                employee.dob = datetime.strptime(dob_str, '%d/%m/%Y')
-            except ValueError:
-                pass  # Keep the original value or handle error
+        employee.dob = parse_date(request.POST.get('dob') or "")
         employee.nationality = request.POST.get('nationality', employee.nationality)
         employee.nin_number = request.POST.get('nin_number', employee.nin_number)
         employee.tin_number = request.POST.get('tin_number', employee.tin_number)
+
         employee.phone_number = request.POST.get('phone_number', employee.phone_number)
         employee.email_address = request.POST.get('email_address', employee.email_address)
         employee.residential_address = request.POST.get('residential_address', employee.residential_address)
         employee.emergency_person = request.POST.get('emergency_person', employee.emergency_person)
         employee.emergency_contact = request.POST.get('emergency_contact', employee.emergency_contact)
         employee.relationship = request.POST.get('relationship', employee.relationship)
+
         employee.job_title = request.POST.get('job_title', employee.job_title)
         employee.department = request.POST.get('department', employee.department)
         employee.employment_type = request.POST.get('employment_type', employee.employment_type)
-        employee.status = request.POST.get('status', employee.status)
-        hire_date_str = request.POST.get('hire_date')
-        if hire_date_str:
-            try:
-                employee.hire_date = datetime.strptime(hire_date_str, '%d/%m/%Y')
-            except ValueError:
-                pass  # Keep the original value or handle error
-        employee.department = request.POST.get('department', employee.department)
+        employee.hire_date = parse_date(request.POST.get('hire_date') or "")
         employee.supervisor = request.POST.get('supervisor', employee.supervisor)
-        employee.salary = request.POST.get('salary', employee.salary)
+
+        # ----- DECIMAL FIELDS (FIXED) -----
+        raw_salary = request.POST.get('salary')
+        try:
+            employee.salary = Decimal(raw_salary) if raw_salary else Decimal("0.00")
+        except:
+            employee.salary = Decimal("0.00")
+
+        raw_taxable = request.POST.get('taxable_allowances')
+        try:
+            employee.taxable_allowances = Decimal(raw_taxable) if raw_taxable else Decimal("0.00")
+        except:
+            employee.taxable_allowances = Decimal("0.00")
+
+        raw_intaxable = request.POST.get('intaxable_allowances')
+        try:
+            employee.intaxable_allowances = Decimal(raw_intaxable) if raw_intaxable else Decimal("0.00")
+        except:
+            employee.intaxable_allowances = Decimal("0.00")
+        # ----------------------------------
+
         employee.payment_frequency = request.POST.get('payment_frequency', employee.payment_frequency)
         employee.payment_method = request.POST.get('payment_method', employee.payment_method)
         employee.bank_name = request.POST.get('bank_name', employee.bank_name)
@@ -1544,11 +1686,8 @@ def edit_employee(request, pk):
         employee.bank_branch = request.POST.get('bank_branch', employee.bank_branch)
         employee.nssf_number = request.POST.get('nssf_number', employee.nssf_number)
         employee.insurance_provider = request.POST.get('insurance_provider', employee.insurance_provider)
-        employee.taxable_allowances = request.POST.get('taxable_allowances', employee.taxable_allowances)
-        employee.intaxable_allowances = request.POST.get('intaxable_allowances', employee.intaxable_allowances)
         employee.additional_notes = request.POST.get('additional_notes', employee.additional_notes)
 
-        #Only update profile_picture if a new one is uploaded
         profile_picture = request.FILES.get('profile_picture')
         if profile_picture:
             if not profile_picture.name.lower().endswith('.png'):
@@ -1558,21 +1697,14 @@ def edit_employee(request, pk):
                 messages.error(request, "Profile picture file size must not exceed 1MB.")
                 return redirect(request.path)
             employee.profile_picture = profile_picture
-        
+
         if 'doc_attachments' in request.FILES:
             employee.doc_attachments = request.FILES['doc_attachments']
 
         employee.save()
-        return redirect('sowaf:employees')  # Or wherever your list view is
+        return redirect('sowaf:employees')
 
     return render(request, 'employees_form.html', {'employee': employee})
-
-# employee delete view
-def delete_employee(request, pk):
-    employee  = get_object_or_404(Newemployee, pk=pk)
-    employee.delete()
-    return redirect('sowaf:employees')
-
 # importing employees
 def download_employees_template(request):
     wb = Workbook()

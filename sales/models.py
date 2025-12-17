@@ -11,8 +11,8 @@ from inventory.models import Product,Pclass
 
 
 class Newinvoice(models.Model):
-    date_created = models.DateField(null=True, blank=True)
-    due_date = models.DateField(null=True, blank=True)
+    date_created = models.DateTimeField(null=True, blank=True)
+    due_date = models.DateTimeField(null=True, blank=True)
     customer = models.ForeignKey(Newcustomer, on_delete=models.CASCADE)
     email = models.EmailField(max_length=255, null=True, blank=True)
     billing_address = models.CharField(max_length=255, null=True, blank=True)

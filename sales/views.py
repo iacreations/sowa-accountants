@@ -29,10 +29,19 @@ from django.db.models import Sum, F, Value
 from django.utils.dateparse import parse_date
 from inventory.models import Product,Pclass
 from accounts.models import Account, JournalEntry, JournalLine
-from .services import generate_unique_ref_no, parse_date_flexible, status_for_invoice, _payment_prefill_rows,_coerce_decimal
+from .services import (generate_unique_ref_no, parse_date_flexible, status_for_invoice, _payment_prefill_rows,_coerce_decimal,as_aware_datetime)
 from accounts.utils import deposit_accounts_qs
 from collections import defaultdict
 from accounts.middleware import get_current_user, get_current_ip
+from datetime import datetime, date
+
+def _as_date(d):
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return date.min  
+
 
 def apply_audit_fields(obj):
     """
@@ -420,51 +429,50 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
         )
 
 # sales analytics
+def dec(val) -> Decimal:
+    try:
+        return Decimal(str(val or "0"))
+    except Exception:
+        return Decimal("0.00")
+
+
 def _invoice_analytics():
     today = timezone.localdate()
-    # Annotate each invoice with decimal-safe totals
-    inv = (
+
+    invs = (
         Newinvoice.objects
-        .annotate(
-            total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
-            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
-        )
-        .annotate(
-            outstanding=Cast(F("total_due_dec") - F("total_paid"), DecimalField(max_digits=18, decimal_places=2))
-        )
+        .prefetch_related("payments_applied")
+        .only("id", "total_due", "due_date")
     )
 
-    # Fully paid (cleared): outstanding <= 0
-    paid_qs = inv.filter(outstanding__lte=0)
-    paid = paid_qs.aggregate(
-        amount=Coalesce(Sum("total_paid"), Value(Decimal("0.00"))),
-        count=Coalesce(Sum(Value(1)), Value(0))
-    )
+    paid_amt = unpaid_amt = overdue_amt = Decimal("0.00")
+    paid_cnt = unpaid_cnt = overdue_cnt = 0
 
-    # Unpaid (not overdue): outstanding > 0 and (no due_date or due_date >= today)
-    unpaid_qs = inv.filter(outstanding__gt=0).filter(Q(due_date__isnull=True) | Q(due_date__gte=today))
-    unpaid = unpaid_qs.aggregate(
-        amount=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))),
-        count=Coalesce(Sum(Value(1)), Value(0))
-    )
+    for inv in invs:
+        total = dec(inv.total_due)
+        paid = sum((dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
+        bal = total - paid
 
-    # Overdue: outstanding > 0 and due_date < today
-    overdue_qs = inv.filter(outstanding__gt=0, due_date__lt=today)
-    overdue = overdue_qs.aggregate(
-        amount=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))),
-        count=Coalesce(Sum(Value(1)), Value(0))
-    )
+        due = _as_date(getattr(inv, "due_date", None))  # ✅ normalize
+
+        if bal <= Decimal("0.00001"):
+            paid_cnt += 1
+            paid_amt += total
+        elif due and due < today:
+            overdue_cnt += 1
+            overdue_amt += bal
+        else:
+            unpaid_cnt += 1
+            unpaid_amt += bal
 
     return {
-        "paid_amount":   paid["amount"]   or Decimal("0.00"),
-        "paid_count":    int(paid["count"] or 0),
-        "unpaid_amount": unpaid["amount"] or Decimal("0.00"),
-        "unpaid_count":  int(unpaid["count"] or 0),
-        "over_amount":   overdue["amount"] or Decimal("0.00"),
-        "over_count":    int(overdue["count"] or 0),
+        "paid_amount": paid_amt,
+        "paid_count": paid_cnt,
+        "unpaid_amount": unpaid_amt,
+        "unpaid_count": unpaid_cnt,
+        "over_amount": overdue_amt,
+        "over_count": overdue_cnt,
     }
-
-# sales view
 def sales(request):
     products = Product.objects.all()
 
@@ -478,28 +486,25 @@ def sales(request):
     inv_qs = (
         Newinvoice.objects
         .select_related("customer")
-        .annotate(
-            total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
-            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
-        )
+        .prefetch_related("payments_applied")
         .order_by("-date_created", "-id")
     )
     for inv in inv_qs:
-        total = inv.total_due_dec or Decimal("0")
-        paid  = inv.total_paid or Decimal("0")
-        bal   = max(total - paid, Decimal("0"))
-        status = status_for_invoice(inv, total, paid, bal)  # you already have this helper
+        total = dec(inv.total_due)
+        paid = sum((dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
+        bal = total - paid
+        status = status_for_invoice(inv, total, paid, bal)
 
         rows.append({
-            "date": getattr(inv, "date_created", None),
+            "date": inv.date_created,
             "type": "Invoice",
-            "no": f"INV-{inv.id:04d}",
+            "no": f"{inv.id:04d}",
             "customer": inv.customer.customer_name if inv.customer_id else "",
             "memo": (inv.memo or "")[:140],
             "amount": total,
             "status": status,
-            "edit_url":  reverse("sales:edit-invoice", args=[inv.id]),
-            "view_url":  reverse("sales:invoice-detail", args=[inv.id]),
+            "edit_url": reverse("sales:edit-invoice", args=[inv.id]),
+            "view_url": reverse("sales:invoice-detail", args=[inv.id]),
             "print_url": reverse("sales:invoice-print", args=[inv.id]),
         })
 
@@ -532,16 +537,17 @@ def sales(request):
         .select_related("customer", "deposit_to")
         .annotate(
             total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2)),
-            amount_paid_dec=Cast(Coalesce(F("amount_paid"), Value(Decimal("0.00"))),
-                                 DecimalField(max_digits=18, decimal_places=2)),
+            amount_paid_dec=Cast(
+                Coalesce(F("amount_paid"), Value(Decimal("0.00"))),
+                DecimalField(max_digits=18, decimal_places=2),
+            ),
         )
         .order_by("-receipt_date", "-id")
     )
     for r in sr_qs:
-        total = r.total_amount_dec or Decimal("0")
-        paid  = r.amount_paid_dec or Decimal("0")
-        bal   = max(total - paid, Decimal("0"))
-        status = _receipt_status(r)  # you already have this helper
+        total = dec(r.total_amount)
+        paid  = dec(r.amount_paid)
+        status = _receipt_status(r)  # you already have this
 
         rows.append({
             "date": r.receipt_date,
@@ -556,8 +562,12 @@ def sales(request):
             "print_url": reverse("sales:receipt-print", args=[r.id]),
         })
 
-    # sort newest first
-    rows.sort(key=lambda x: (x["date"] or 0, x["type"]), reverse=True)
+    # ✅ sort newest first, safely even if a row has date=None
+    def sort_key(x):
+        d = _as_date(x.get("date"))
+        return (d or date.min, x.get("type", ""))
+
+    rows.sort(key=sort_key, reverse=True)
 
     return render(
         request,
@@ -566,7 +576,7 @@ def sales(request):
             "products": products,
             "invoices": invoices,
             "inv_analytics": inv_analytics,
-            "sales_rows": rows,   # <-- pass to template
+            "sales_rows": rows,
         },
     )
 # invoice form view
@@ -585,8 +595,12 @@ def get_product_details(request, pk):
         return JsonResponse({"error": "Product not found"}, status=404)
 
 
-
-# working on the invoice 
+TERMS_DAYS = {
+    "due_on_receipt": 0, "one_day": 1, "two_days": 2, "net_7": 7,
+    "net_15": 15, "net_30": 30, "net_60": 60,
+    "credit_limit": 27, "credit_allowance": 29,
+}
+ 
 def parse_date_flexible(s):
     if not s:
         return None
@@ -597,76 +611,62 @@ def parse_date_flexible(s):
             continue
     return None  # if nothing matched
 
+
 def add_invoice(request):
     if request.method == "POST":
         # Parse customer and invoice info
-        
-        date_created = request.POST.get("date_created")
-        due_date = request.POST.get("due_date")
-        customer_id = request.POST.get("customer")
-        customer=None
+        raw_date_created = request.POST.get("date_created") or ""
+        raw_due_date     = request.POST.get("due_date") or ""
+        customer_id      = request.POST.get("customer")
+
+        customer = None
         if customer_id:
             try:
                 customer = Newcustomer.objects.get(pk=customer_id)
             except Newcustomer.DoesNotExist:
-                customer=None
-        email = request.POST.get("email")
-        billing_address = request.POST.get("billing_address")
+                customer = None
+
+        email            = request.POST.get("email")
+        billing_address  = request.POST.get("billing_address")
         shipping_address = request.POST.get("shipping_address")
-        terms = request.POST.get("terms")
-        sales_rep = request.POST.get("sales_rep")        
-        # lclass = request.POST.get("lclass")
+        terms            = (request.POST.get("terms") or "").strip()
+        sales_rep        = request.POST.get("sales_rep")
 
         class_field_id = request.POST.get("class_field")
-        class_field=None
+        class_field = None
         if class_field_id:
             try:
                 class_field = Pclass.objects.get(pk=class_field_id)
             except Pclass.DoesNotExist:
-                class_field=None
+                class_field = None
 
-        tags = request.POST.get("tags")
-        po_num = request.POST.get("po_num")
-        memo = request.POST.get("memo")
+        tags          = request.POST.get("tags")
+        po_num        = request.POST.get("po_num")
+        memo          = request.POST.get("memo")
         customs_notes = request.POST.get("customs_notes")
-        subtotal = Decimal(request.POST.get("subtotal") or 0)
-        total_discount = Decimal(request.POST.get("total_discount") or 0)
-        shipping_fee = Decimal(request.POST.get("shipping_fee") or 0)
-        total_due = Decimal(request.POST.get("total_due") or 0)
-        # terms and due date
-        raw_date_created = request.POST.get("date_created") or ""
-        raw_due_date    = request.POST.get("due_date") or ""
-        terms           = (request.POST.get("terms") or "").strip()
 
-        # parse to date objects (works for ISO and dd/mm/yyyy)
+        subtotal       = Decimal(request.POST.get("subtotal") or 0)
+        total_discount = Decimal(request.POST.get("total_discount") or 0)
+        shipping_fee   = Decimal(request.POST.get("shipping_fee") or 0)
+        total_due      = Decimal(request.POST.get("total_due") or 0)
+
+        # parse to date objects (your existing helper returns date)
         created_dt = parse_date_flexible(raw_date_created)
         due_dt     = parse_date_flexible(raw_due_date)
 
-        # Terms → days mapping
-        TERMS_DAYS = {
-            "due_on_receipt": 0,
-            "one_day": 1,
-            "two_days": 2,
-            "net_7": 7,
-            "net_15": 15,
-            "net_30": 30,
-            "net_60": 60,
-            "credit_limit": 27,
-            "credit_allowance": 29,
-        }
-
         # if user didn't enter a due date, compute it from terms + created date
         if not due_dt and created_dt and terms in TERMS_DAYS:
-            due_dt = created_dt + timedelta(days=TERMS_DAYS[terms])        # Invoice totals
-        total_vat = Decimal("0")
-        
+            due_dt = created_dt + timedelta(days=TERMS_DAYS[terms])
 
-        # Create invoice
+        # Invoice totals
+        total_vat = Decimal("0")
+
+        # ✅ Create invoice (FIX: store aware datetime into DateTimeFields)
         invoice = Newinvoice.objects.create(
             customer=customer,
             email=email,
-            date_created=created_dt,
-            due_date=due_dt,
+            date_created=as_aware_datetime(created_dt),
+            due_date=as_aware_datetime(due_dt),        
             billing_address=billing_address,
             shipping_address=shipping_address,
             class_field=class_field,
@@ -678,20 +678,20 @@ def add_invoice(request):
             customs_notes=customs_notes,
             subtotal=subtotal,
             total_discount=total_discount,
-            total_vat=total_vat,  # will update after items
+            total_vat=total_vat,   # will update after items
             shipping_fee=shipping_fee,
-            total_due=total_due,  # will update later
+            total_due=total_due,   # will update later
         )
 
         # ✅ Line items (loop through arrays from form)
-        products = request.POST.getlist("product[]")
-        descriptions = request.POST.getlist("description[]")
-        qtys = request.POST.getlist("qty[]")
-        rates = request.POST.getlist("unit_price[]")
-        amounts = request.POST.getlist("amount[]")  # fixed typo
-        vats = request.POST.getlist("vat[]")
-        discount_nums = request.POST.getlist("discount_num[]")
-        discount_amounts = request.POST.getlist("discount_amount[]")
+        products          = request.POST.getlist("product[]")
+        descriptions      = request.POST.getlist("description[]")
+        qtys              = request.POST.getlist("qty[]")
+        rates             = request.POST.getlist("unit_price[]")
+        amounts           = request.POST.getlist("amount[]")
+        vats              = request.POST.getlist("vat[]")
+        discount_nums     = request.POST.getlist("discount_num[]")
+        discount_amounts  = request.POST.getlist("discount_amount[]")
 
         for i in range(len(products)):
             if not products[i]:
@@ -700,39 +700,45 @@ def add_invoice(request):
             product = get_object_or_404(Product, pk=products[i])
 
             InvoiceItem.objects.create(
-            invoice=invoice,
-            product=product,
-            description=descriptions[i] if i < len(descriptions) else "",
-            qty=Decimal(qtys[i] or "0") if i < len(qtys) else Decimal("0"),
-            unit_price=Decimal(rates[i] or "0") if i < len(rates) else Decimal("0"),
-            amount=Decimal(amounts[i] or "0") if i < len(amounts) else Decimal("0"),
-            vat=Decimal(vats[i] or "0") if i < len(vats) else Decimal("0"),
-            discount_num=Decimal(discount_nums[i] or "0") if i < len(discount_nums) else Decimal("0"),
-            discount_amount=Decimal(discount_amounts[i] or "0") if i < len(discount_amounts) else Decimal("0"),
+                invoice=invoice,
+                product=product,
+                description=descriptions[i] if i < len(descriptions) else "",
+                qty=Decimal(qtys[i] or "0") if i < len(qtys) else Decimal("0"),
+                unit_price=Decimal(rates[i] or "0") if i < len(rates) else Decimal("0"),
+                amount=Decimal(amounts[i] or "0") if i < len(amounts) else Decimal("0"),
+                vat=Decimal(vats[i] or "0") if i < len(vats) else Decimal("0"),
+                discount_num=Decimal(discount_nums[i] or "0") if i < len(discount_nums) else Decimal("0"),
+                discount_amount=Decimal(discount_amounts[i] or "0") if i < len(discount_amounts) else Decimal("0"),
             )
+
         # Apply discount and shipping
-        total_due = (subtotal-total_discount)+shipping_fee+total_vat
+        total_due = (subtotal - total_discount) + shipping_fee + total_vat
 
         # Update invoice totals
         invoice.total_vat = total_vat
         invoice.total_due = total_due
         apply_audit_fields(invoice)
         invoice.save()
+
         # ⇨ Post to General Ledger
         _post_invoice_to_ledger(invoice)
+
         # Decide redirect
         save_action = request.POST.get("save_action")
+        if save_action == "save":
+            return redirect("sales:invoices")
         if save_action == "save&new":
             return redirect("sales:add-invoice")
         elif save_action == "save&close":
             return redirect("sales:sales")
 
         return redirect("sales:add-invoice")
-    products=Product.objects.all()
+
+    products  = Product.objects.all()
     customers = Newcustomer.objects.all()
-    classes = Pclass.objects.all()
-    # working on the id
-    last_invoice = Newinvoice.objects.order_by('-id').first()
+    classes   = Pclass.objects.all()
+
+    last_invoice = Newinvoice.objects.order_by("-id").first()
     next_id = 1 if not last_invoice else last_invoice.id + 1
     next_invoice_id = f"{next_id:03d}"
 
@@ -740,10 +746,145 @@ def add_invoice(request):
         "customers": customers,
         "classes": classes,
         "products": products,
-        "next_invoice_id":next_invoice_id,
+        "next_invoice_id": next_invoice_id,
     })
+# edit invoice
 
+def edit_invoice(request, pk: int):
+    """
+    Edit an invoice:
+      - GET: prefill your existing invoice_form.html
+      - POST: update header + replace line items, recompute totals on the server
+    """
+    inv = get_object_or_404(
+        Newinvoice.objects.select_related("customer", "class_field"),
+        pk=pk
+    )
 
+    if request.method == "POST":
+        # ----- Header fields -----
+        customer_id   = request.POST.get("customer")
+        email         = request.POST.get("email")
+        billing_addr  = request.POST.get("billing_address")
+        shipping_addr = request.POST.get("shipping_address")
+        terms         = (request.POST.get("terms") or "").strip()
+        sales_rep     = request.POST.get("sales_rep")
+        class_id      = request.POST.get("class_field")
+        tags          = request.POST.get("tags")
+        po_num        = request.POST.get("po_number") or request.POST.get("po_num")
+        memo          = request.POST.get("memo")
+        customs_notes = request.POST.get("customs_notes")
+
+        customer    = Newcustomer.objects.filter(pk=customer_id).first() if customer_id else None
+        class_field = Pclass.objects.filter(pk=class_id).first() if class_id else None
+
+        created_dt = parse_date_flexible(request.POST.get("date_created"))
+        due_dt     = parse_date_flexible(request.POST.get("due_date"))
+
+        if not due_dt and created_dt and terms in TERMS_DAYS:
+            due_dt = created_dt + timedelta(days=TERMS_DAYS[terms])
+
+        # We will recompute totals from lines; only shipping is taken from POST
+        shipping_fee = Decimal(request.POST.get("shipping_fee") or 0)
+
+        # ----- Replace line items & recompute totals (authoritative) -----
+        InvoiceItem.objects.filter(invoice=inv).delete()
+
+        products       = request.POST.getlist("product[]")
+        descriptions   = request.POST.getlist("description[]")
+        qtys           = request.POST.getlist("qty[]")
+        rates          = request.POST.getlist("unit_price[]")
+        discount_percs = request.POST.getlist("discount_num[]")
+
+        line_rows = []
+
+        subtotal       = Decimal("0.00")
+        total_discount = Decimal("0.00")
+        total_vat      = Decimal("0.00")
+
+        for i in range(len(products)):
+            if not products[i]:
+                continue
+
+            product = get_object_or_404(Product, pk=products[i])
+
+            desc = descriptions[i] if i < len(descriptions) else ""
+            qty  = Decimal((qtys[i] or "0").strip() if i < len(qtys) else "0")
+            rate = Decimal((rates[i] or "0").strip() if i < len(rates) else "0")
+            dpc  = Decimal((discount_percs[i] or "0").strip() if i < len(discount_percs) else "0")
+
+            line_amount = (qty * rate).quantize(Decimal("0.01"))
+            line_discount_amt = (line_amount * dpc / Decimal("100")).quantize(Decimal("0.01"))
+
+            # VAT on pre-discount amount (same as your comment)
+            if getattr(product, "taxable", False):
+                line_vat = (line_amount * Decimal("0.18")).quantize(Decimal("0.01"))
+            else:
+                line_vat = Decimal("0.00")
+
+            subtotal       += line_amount
+            total_discount += line_discount_amt
+            total_vat      += line_vat
+
+            line_rows.append(InvoiceItem(
+                invoice=inv,
+                product=product,
+                description=desc,
+                qty=qty,
+                unit_price=rate,
+                amount=line_amount,
+                vat=line_vat,
+                discount_num=dpc,
+                discount_amount=line_discount_amt,
+            ))
+
+        if line_rows:
+            InvoiceItem.objects.bulk_create(line_rows)
+
+        # ✅ Save header fields (FIX: store aware datetime into DateTimeFields)
+        inv.customer         = customer
+        inv.email            = email
+        inv.date_created     = as_aware_datetime(created_dt)  # ✅ FIX
+        inv.due_date         = as_aware_datetime(due_dt)      # ✅ FIX
+        inv.billing_address  = billing_addr
+        inv.shipping_address = shipping_addr
+        inv.class_field      = class_field
+        inv.terms            = terms
+        inv.sales_rep        = sales_rep
+        inv.tags             = tags
+        inv.po_num           = po_num
+        inv.memo             = memo
+        inv.customs_notes    = customs_notes
+
+        inv.subtotal        = subtotal
+        inv.total_discount  = total_discount
+        inv.total_vat       = total_vat
+        inv.shipping_fee    = shipping_fee
+        inv.total_due       = (subtotal - total_discount + total_vat + shipping_fee).quantize(Decimal("0.01"))
+
+        apply_audit_fields(inv)
+        inv.save()
+
+        # ⇨ Re-post to General Ledger
+        _post_invoice_to_ledger(inv)
+
+        return redirect("sales:invoice-detail", pk=inv.pk)
+
+    # ----- GET: prefill form -----
+    products  = Product.objects.all()
+    customers = Newcustomer.objects.all()
+    classes   = Pclass.objects.all()
+    items     = InvoiceItem.objects.filter(invoice=inv).select_related("product").order_by("id")
+
+    return render(request, "invoice_form.html", {
+        "edit_mode": True,
+        "inv": inv,
+        "items": items,
+        "products": products,
+        "customers": customers,
+        "classes": classes,
+        "next_invoice_id": f"{inv.id:03d}",
+    })
 def add_class_ajax(request):
     if request.method == "POST":
         name = request.POST.get("name")
@@ -776,7 +917,7 @@ def invoice_list(request):
         total_paid = inv.total_paid or Decimal("0")
         balance    = max(total_due - total_paid, Decimal("0"))
 
-        # ✅ one unified status string everywhere
+        # one unified status string everywhere
         inv.status = status_for_invoice(inv, total_due, total_paid, balance)
 
         invoices.append(inv)
@@ -873,162 +1014,6 @@ def invoice_detail(request, pk: int):
         "total_paid": total_paid,
         "balance": balance,
         "payment_rows": payment_rows,
-    })
-
-# edit view
-def parse_date_flexible(s: str | None):
-    """Accept 'YYYY-MM-DD', 'dd/mm/YYYY', 'dd-mm-YYYY', 'mm/dd/YYYY' -> date, or None."""
-    if not s:
-        return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y"):
-        try:
-            return datetime.strptime(s.strip(), fmt).date()
-        except ValueError:
-            continue
-    return None
-
-TERMS_DAYS = {
-    "due_on_receipt": 0, "one_day": 1, "two_days": 2, "net_7": 7,
-    "net_15": 15, "net_30": 30, "net_60": 60,
-    "credit_limit": 27, "credit_allowance": 29,
-}
-
-
-@transaction.atomic
-def edit_invoice(request, pk: int):
-    """
-    Edit an invoice:
-      - GET: prefill your existing invoice_form.html
-      - POST: update header + replace line items, recompute totals on the server
-    """
-    inv = get_object_or_404(
-        Newinvoice.objects.select_related("customer", "class_field"),
-        pk=pk
-    )
-
-    if request.method == "POST":
-        # ----- Header fields -----
-        customer_id   = request.POST.get("customer")
-        email         = request.POST.get("email")
-        billing_addr  = request.POST.get("billing_address")
-        shipping_addr = request.POST.get("shipping_address")
-        terms         = (request.POST.get("terms") or "").strip()
-        sales_rep     = request.POST.get("sales_rep")
-        class_id      = request.POST.get("class_field")
-        tags          = request.POST.get("tags")
-        po_num        = request.POST.get("po_number") or request.POST.get("po_num")
-        memo          = request.POST.get("memo")
-        customs_notes = request.POST.get("customs_notes")
-
-        customer   = Newcustomer.objects.filter(pk=customer_id).first() if customer_id else None
-        class_field = Pclass.objects.filter(pk=class_id).first() if class_id else None
-
-        created_dt = parse_date_flexible(request.POST.get("date_created"))
-        due_dt     = parse_date_flexible(request.POST.get("due_date"))
-        if not due_dt and created_dt and terms in TERMS_DAYS:
-            due_dt = created_dt + timedelta(days=TERMS_DAYS[terms])
-
-        # We will recompute totals from lines; only shipping is taken from POST
-        shipping_fee = Decimal(request.POST.get("shipping_fee") or 0)
-
-        # ----- Replace line items & recompute totals (authoritative) -----
-        InvoiceItem.objects.filter(invoice=inv).delete()
-
-        products       = request.POST.getlist("product[]")
-        descriptions   = request.POST.getlist("description[]")
-        qtys           = request.POST.getlist("qty[]")
-        rates          = request.POST.getlist("unit_price[]")
-        discount_percs = request.POST.getlist("discount_num[]")
-
-        line_rows: list[InvoiceItem] = []
-
-        subtotal       = Decimal("0.00")
-        total_discount = Decimal("0.00")
-        total_vat      = Decimal("0.00")
-
-        for i in range(len(products)):
-            if not products[i]:
-                continue
-
-            product = get_object_or_404(Product, pk=products[i])
-
-            desc = descriptions[i] if i < len(descriptions) else ""
-            qty  = Decimal((qtys[i] or "0").strip() if i < len(qtys) else "0")
-            rate = Decimal((rates[i] or "0").strip() if i < len(rates) else "0")
-            dpc  = Decimal((discount_percs[i] or "0").strip() if i < len(discount_percs) else "0")
-
-            # Base line amount
-            line_amount = (qty * rate).quantize(Decimal("0.01"))
-
-            # Discount amount (% of line amount)
-            line_discount_amt = (line_amount * dpc / Decimal("100")).quantize(Decimal("0.01"))
-
-            # VAT: keep same logic as create (VAT on pre-discount amount).
-            # If you want VAT after discount, change base to (line_amount - line_discount_amt).
-            if getattr(product, "taxable", False):
-                line_vat = (line_amount * Decimal("0.18")).quantize(Decimal("0.01"))
-            else:
-                line_vat = Decimal("0.00")
-
-            subtotal       += line_amount
-            total_discount += line_discount_amt
-            total_vat      += line_vat
-
-            line_rows.append(InvoiceItem(
-                invoice=inv,
-                product=product,
-                description=desc,
-                qty=qty,
-                unit_price=rate,
-                amount=line_amount,          # store pre-discount line amount (matches your create flow)
-                vat=line_vat,
-                discount_num=dpc,
-                discount_amount=line_discount_amt,
-            ))
-
-        if line_rows:
-            InvoiceItem.objects.bulk_create(line_rows)
-
-        # Final totals = (subtotal - discount) + VAT + shipping
-        inv.customer        = customer
-        inv.email           = email
-        inv.date_created    = created_dt
-        inv.due_date        = due_dt
-        inv.billing_address = billing_addr
-        inv.shipping_address= shipping_addr
-        inv.class_field     = class_field
-        inv.terms           = terms
-        inv.sales_rep       = sales_rep
-        inv.tags            = tags
-        inv.po_num          = po_num
-        inv.memo            = memo
-        inv.customs_notes   = customs_notes
-
-        inv.subtotal        = subtotal
-        inv.total_discount  = total_discount
-        inv.total_vat       = total_vat
-        inv.shipping_fee    = shipping_fee
-        inv.total_due       = (subtotal - total_discount + total_vat + shipping_fee).quantize(Decimal("0.01"))
-        apply_audit_fields(inv)
-        inv.save()
-        # ⇨ Re-post to General Ledger (delete + recreate entry)
-        _post_invoice_to_ledger(inv)
-        return redirect("sales:invoice-detail", pk=inv.pk)
-
-    # ----- GET: prefill form -----
-    products  = Product.objects.all()
-    customers = Newcustomer.objects.all()
-    classes   = Pclass.objects.all()
-    items     = InvoiceItem.objects.filter(invoice=inv).select_related("product").order_by("id")
-
-    return render(request, "invoice_form.html", {
-        "edit_mode": True,
-        "inv": inv,
-        "items": items,
-        "products": products,
-        "customers": customers,
-        "classes": classes,
-        "next_invoice_id": f"{inv.id:03d}",  # keep your visual header format
     })
 # invoice print view
 def invoice_print(request, pk: int):

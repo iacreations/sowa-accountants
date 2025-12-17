@@ -32,7 +32,7 @@
 <div class="page-wrap" id="payment">
   <a href="{% url 'sales:payments_list' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> < Back </a>
   <div class="titlebar my-5">
-  <h2 style="margin-top: 5%;">Payment number {{ payment.id }}</h2>
+  <h2 style="margin-top: 5%;">Collection ID-#{{ payment.id }}</h2>
   <div style="display:flex; gap:8px;">
     <a class="edit-link" href="{% url 'sales:payment-edit' payment.id %}" style="text-decoration: none; color: #39B54B; font-weight: 900;">Edit</a>
     <a href="{% url 'sales:payment-print' payment.id %}" style="text-decoration: none; color: #39B54B; font-weight: 900;">Print</a>
