@@ -23,7 +23,13 @@ class Newcustomer(models.Model):
     notes = models.TextField(max_length=1000, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     attachments = models.FileField(upload_to='uploads/', null=True, blank=True)
-
+    ar_account = models.OneToOneField(
+        "accounts.Account",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="customer_ar_owner",
+    )
     class Meta:
         ordering = ['customer_name']
 
@@ -40,10 +46,6 @@ class Newsupplier(models.Model):
             ('Goods', 'Goods'),
             ('Services','Services'),
             ('Both','Both'),
-    ]
-    STATUS_CHOICES = [
-            ('Active', 'Active'),
-            ('Inactive','Inactive'),
     ]
     logo = models.ImageField(null=True, blank=True)
     company_name = models.CharField(max_length=255,null=True, blank=True)
@@ -70,7 +72,13 @@ class Newsupplier(models.Model):
     reg_number=models.CharField(max_length=255,null=True, blank=True)
     is_active = models.BooleanField(default=True)
     attachments = models.FileField(upload_to='uploads/',null=True, blank=True)
-
+    ap_account = models.OneToOneField(
+        "accounts.Account",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="supplier_ap_owner",
+    )
     class Meta:
         ordering =['company_name']
 

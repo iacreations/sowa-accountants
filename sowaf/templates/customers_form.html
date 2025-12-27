@@ -198,7 +198,7 @@ small{ color:var(--muted); }
             <input type="number" name='balance' value="{{ customer.opening_balance|default_if_none:0}}">
           </div>
           <div class="field"><label for='today'>As of Date</label>
-            <input type="date" name='registration_date' value="{{ customer.registration_date|date:'d/m/Y'|default_if_none:'' }}">
+            <input type="date" name='registration_date' value="{{ customer.registration_date|date:'Y-m-d'|default_if_none:'' }}">
           </div>
         </div>
       </div>

@@ -144,15 +144,14 @@ class ColumnPreference(models.Model):
     
 
 # bills model
-
 class Bill(models.Model):
     supplier          = models.ForeignKey(Newsupplier, null=True, blank=True, on_delete=models.CASCADE)
-    supplier_name     = models.CharField(max_length=255, blank=True, null=True)  # if user typed a free-text name
+    supplier_name     = models.CharField(max_length=255, blank=True, null=True)
     mailing_address   = models.CharField(max_length=255, blank=True, null=True)
     terms             = models.CharField(max_length=100, blank=True, null=True)
     bill_date         = models.DateField(default=timezone.localdate)
     due_date          = models.DateField(blank=True, null=True)
-    bill_no           = models.CharField(max_length=32, unique=True)  # we’ll auto-generate if missing
+    bill_no           = models.CharField(max_length=32, unique=True)
     location          = models.CharField(max_length=255, blank=True, null=True)
     memo              = models.TextField(blank=True, null=True)
     attachments       = models.FileField(upload_to="bills/", blank=True, null=True)
@@ -161,10 +160,17 @@ class Bill(models.Model):
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
 
+    # NEW: link bill to its JournalEntry (so edits don’t duplicate postings)
+    journal_entry     = models.OneToOneField(
+        "accounts.JournalEntry",  # adjust app label if different
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="bill_source",
+    )
+
     def __str__(self):
         who = self.supplier.company_name if self.supplier else (self.supplier_name or "")
         return f"Bill {self.bill_no} – {who}".strip()
-
 
 class BillCategoryLine(models.Model):
     bill         = models.ForeignKey(Bill, related_name="category_lines", on_delete=models.CASCADE)

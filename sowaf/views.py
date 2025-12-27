@@ -2,6 +2,7 @@ from django.urls import reverse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse
 from openpyxl import Workbook
+from django.db import transaction
 from tempfile import NamedTemporaryFile
 from datetime import datetime, timedelta
 from django.urls import reverse, NoReverseMatch
@@ -38,6 +39,205 @@ from accounts.utils import deposit_accounts_qs, expense_accounts_qs
 from accounts.date_ranges import resolve_date_range, RANGE_LABELS, RANGE_OPTIONS
 # Create your views here.
 # Constants / helpers
+def _dec(val, default="0.00") -> Decimal:
+    try:
+        return Decimal(str(val)) if val not in (None, "", "None", "null") else Decimal(default)
+    except Exception:
+        return Decimal(default)
+
+def _safe_date(val, fallback=None):
+    """
+    Accepts a date or a yyyy-mm-dd string. Returns a date.
+    """
+    if fallback is None:
+        fallback = timezone.localdate()
+
+    if not val:
+        return fallback
+
+    if hasattr(val, "year"):
+        return val  # already date/datetime
+
+    try:
+        return timezone.datetime.fromisoformat(str(val)).date()
+    except Exception:
+        return fallback
+
+def _get_or_create_opening_equity():
+    opening_equity, _ = Account.objects.get_or_create(
+        account_name="Opening Balance Equity",
+        account_type="OWNER_EQUITY",
+        defaults={
+            "detail_type": "Opening balances",
+            "is_active": True,
+        },
+    )
+    return opening_equity
+
+def _get_or_create_ar_control_account():
+    """
+    A/R control must be a CURRENT_ASSET with detail_type 'Accounts Receivable (A/R)'.
+    """
+    ar = (
+        Account.objects.filter(detail_type__iexact="Accounts Receivable (A/R)", is_active=True).first()
+        or Account.objects.filter(account_name__icontains="accounts receivable", is_active=True).first()
+        or Account.objects.filter(account_name__icontains="receivable", is_active=True).first()
+    )
+    if ar:
+        return ar
+
+    # Auto-create if missing
+    ar = Account.objects.create(
+        account_name="Accounts Receivable",
+        account_type="CURRENT_ASSET",
+        detail_type="Accounts Receivable (A/R)",
+        is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
+    return ar
+
+def _get_or_create_ap_control_account():
+    """
+    A/P control must be a CURRENT_LIABILITY with detail_type 'Accounts Payable (A/P)'.
+    """
+    ap = (
+        Account.objects.filter(detail_type__iexact="Accounts Payable (A/P)", is_active=True).first()
+        or Account.objects.filter(account_name__icontains="accounts payable", is_active=True).first()
+        or Account.objects.filter(account_name__icontains="payable", is_active=True).first()
+    )
+    if ap:
+        return ap
+
+    # Auto-create if missing
+    ap = Account.objects.create(
+        account_name="Accounts Payable",
+        account_type="CURRENT_LIABILITY",
+        detail_type="Accounts Payable (A/P)",
+        is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
+    return ap
+
+def _get_or_create_customer_ar_subaccount(customer: Newcustomer) -> Account:
+    """
+    Creates/returns a child account under A/R control specifically for this customer.
+    """
+    ar_control = _get_or_create_ar_control_account()
+
+    # Use a stable unique name
+    cust_name = (customer.customer_name or customer.company_name or f"Customer {customer.id}").strip()
+    sub_name = f"{cust_name}"
+
+    # try find existing subaccount for this customer (best effort by name+parent)
+    acc = Account.objects.filter(
+        parent=ar_control,
+        is_subaccount=True,
+        account_name__iexact=sub_name,
+        is_active=True,
+    ).first()
+    if acc:
+        return acc
+
+    # create
+    acc = Account.objects.create(
+        account_name=sub_name,
+        account_type=ar_control.account_type,  # CURRENT_ASSET
+        detail_type="Customer Subledger (A/R)",
+        is_active=True,
+        is_subaccount=True,
+        parent=ar_control,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
+    return acc
+
+def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
+    """
+    Creates/returns a child account under A/P control specifically for this supplier.
+    """
+    ap_control = _get_or_create_ap_control_account()
+
+    sup_name = (supplier.company_name or f"Supplier {supplier.id}").strip()
+    sub_name = f"{sup_name}"
+
+    acc = Account.objects.filter(
+        parent=ap_control,
+        is_subaccount=True,
+        account_name__iexact=sub_name,
+        is_active=True,
+    ).first()
+    if acc:
+        return acc
+
+    acc = Account.objects.create(
+        account_name=sub_name,
+        account_type=ap_control.account_type,  # CURRENT_LIABILITY
+        detail_type="Supplier Subledger (A/P)",
+        is_active=True,
+        is_subaccount=True,
+        parent=ap_control,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
+    return acc
+
+def _upsert_opening_balance_je(
+    *,
+    source_type: str,
+    source_id: int,
+    je_date,
+    description: str,
+    dr_account: Account,
+    cr_account: Account,
+    amount: Decimal,
+):
+    """
+    Creates or updates ONE JE for opening balance, replaces its lines.
+    """
+    je_date = _safe_date(je_date, timezone.localdate())
+
+    je = JournalEntry.objects.filter(source_type=source_type, source_id=source_id).first()
+
+    if amount == 0:
+        if je:
+            je.delete()
+        return
+
+    if not je:
+        je = JournalEntry.objects.create(
+            date=je_date,
+            description=description,
+            source_type=source_type,
+            source_id=source_id,
+        )
+    else:
+        je.date = je_date
+        je.description = description
+        je.save(update_fields=["date", "description"])
+
+        JournalLine.objects.filter(entry=je).delete()
+
+    # DR
+    JournalLine.objects.create(
+        entry=je,
+        account=dr_account,
+        debit=amount,
+        credit=Decimal("0.00"),
+    )
+    # CR
+    JournalLine.objects.create(
+        entry=je,
+        account=cr_account,
+        debit=Decimal("0.00"),
+        credit=amount,
+    )
+
 
 def _as_date(d):
     if isinstance(d, datetime):
@@ -642,12 +842,6 @@ def import_assets(request):
         return redirect('sowaf:assets')
 
 # customer view
-def _dec(x):
-    try:
-        return Decimal(str(x or "0"))
-    except Exception:
-        return ZERO
-
 
 def customers(request):
     q = (request.GET.get("q") or "").strip()
@@ -941,228 +1135,145 @@ def make_active_customer(request, pk):
 
 # customer form view
 
+@transaction.atomic
 def add_customer(request):
-    if request.method == 'POST':
-        logo =request.FILES.get('logo')
+    if request.method == "POST":
+        logo = request.FILES.get("logo")
         if logo:
-            if not logo.name.lower().endswith('.png'):
+            if not logo.name.lower().endswith(".png"):
                 messages.error(request, "Only PNG files are allowed for the logo.")
                 return redirect(request.path)
-            # restricting the photo size
             if logo.size > 1048576:
                 messages.error(request, "logo file size must not exceed 800kps.")
                 return redirect(request.path)
-        customer_name =request.POST.get('name')
-        company_name =request.POST.get('company')
-        email =request.POST.get('email')
-        phone_number =request.POST.get('phonenum')
-        mobile_number =request.POST.get('mobilenum')
-        website =request.POST.get('website')
-        tin_number =request.POST.get('tin')
-        raw_balance = request.POST.get('balance')
-        try:
-            opening_balance = Decimal(raw_balance) if raw_balance else Decimal("0.00")
-        except:
-            opening_balance = Decimal("0.00")
 
-        registration_date = request.POST.get('registration_date')                
-        street_one =request.POST.get('street1')
-        street_two =request.POST.get('street2')
-        city =request.POST.get('city')
-        province =request.POST.get('province')
-        postal_code =request.POST.get('postalcode')
-        country =request.POST.get('country')
-        notes =request.POST.get('notes')
-        attachments =request.FILES.get('attachments')
-        new_customer = Newcustomer(logo=logo,customer_name=customer_name,company_name=company_name,email=email,phone_number=phone_number,mobile_number=mobile_number,website=website,tin_number=tin_number,opening_balance=opening_balance,registration_date=registration_date,street_one=street_one,street_two=street_two,city=city,province=province,postal_code=postal_code,country=country,notes=notes,attachments=attachments)
+        customer_name = request.POST.get("name")
+        company_name  = request.POST.get("company")
+        email         = request.POST.get("email")
+        phone_number  = request.POST.get("phonenum")
+        mobile_number = request.POST.get("mobilenum")
+        website       = request.POST.get("website")
+        tin_number    = request.POST.get("tin")
+
+        opening_balance = _dec(request.POST.get("balance"), "0.00")
+
+        registration_date = request.POST.get("registration_date")
+        street_one   = request.POST.get("street1")
+        street_two   = request.POST.get("street2")
+        city         = request.POST.get("city")
+        province     = request.POST.get("province")
+        postal_code  = request.POST.get("postalcode")
+        country      = request.POST.get("country")
+        notes        = request.POST.get("notes")
+        attachments  = request.FILES.get("attachments")
+
+        new_customer = Newcustomer(
+            logo=logo,
+            customer_name=customer_name,
+            company_name=company_name,
+            email=email,
+            phone_number=phone_number,
+            mobile_number=mobile_number,
+            website=website,
+            tin_number=tin_number,
+            opening_balance=opening_balance,
+            registration_date=registration_date,
+            street_one=street_one,
+            street_two=street_two,
+            city=city,
+            province=province,
+            postal_code=postal_code,
+            country=country,
+            notes=notes,
+            attachments=attachments,
+        )
         new_customer.save()
+
+        # ✅ Post customer opening balance to CUSTOMER subaccount under A/R
         if opening_balance != 0:
+            opening_equity = _get_or_create_opening_equity()
+            customer_ar_sub = _get_or_create_customer_ar_subaccount(new_customer)
 
-            #1. Get Accounts Receivable
-            ar_account = Account.objects.filter(account_name="Accounts Receivable").first()
+            amt = abs(opening_balance)
 
-            if not ar_account:
-                messages.error(request, "Accounts Receivable account is missing in Chart of Accounts.")
-                return redirect(request.path)
-
-            #2. Get Opening Balance Equity
-            opening_equity_acct, _ = Account.objects.get_or_create(
-                account_name="Opening Balance Equity",
-                account_type="OWNER_EQUITY",
-                defaults={
-                    "detail_type": "Opening balances",
-                    "is_active": True,
-                },
-            )
-
-            #3. Create Journal Entry
-            je = JournalEntry.objects.create(
-                date=registration_date,
-                description=f"Opening balance for customer {new_customer.customer_name}",
+            # Customer opening balance = customer owes us => DR Customer A/R Subaccount, CR Opening Equity
+            _upsert_opening_balance_je(
                 source_type="CUSTOMER_OPENING_BALANCE",
                 source_id=new_customer.id,
+                je_date=_safe_date(registration_date, timezone.localdate()),
+                description=f"Opening balance for customer {new_customer.customer_name or new_customer.company_name or new_customer.id}",
+                dr_account=customer_ar_sub,
+                cr_account=opening_equity,
+                amount=amt,
             )
 
-            amount = abs(opening_balance)
+        save_action = request.POST.get("save_action")
+        if save_action == "save&new":
+            return redirect("sowaf:add-customer")
+        return redirect("sowaf:customers")
 
-            #4. Post Journal Lines
-            # DR Accounts Receivable
-            JournalLine.objects.create(
-                entry=je,
-                account=ar_account,
-                debit=amount,
-                credit=Decimal("0"),
-            )
+    return render(request, "customers_form.html", {})
 
-            # CR Opening Balance Equity
-            JournalLine.objects.create(
-                entry=je,
-                account=opening_equity_acct,
-                debit=Decimal("0"),
-                credit=amount,
-            )
-
-
-        # adding save actions
-        save_action = request.POST.get('save_action')
-        if save_action == 'save':
-            return redirect('sowaf:customers')
-        if save_action == 'save&new':
-            return redirect('sowaf:add-customer')
-        elif save_action == 'save&close':
-            return redirect('sowaf:customers')
-       
-    return render(request, 'customers_form.html', {})
-# editing the customer table
-from decimal import Decimal
-from django.db import transaction
-from django.utils import timezone
-from accounts.models import Account, JournalEntry, JournalLine
 
 @transaction.atomic
 def edit_customer(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)
 
-    if request.method == 'POST':
+    if request.method == "POST":
+        customer.customer_name = request.POST.get("name", customer.customer_name)
+        customer.company_name  = request.POST.get("company", customer.company_name)
+        customer.email         = request.POST.get("email", customer.email)
+        customer.phone_number  = request.POST.get("phonenum", customer.phone_number)
+        customer.mobile_number = request.POST.get("mobilenum", customer.mobile_number)
+        customer.website       = request.POST.get("website", customer.website)
+        customer.tin_number    = request.POST.get("tin", customer.tin_number)
 
-        # ---------- BASIC FIELDS ----------
-        customer.customer_name = request.POST.get('name', customer.customer_name)
-        customer.company_name  = request.POST.get('company', customer.company_name)
-        customer.email         = request.POST.get('email', customer.email)
-        customer.phone_number  = request.POST.get('phonenum', customer.phone_number)
-        customer.mobile_number = request.POST.get('mobilenum', customer.mobile_number)
-        customer.website       = request.POST.get('website', customer.website)
-        customer.tin_number    = request.POST.get('tin', customer.tin_number)
-
-        # ---------- OPENING BALANCE (SAFE DECIMAL) ----------
-        raw_balance = request.POST.get('balance')
-        try:
-            new_opening_balance = Decimal(raw_balance) if raw_balance else Decimal("0.00")
-        except:
-            new_opening_balance = Decimal("0.00")
-
+        new_opening_balance = _dec(request.POST.get("balance"), "0.00")
         customer.opening_balance = new_opening_balance
 
-        # ---------- DATE ----------
-        customer.registration_date = request.POST.get('registration_date',customer.registration_date)    
+        customer.registration_date = request.POST.get("registration_date", customer.registration_date)
 
-        # ---------- ADDRESS ----------
-        customer.street_one  = request.POST.get('street1', customer.street_one)
-        customer.street_two  = request.POST.get('street2', customer.street_two)
-        customer.city        = request.POST.get('city', customer.city)
-        customer.province    = request.POST.get('province', customer.province)
-        customer.postal_code = request.POST.get('postalcode', customer.postal_code)
-        customer.country     = request.POST.get('country', customer.country)
-        customer.notes       = request.POST.get('notes', customer.notes)
+        customer.street_one  = request.POST.get("street1", customer.street_one)
+        customer.street_two  = request.POST.get("street2", customer.street_two)
+        customer.city        = request.POST.get("city", customer.city)
+        customer.province    = request.POST.get("province", customer.province)
+        customer.postal_code = request.POST.get("postalcode", customer.postal_code)
+        customer.country     = request.POST.get("country", customer.country)
+        customer.notes       = request.POST.get("notes", customer.notes)
 
-        # ---------- LOGO ----------
-        logo = request.FILES.get('logo')
+        logo = request.FILES.get("logo")
         if logo:
-            if not logo.name.lower().endswith('.png'):
+            if not logo.name.lower().endswith(".png"):
                 messages.error(request, "Only PNG files are allowed for the logo.")
                 return redirect(request.path)
-
             if logo.size > 1048576:
                 messages.error(request, "Logo file size must not exceed 1MB.")
                 return redirect(request.path)
-
             customer.logo = logo
 
-        # ---------- ATTACHMENTS ----------
-        if 'attachments' in request.FILES:
-            customer.attachments = request.FILES['attachments']
+        if "attachments" in request.FILES:
+            customer.attachments = request.FILES["attachments"]
 
         customer.save()
 
-        # =========================================================
-        #UPDATE CUSTOMER OPENING BALANCE JOURNAL ENTRY
-        # =========================================================
+        # ✅ Update opening balance JE (to CUSTOMER subaccount)
+        opening_equity = _get_or_create_opening_equity()
+        customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
+        amt = abs(new_opening_balance)
 
-        je = JournalEntry.objects.filter(
+        _upsert_opening_balance_je(
             source_type="CUSTOMER_OPENING_BALANCE",
-            source_id=customer.id
-        ).first()
+            source_id=customer.id,
+            je_date=_safe_date(customer.registration_date, timezone.localdate()),
+            description=f"Opening balance for customer {customer.customer_name or customer.company_name or customer.id}",
+            dr_account=customer_ar_sub,
+            cr_account=opening_equity,
+            amount=amt,
+        )
 
-        #If balance is zero → remove any existing JE
-        if new_opening_balance == 0:
-            if je:
-                je.delete()
+        return redirect("sowaf:customers")
 
-        else:
-            #Get Accounts Receivable
-            ar_account = Account.objects.filter(account_name="Accounts Receivable").first()
-            if not ar_account:
-                messages.error(request, "Accounts Receivable account is missing in Chart of Accounts.")
-                return redirect(request.path)
-
-            #Get Opening Balance Equity
-            opening_equity_acct, _ = Account.objects.get_or_create(
-                account_name="Opening Balance Equity",
-                account_type="OWNER_EQUITY",
-                defaults={
-                    "detail_type": "Opening balances",
-                    "is_active": True,
-                },
-            )
-
-            amount = abs(new_opening_balance)
-
-            #Create or Update Journal Entry
-            if not je:
-                je = JournalEntry.objects.create(
-                    date=customer.registration_date or timezone.now().date(),
-                    description=f"Opening balance for customer {customer.customer_name}",
-                    source_type="CUSTOMER_OPENING_BALANCE",
-                    source_id=customer.id,
-                )
-            else:
-                je.date = customer.registration_date or timezone.now().date()
-                je.description = f"Opening balance for customer {customer.customer_name}"
-                je.save()
-
-                #Clear old lines
-                JournalLine.objects.filter(entry=je).delete()
-
-            #DR Accounts Receivable
-            JournalLine.objects.create(
-                entry=je,
-                account=ar_account,
-                debit=amount,
-                credit=Decimal("0"),
-            )
-
-            #CR Opening Balance Equity
-            JournalLine.objects.create(
-                entry=je,
-                account=opening_equity_acct,
-                debit=Decimal("0"),
-                credit=amount,
-            )
-
-        return redirect('sowaf:customers')
-
-    return render(request, 'customers_form.html', {'customer': customer})
-# importing a customer sheet
+    return render(request, "customers_form.html", {"customer": customer})# importing a customer sheet
 # template for the download
 def download_customers_template(request):
     wb = Workbook()
@@ -1893,48 +2004,47 @@ def make_active_supplier(request, pk):
     supplier.is_active = True
     supplier.save()
     return redirect('sowaf:suppliers')
+
+
 #add new supplier form view
+
 @transaction.atomic
 def add_supplier(request):
-    if request.method == 'POST':
-        logo = request.FILES.get('logo')
+    if request.method == "POST":
+        logo = request.FILES.get("logo")
         if logo:
-            if not logo.name.lower().endswith('.png'):
+            if not logo.name.lower().endswith(".png"):
                 messages.error(request, "Only PNG files are allowed for the logo.")
                 return redirect(request.path)
             if logo.size > 1048576:
                 messages.error(request, "logo file size must not exceed 1MB.")
                 return redirect(request.path)
 
-        company_name    = request.POST.get('company_name')
-        supplier_type   = request.POST.get('supplier_type')
-        contact_person  = request.POST.get('contact_person')
-        contact_position= request.POST.get('contact_position')
-        contact         = request.POST.get('contact')
-        email           = request.POST.get('email')
+        company_name     = request.POST.get("company_name")
+        supplier_type    = request.POST.get("supplier_type")
+        contact_person   = request.POST.get("contact_person")
+        contact_position = request.POST.get("contact_position")
+        contact          = request.POST.get("contact")
+        email            = request.POST.get("email")
 
-        raw_balance = request.POST.get('open_balance')
-        try:
-            open_balance = Decimal(raw_balance) if raw_balance else Decimal("0.00")
-        except:
-            open_balance = Decimal("0.00")
+        open_balance = _dec(request.POST.get("open_balance"), "0.00")
 
-        website        = request.POST.get('website')
-        address1       = request.POST.get('address1')
-        address2       = request.POST.get('address2')
-        city           = request.POST.get('city')
-        state          = request.POST.get('state')
-        zip_code       = request.POST.get('zip_code')
-        country        = request.POST.get('country')
-        bank           = request.POST.get('bank')
-        bank_account   = request.POST.get('bank_account')
-        bank_branch    = request.POST.get('bank_branch')
-        payment_terms  = request.POST.get('payment_terms')
-        currency       = request.POST.get('currency')
-        payment_method = request.POST.get('payment_method')
-        tin            = request.POST.get('tin')
-        reg_number     = request.POST.get('reg_number')
-        attachments    = request.FILES.get('attachments')
+        website        = request.POST.get("website")
+        address1       = request.POST.get("address1")
+        address2       = request.POST.get("address2")
+        city           = request.POST.get("city")
+        state          = request.POST.get("state")
+        zip_code       = request.POST.get("zip_code")
+        country        = request.POST.get("country")
+        bank           = request.POST.get("bank")
+        bank_account   = request.POST.get("bank_account")
+        bank_branch    = request.POST.get("bank_branch")
+        payment_terms  = request.POST.get("payment_terms")
+        currency       = request.POST.get("currency")
+        payment_method = request.POST.get("payment_method")
+        tin            = request.POST.get("tin")
+        reg_number     = request.POST.get("reg_number")
+        attachments    = request.FILES.get("attachments")
 
         new_supplier = Newsupplier(
             logo=logo,
@@ -1962,114 +2072,68 @@ def add_supplier(request):
             reg_number=reg_number,
             attachments=attachments,
         )
-
         new_supplier.save()
 
-        # === SUPPLIER OPENING BALANCE -> GENERAL LEDGER ===
-        if open_balance != Decimal("0.00"):
-            # 1) Find / create the control accounts we need
+        # ✅ Post supplier opening balance to SUPPLIER subaccount under A/P
+        if open_balance != 0:
+            opening_equity = _get_or_create_opening_equity()
+            supplier_ap_sub = _get_or_create_supplier_ap_subaccount(new_supplier)
 
-            # Accounts Payable control account (liability)
-            ap_account = (
-                Account.objects.filter(account_type="ACCOUNTS_PAYABLE").first()
-                or Account.objects.filter(detail_type__icontains="payable").first()
-            )
-            if not ap_account:
-                # Hard fail is ok here so you immediately notice mis-setup
-                raise Exception(
-                    "Please create an 'Accounts Payable' control account first "
-                    "(account_type='ACCOUNTS_PAYABLE' or detail_type containing 'payable')."
-                )
+            amt = abs(open_balance)
 
-            # Opening Balance Equity (same as we used for COA and customer OBs)
-            opening_equity_acct, _ = Account.objects.get_or_create(
-                account_name="Opening Balance Equity",
-                account_type="OWNER_EQUITY",
-                defaults={
-                    "detail_type": "Opening balances",
-                    "is_active": True,
-                },
-            )
-
-            # 2) Create the journal entry
-            je = JournalEntry.objects.create(
-                date=timezone.now().date(),
-                description=f"Opening balance for supplier {new_supplier.company_name}",
+            # Supplier opening balance = we owe supplier => DR Opening Equity, CR Supplier A/P Subaccount
+            _upsert_opening_balance_je(
                 source_type="SUPP_OPEN_BALANCE",
                 source_id=new_supplier.id,
+                je_date=timezone.localdate(),
+                description=f"Opening balance for supplier {new_supplier.company_name or new_supplier.id}",
+                dr_account=opening_equity,
+                cr_account=supplier_ap_sub,
+                amount=amt,
             )
 
-            amount = abs(open_balance)
+        save_action = request.POST.get("save_action")
+        if save_action == "save&new":
+            return redirect("sowaf:add-suppliers")
+        return redirect("sowaf:suppliers")
 
-            # A supplier opening balance means WE OWE THEM:
-            #   DR Opening Balance Equity
-            #   CR Accounts Payable
-            JournalLine.objects.create(
-                entry=je,
-                account=opening_equity_acct,
-                debit=amount,
-                credit=Decimal("0.00"),
-            )
-            JournalLine.objects.create(
-                entry=je,
-                account=ap_account,
-                debit=Decimal("0.00"),
-                credit=amount,
-            )
+    return render(request, "suppliers_entry_form.html", {})
 
-        # === Save actions as you had ===
-        save_action = request.POST.get('save_action')
-        if save_action == 'save':
-            return redirect('sowaf:suppliers')          
-        if save_action == 'save&new':
-            return redirect('sowaf:add-suppliers')     
-        elif save_action == 'save&close':
-            return redirect('sowaf:suppliers')
-
-    return render(request, 'suppliers_entry_form.html', {})
-
-# edit supplier
 
 @transaction.atomic
 def edit_supplier(request, pk):
     supplier = get_object_or_404(Newsupplier, pk=pk)
 
-    if request.method == 'POST':
-        supplier.company_name     = request.POST.get('company_name', supplier.company_name)
-        supplier.supplier_type    = request.POST.get('supplier_type', supplier.supplier_type)
-        supplier.contact_person   = request.POST.get('contact_person', supplier.contact_person)
-        supplier.contact_position = request.POST.get('contact_position', supplier.contact_position)
-        supplier.contact          = request.POST.get('contact', supplier.contact)
-        supplier.email            = request.POST.get('email', supplier.email)
+    if request.method == "POST":
+        supplier.company_name     = request.POST.get("company_name", supplier.company_name)
+        supplier.supplier_type    = request.POST.get("supplier_type", supplier.supplier_type)
+        supplier.contact_person   = request.POST.get("contact_person", supplier.contact_person)
+        supplier.contact_position = request.POST.get("contact_position", supplier.contact_position)
+        supplier.contact          = request.POST.get("contact", supplier.contact)
+        supplier.email            = request.POST.get("email", supplier.email)
 
-        raw_balance = request.POST.get('open_balance')
-        try:
-            new_open_balance = Decimal(raw_balance) if raw_balance else Decimal("0.00")
-        except:
-            new_open_balance = Decimal("0.00")
-
+        new_open_balance = _dec(request.POST.get("open_balance"), "0.00")
         supplier.open_balance = new_open_balance
 
-        supplier.website       = request.POST.get('website', supplier.website)
-        supplier.address1      = request.POST.get('address1', supplier.address1)
-        supplier.address2      = request.POST.get('address2', supplier.address2)
-        supplier.city          = request.POST.get('city', supplier.city)
-        supplier.state         = request.POST.get('state', supplier.state)
-        supplier.zip_code      = request.POST.get('zip_code', supplier.zip_code)
-        supplier.country       = request.POST.get('country', supplier.country)
-        supplier.bank          = request.POST.get('bank', supplier.bank)
-        supplier.bank_account  = request.POST.get('bank_account', supplier.bank_account)
-        supplier.bank_branch   = request.POST.get('bank_branch', supplier.bank_branch)
-        supplier.payment_terms = request.POST.get('payment_terms', supplier.payment_terms)
-        supplier.currency      = request.POST.get('currency', supplier.currency)
-        supplier.payment_method= request.POST.get('payment_method', supplier.payment_method)
-        supplier.tin           = request.POST.get('tin', supplier.tin)
-        supplier.reg_number    = request.POST.get('reg_number', supplier.reg_number)
+        supplier.website        = request.POST.get("website", supplier.website)
+        supplier.address1       = request.POST.get("address1", supplier.address1)
+        supplier.address2       = request.POST.get("address2", supplier.address2)
+        supplier.city           = request.POST.get("city", supplier.city)
+        supplier.state          = request.POST.get("state", supplier.state)
+        supplier.zip_code       = request.POST.get("zip_code", supplier.zip_code)
+        supplier.country        = request.POST.get("country", supplier.country)
+        supplier.bank           = request.POST.get("bank", supplier.bank)
+        supplier.bank_account   = request.POST.get("bank_account", supplier.bank_account)
+        supplier.bank_branch    = request.POST.get("bank_branch", supplier.bank_branch)
+        supplier.payment_terms  = request.POST.get("payment_terms", supplier.payment_terms)
+        supplier.currency       = request.POST.get("currency", supplier.currency)
+        supplier.payment_method = request.POST.get("payment_method", supplier.payment_method)
+        supplier.tin            = request.POST.get("tin", supplier.tin)
+        supplier.reg_number     = request.POST.get("reg_number", supplier.reg_number)
 
-        # Only update logo if a new one is uploaded
-        logo = request.FILES.get('logo')
+        logo = request.FILES.get("logo")
         if logo:
-            if not logo.name.lower().endswith('.png'):
+            if not logo.name.lower().endswith(".png"):
                 messages.error(request, "Only PNG files are allowed for the logo.")
                 return redirect(request.path)
             if logo.size > 1048576:
@@ -2077,76 +2141,29 @@ def edit_supplier(request, pk):
                 return redirect(request.path)
             supplier.logo = logo
 
-        if 'attachments' in request.FILES:
-            supplier.attachments = request.FILES['attachments']
+        if "attachments" in request.FILES:
+            supplier.attachments = request.FILES["attachments"]
 
         supplier.save()
 
-        # === UPDATE SUPPLIER OPENING BALANCE JOURNAL ENTRY ===
-        je = JournalEntry.objects.filter(
+        # ✅ Update supplier opening balance JE (to SUPPLIER subaccount)
+        opening_equity = _get_or_create_opening_equity()
+        supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
+        amt = abs(new_open_balance)
+
+        _upsert_opening_balance_je(
             source_type="SUPP_OPEN_BALANCE",
-            source_id=supplier.id
-        ).first()
+            source_id=supplier.id,
+            je_date=timezone.localdate(),
+            description=f"Opening balance for supplier {supplier.company_name or supplier.id}",
+            dr_account=opening_equity,
+            cr_account=supplier_ap_sub,
+            amount=amt,
+        )
 
-        if new_open_balance == Decimal("0.00"):
-            # If balance now zero, remove any existing opening entry
-            if je:
-                je.delete()
-        else:
-            # Need AP + Opening Balance Equity accounts
-            ap_account = (
-                Account.objects.filter(account_type="ACCOUNTS_PAYABLE").first()
-                or Account.objects.filter(detail_type__icontains="payable").first()
-            )
-            if not ap_account:
-                raise Exception(
-                    "Please create an 'Accounts Payable' control account first "
-                    "(account_type='ACCOUNTS_PAYABLE' or detail_type containing 'payable')."
-                )
+        return redirect("sowaf:suppliers")
 
-            opening_equity_acct, _ = Account.objects.get_or_create(
-                account_name="Opening Balance Equity",
-                account_type="OWNER_EQUITY",
-                defaults={
-                    "detail_type": "Opening balances",
-                    "is_active": True,
-                },
-            )
-
-            amount = abs(new_open_balance)
-            as_of  = timezone.now().date()
-
-            if not je:
-                je = JournalEntry.objects.create(
-                    date=as_of,
-                    description=f"Opening balance for supplier {supplier.company_name}",
-                    source_type="SUPP_OPEN_BALANCE",
-                    source_id=supplier.id,
-                )
-            else:
-                je.date = as_of
-                je.description = f"Opening balance for supplier {supplier.company_name}"
-                je.save()
-                # Wipe old lines and rebuild
-                JournalLine.objects.filter(entry=je).delete()
-
-            # DR Opening Balance Equity, CR Accounts Payable
-            JournalLine.objects.create(
-                entry=je,
-                account=opening_equity_acct,
-                debit=amount,
-                credit=Decimal("0.00"),
-            )
-            JournalLine.objects.create(
-                entry=je,
-                account=ap_account,
-                debit=Decimal("0.00"),
-                credit=amount,
-            )
-
-        return redirect('sowaf:suppliers')
-
-    return render(request, 'suppliers_entry_form.html', {'supplier': supplier})
+    return render(request, "suppliers_entry_form.html", {"supplier": supplier})
 
 
 # supplier detail page 

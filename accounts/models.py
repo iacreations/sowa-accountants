@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from decimal import Decimal
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 
@@ -159,23 +160,44 @@ class ColumnPreference(models.Model):
         return f"{self.user} - {self.table_name}"
 
 # Journal entries 
+
 class JournalEntry(models.Model):
     date = models.DateField()
     description = models.CharField(max_length=255, blank=True, null=True)
-    
+
+    # optional linkage to source documents (invoice, bill, etc.)
     source_type = models.CharField(max_length=50, blank=True, null=True)
-    source_id = models.IntegerField(blank=True, null=True)  # optional link to invoice, etc.
+    source_id = models.IntegerField(blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.date} - {self.description or 'Journal Entry'}"
+
 
 class JournalLine(models.Model):
     entry = models.ForeignKey(JournalEntry, on_delete=models.CASCADE, related_name="lines")
-    account = models.ForeignKey(Account, on_delete=models.PROTECT)
-    debit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    credit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    account = models.ForeignKey("accounts.Account", on_delete=models.PROTECT)
 
-    # optional for future:
-    # customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.CASCADE)
-    # supplier = models.ForeignKey(Supplier, null=True, blank=True, on_delete=models.CASCADE)
+    debit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    credit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    # ✅ Sub-ledger links (THIS is what your client means)
+    supplier = models.ForeignKey(
+        "sowaf.Newsupplier",  # change app label if different
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ap_lines",
+    )
+    customer = models.ForeignKey(
+        "sowaf.Newcustomer",  # change app label if different
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ar_lines",
+    )
+
+    def __str__(self):
+        return f"{self.account} DR {self.debit} CR {self.credit}"
 
 
 # audit trail

@@ -77,51 +77,57 @@ def product_detail(request, pk: int):
     return render(request, "product_detail.html", context)
 
 # adding a product
+
 def add_products(request):
     if request.method == "POST":
         type = request.POST.get("type")
         name = request.POST.get("name")
         sku = request.POST.get("sku")
+
         category_id = request.POST.get("category")
-        category=None
+        category = None
         if category_id:
             try:
                 category = Category.objects.get(pk=category_id)
             except Category.DoesNotExist:
-                category=None
+                category = None
 
         class_field_id = request.POST.get("class_field")
-        class_field=None
+        class_field = None
         if class_field_id:
             try:
                 class_field = Pclass.objects.get(pk=class_field_id)
             except Pclass.DoesNotExist:
-                class_field=None
+                class_field = None
 
         sales_description = request.POST.get("sales_description")
         purchase_description = request.POST.get("purchase_description")
         purchase_date = request.POST.get("purchase_date")
+
         sell_checkbox = request.POST.get("sell_checkbox") == 'on'
         sales_price = request.POST.get("sales_price")
-        quantity=request.POST.get("quantity")
+
+        quantity = request.POST.get("quantity")
         purchase_price = request.POST.get("purchase_price")
+
         income_account_id = request.POST.get("income_account")
         income_account = Account.objects.filter(id=income_account_id).first() if income_account_id else None
 
         expense_account_id = request.POST.get("expense_account")
-        expense_account=Account.objects.filter(id=expense_account_id).first() if expense_account_id else None
+        expense_account = Account.objects.filter(id=expense_account_id).first() if expense_account_id else None
 
         supplier_id = request.POST.get('supplier')
-        supplier=None
+        supplier = None
         if supplier_id:
             try:
                 supplier = Newsupplier.objects.get(pk=supplier_id)
             except Newsupplier.DoesNotExist:
-                supplier=None
+                supplier = None
 
-        purchase_checkbox = request.POST.get("purchpurchase_checkbox") == 'on'
+        purchase_checkbox = request.POST.get("purchase_checkbox") == 'on'
         display_bundle_contents = request.POST.get("display_bundle_contents") == 'on'
         taxable = request.POST.get("taxable") == "on"
+
         products = Product.objects.create(
             type=type,
             name=name,
@@ -149,48 +155,67 @@ def add_products(request):
             quantities = request.POST.getlist("bundle_product_qty[]")
             for prod_id, qty in zip(product_ids, quantities):
                 if prod_id:
-                    try:
-                        child_product = Product.objects.get(pk=int(prod_id))
+                    child_product = Product.objects.filter(pk=int(prod_id)).first()
+                    if child_product:
                         BundleItem.objects.create(
-                        bundle=products,      # parent bundle
-                        product=child_product,  # product inside bundle
-                        quantity=int(qty) if qty else 1
-                )
-                    except Product.DoesNotExist:
-                        pass
-        # Handle Save action
+                            bundle=products,
+                            product=child_product,
+                            quantity=int(qty) if qty else 1
+                        )
+
         action = request.POST.get("save_action")
         if action == "save&new":
             return redirect('inventory:add-products')
         elif action == "save&close":
-            return redirect('sales:sales')  # You should have this view
+            return redirect('sales:sales')
         return redirect('sales:sales')
+
+    # ==========================
+    # ✅ DROPDOWNS (3-level COA SAFE)
+    # ==========================
     products = Product.objects.all()
     suppliers = Newsupplier.objects.all()
     categories = Category.objects.all()
     classes = Pclass.objects.all()
-    income_accounts = Account.objects.filter(account_type="Income")
-    expense_accounts = Account.objects.filter(account_type="Cost of Sales")
+
+    # Pull all active accounts once
+    all_active_accounts = list(
+        Account.objects.filter(is_active=True).select_related("parent").order_by("account_name")
+    )
+
+    # ✅ parent-only + not subaccounts (this matches how you want reports to look)
+    parent_accounts = [
+        a for a in all_active_accounts
+        if (a.parent_id is None) and (getattr(a, "is_subaccount", False) is False)
+    ]
+
+    # ✅ Use the same "level1_group" idea you already rely on in General Ledger
+    income_accounts = [a for a in parent_accounts if getattr(a, "level1_group", "") == "Income"]
+
+    # Expenses dropdown should include ALL Expense-side accounts (including COGS if you classify it there)
+    expense_accounts = [
+        a for a in parent_accounts
+        if getattr(a, "level1_group", "") == "Expenses"
+    ]
+
     return render(request, 'Products_and_services_form.html', {
-        'products':products,
-        'suppliers':suppliers,
-        'categories':categories,
-        'classes':classes,
-        'income_accounts':income_accounts,
-        'expense_accounts':expense_accounts,
+        'products': products,
+        'suppliers': suppliers,
+        'categories': categories,
+        'classes': classes,
+        'income_accounts': income_accounts,
+        'expense_accounts': expense_accounts,
     })
-
-#  the edit view 
-
 
 
 def product_edit(request, pk: int):
-    """
-    Reuse your existing create form template for edit.
-    We pass edit_mode=True and the product, and switch the form's action to this view.
-    On POST we update the record and replace bundle lines.
-    """
     product = get_object_or_404(Product, pk=pk)
+
+    def _dec(val):
+        try:
+            return Decimal(str(val)) if val not in (None, "", "None", "null") else Decimal("0.00")
+        except Exception:
+            return Decimal("0.00")
 
     if request.method == "POST":
         ptype = request.POST.get("type") or product.type
@@ -198,7 +223,6 @@ def product_edit(request, pk: int):
         product.name = request.POST.get("name") or ""
         product.sku  = request.POST.get("sku") or ""
 
-        # FKs
         category_id   = request.POST.get("category")
         class_field_id= request.POST.get("class_field")
         supplier_id   = request.POST.get("supplier")
@@ -211,7 +235,6 @@ def product_edit(request, pk: int):
         product.income_account  = Account.objects.filter(pk=income_acc_id).first() if income_acc_id else None
         product.expense_account = Account.objects.filter(pk=expense_acc_id).first() if expense_acc_id else None
 
-        # Booleans / fields
         product.sell_checkbox      = (request.POST.get("sell_checkbox") == "on")
         product.purchase_checkbox  = (request.POST.get("purchase_checkbox") == "on")
         product.taxable            = (request.POST.get("taxable") == "on")
@@ -220,19 +243,14 @@ def product_edit(request, pk: int):
         product.sales_description     = request.POST.get("sales_description") or ""
         product.purchase_description  = request.POST.get("purchase_description") or ""
 
-        # Dates & numerics
         product.purchase_date = request.POST.get("purchase_date") or None
         product.sales_price   = _dec(request.POST.get("sales_price"))
         product.purchase_price= _dec(request.POST.get("purchase"))
-        product.quantity      = request.POST.get("quantity") or 0  # if IntegerField
-        # If DecimalField for quantity, do: product.quantity = _dec(request.POST.get("quantity"))
+        product.quantity      = request.POST.get("quantity") or 0
 
-        # Bundle flag by type
         product.is_bundle = (ptype == "Bundle")
-
         product.save()
 
-        # Replace bundle items when in bundle mode
         if product.is_bundle:
             product.bundleitem_set.all().delete()
             product_ids = request.POST.getlist("bundle_product_id[]")
@@ -247,30 +265,37 @@ def product_edit(request, pk: int):
                             quantity=int(qty) if qty else 1
                         )
         else:
-            # If switching away from Bundle, ensure old bundle lines are removed
-            product.bundle_items.all().delete()
+            product.bundleitem_set.all().delete()
 
-        # Save actions (optional)
         action = request.POST.get("save_action")
-        if action == "save&new":
-            return redirect("inventory:add-products")
         if action == "save&new":
             return redirect("inventory:add-products")
         if action == "save&close":
             return redirect("sales:sales")
-        # default: stay on detail
         return redirect("inventory:product-detail", pk=product.pk)
 
-    # GET: render the same form template, prefilled
+    # ==========================
+    # ✅ DROPDOWNS (3-level COA SAFE)
+    # ==========================
+    all_active_accounts = list(
+        Account.objects.filter(is_active=True).select_related("parent").order_by("account_name")
+    )
+    parent_accounts = [
+        a for a in all_active_accounts
+        if (a.parent_id is None) and (getattr(a, "is_subaccount", False) is False)
+    ]
+    income_accounts = [a for a in parent_accounts if getattr(a, "level1_group", "") == "Income"]
+    expense_accounts = [a for a in parent_accounts if getattr(a, "level1_group", "") == "Expenses"]
+
     context = {
         "edit_mode": True,
         "product": product,
-        "products": Product.objects.all(),           # for bundle dropdown
+        "products": Product.objects.all(),
         "suppliers": Newsupplier.objects.all(),
         "categories": Category.objects.all(),
         "classes": Pclass.objects.all(),
-        "income_accounts": Account.objects.filter(account_type="Income"),
-        "expense_accounts": Account.objects.filter(account_type="Cost of Sales"),
+        "income_accounts": income_accounts,
+        "expense_accounts": expense_accounts,
     }
     return render(request, "Products_and_services_form.html", context)
 

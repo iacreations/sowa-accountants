@@ -1,4 +1,5 @@
 import csv
+from collections import OrderedDict, defaultdict
 from collections import OrderedDict
 from django.core.paginator import Paginator
 from decimal import Decimal
@@ -496,24 +497,58 @@ def get_entry_link(entry):
             return "#" 
 
 # @login_required
+
 def general_ledger(request):
-    # filters
+    # -------- filters ----------
     account_id = request.GET.get("account_id")
     query      = request.GET.get("search", "")
     date_from  = request.GET.get("date_from")
     date_to    = request.GET.get("date_to")
-    export     = request.GET.get("export")     # 'excel' or None
+    export     = request.GET.get("export")
     page_num   = request.GET.get("page", 1)
+
+    #NEW: sub-ledger filters
+    supplier_id = request.GET.get("supplier_id")
+    customer_id = request.GET.get("customer_id")
+
+    # SANITIZE
+    if not account_id or account_id in ("None", "null", ""):
+        account_id = None
+    if not date_from or date_from in ("None", "null", ""):
+        date_from = None
+    if not date_to or date_to in ("None", "null", ""):
+        date_to = None
+    if not supplier_id or supplier_id in ("None", "null", ""):
+        supplier_id = None
+    if not customer_id or customer_id in ("None", "null", ""):
+        customer_id = None
+
+    view_mode = (request.GET.get("view") or "detail").lower()
+    if view_mode not in ["summary", "detail"]:
+        view_mode = "detail"
 
     accounts = Account.objects.filter(is_active=True).order_by("account_name")
 
-    lines_qs = JournalLine.objects.select_related("entry", "account").order_by(
-        "-entry__date",
-        "-id"
-    )
-
+    account_label = None
+    selected_account = None
     if account_id:
-        lines_qs = lines_qs.filter(account_id=account_id)
+        selected_account = Account.objects.filter(pk=account_id).select_related("parent").first()
+        if selected_account:
+            account_label = selected_account.account_name
+
+    def normal_side(acc: Account):
+        if acc.level1_group in ["Assets", "Expenses"]:
+            return "debit"
+        return "credit"
+
+    def apply_movement(acc: Account, running: Decimal, debit: Decimal, credit: Decimal):
+        side = normal_side(acc)
+        if side == "debit":
+            return running + (debit - credit)
+        return running + (credit - debit)
+
+    # -------- base lines queryset ----------
+    lines_qs = JournalLine.objects.select_related("entry", "account").order_by("entry__date", "id")
 
     if date_from:
         lines_qs = lines_qs.filter(entry__date__gte=date_from)
@@ -526,116 +561,315 @@ def general_ledger(request):
             Q(account__account_name__icontains=query)
         )
 
-    # evaluate once so we can paginate & also compute monthly totals
+    #NEW: Apply sub-ledger filtering
+    if supplier_id:
+        lines_qs = lines_qs.filter(supplier_id=supplier_id)
+    if customer_id:
+        lines_qs = lines_qs.filter(customer_id=customer_id)
+
+    def get_root(acc: Account):
+        cur = acc
+        while cur and cur.parent_id:
+            cur = cur.parent
+        return cur
+
+    selected_root_id = None
+    if selected_account:
+        root = get_root(selected_account)
+        selected_root_id = root.id if root else None
+
     all_lines = list(lines_qs)
 
-    # ====== EXPORT TO EXCEL (CSV) ======
-    if export == "excel":
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = 'attachment; filename="general_ledger.csv"'
-
-        writer = csv.writer(response)
-        writer.writerow(["Date", "Description", "Account", "Journal Ref", "Debit", "Credit", "Balance"])
-
-        balance = Decimal("0")
-
-        def normal_side(acc: Account):
-            if acc.level1_group in ["Assets", "Expenses"]:
-                return "debit"
-            return "credit"
-
-        for ln in all_lines:
-            side = normal_side(ln.account)
-            if side == "debit":
-                balance += ln.debit - ln.credit
-            else:
-                balance += ln.credit - ln.debit
-
-            #Rename in export too
-            desc = ln.entry.description or ""
-            if desc.lower().startswith("payment"):
-                desc = desc.replace("Payment", "Sales Collection", 1)
-
-            writer.writerow([
-                ln.entry.date.strftime("%Y-%m-%d"),
-                desc,
-                ln.account.account_name,
-                ln.entry.id,
-                float(ln.debit),
-                float(ln.credit),
-                float(balance),
-            ])
-
-        return response
-
-    # ====== MONTHLY TOTALS (for filtered data) ======
-    monthly_totals = OrderedDict()
+    lines_by_account = defaultdict(list)
     for ln in all_lines:
-        key = ln.entry.date.strftime("%Y-%m")
-        label = ln.entry.date.strftime("%b %Y")
-        if key not in monthly_totals:
-            monthly_totals[key] = {"label": label, "debit": Decimal("0"), "credit": Decimal("0")}
-        monthly_totals[key]["debit"]  += ln.debit
-        monthly_totals[key]["credit"] += ln.credit
+        lines_by_account[ln.account_id].append(ln)
 
-    for key, mt in monthly_totals.items():
-        mt["balance"] = mt["debit"] - mt["credit"]
+    all_active_accounts = list(
+        Account.objects.filter(is_active=True).select_related("parent")
+    )
+    acc_by_id = {a.id: a for a in all_active_accounts}
 
-    # ====== PAGINATION ======
-    paginator = Paginator(all_lines, 50)
-    page_obj  = paginator.get_page(page_num)
-    page_lines = page_obj.object_list
+    children_by_parent = defaultdict(list)
+    for a in all_active_accounts:
+        if a.parent_id:
+            children_by_parent[a.parent_id].append(a)
 
-    running_rows = []
-    balance = Decimal("0")
+    def sort_key(a: Account):
+        return (a.account_number or "", a.account_name or "")
 
-    def normal_side(acc: Account):
-        if acc.level1_group in ["Assets", "Expenses"]:
-            return "debit"
-        return "credit"
+    for pid in list(children_by_parent.keys()):
+        children_by_parent[pid].sort(key=sort_key)
 
-    total_debit = Decimal("0")
-    total_credit = Decimal("0")
+    active_account_ids = set(lines_by_account.keys())
 
-    for ln in page_lines:
-        side = normal_side(ln.account)
+    visible_ids = set(active_account_ids)
+    for acc_id in list(active_account_ids):
+        cur = acc_by_id.get(acc_id)
+        while cur and cur.parent_id:
+            visible_ids.add(cur.parent_id)
+            cur = acc_by_id.get(cur.parent_id)
 
-        if side == "debit":
-            balance += ln.debit - ln.credit
-        else:
-            balance += ln.credit - ln.debit
+    roots = [a for a in all_active_accounts if a.parent_id is None and a.id in visible_ids]
+    roots.sort(key=sort_key)
 
-        total_debit += ln.debit
-        total_credit += ln.credit
+    if selected_root_id:
+        roots = [r for r in roots if r.id == selected_root_id]
 
-        #FINAL DISPLAY RENAMING (Ledger UI)
-        description = ln.entry.description or ""
-        if description.lower().startswith("payment"):
-            description = description.replace("Payment", "Sales Collection", 1)
+    def collect_subtree_ids(root_id: int):
+        out = []
+        stack = [root_id]
+        while stack:
+            nid = stack.pop()
+            out.append(nid)
+            for ch in children_by_parent.get(nid, []):
+                if ch.id in visible_ids:
+                    stack.append(ch.id)
+        return out
 
-        running_rows.append({
-            "date": ln.entry.date,
-            "description": description,
-            "account": ln.account.account_name,
-            "reference": ln.entry.id,
-            "debit": ln.debit,
-            "credit": ln.credit,
-            "balance": balance,
-            "url": get_entry_link(ln.entry),
+    def rolled_up_closing(acc: Account):
+        total = Decimal("0.00")
+        subtree_ids = collect_subtree_ids(acc.id)
+
+        for aid in subtree_ids:
+            node = acc_by_id.get(aid)
+            if not node:
+                continue
+
+            running = Decimal("0.00")
+            for ln in lines_by_account.get(aid, []):
+                running = apply_movement(
+                    node,
+                    running,
+                    Decimal(str(ln.debit or "0.00")),
+                    Decimal(str(ln.credit or "0.00")),
+                )
+            total += running
+
+        return total
+
+    # =========================
+    # SUMMARY VIEW
+    # =========================
+    if view_mode == "summary":
+        summary_rows = []
+        grand_total = Decimal("0.00")
+
+        for r in roots:
+            has_any = False
+            for aid in collect_subtree_ids(r.id):
+                if lines_by_account.get(aid):
+                    has_any = True
+                    break
+            if not has_any:
+                continue
+
+            closing = rolled_up_closing(r)
+
+            summary_rows.append({
+                "account_name": r.account_name,
+                "account_number": r.account_number or "",
+                "account_type": r.get_account_type_display() if r.account_type else "",
+                "closing_balance": closing,
+            })
+            grand_total += closing
+
+        if export == "excel":
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = 'attachment; filename="general_ledger_summary.csv"'
+            writer = csv.writer(response)
+            writer.writerow(["Account Name", "Account Number", "Account Type", "Closing Balance"])
+            for row in summary_rows:
+                writer.writerow([
+                    row["account_name"],
+                    row["account_number"],
+                    row["account_type"],
+                    float(row["closing_balance"]),
+                ])
+            writer.writerow(["TOTAL", "", "", float(grand_total)])
+            return response
+
+        paginator = Paginator(summary_rows, 50)
+        page_obj = paginator.get_page(page_num)
+
+        return render(request, "general_ledger.html", {
+            "mode": "summary",
+            "view_mode": view_mode,
+
+            "accounts": accounts,
+            "account_id": account_id,
+            "account_label": account_label,
+            "date_from": date_from,
+            "date_to": date_to,
+            "query": query,
+
+            #NEW
+            "supplier_id": supplier_id,
+            "customer_id": customer_id,
+
+            "page_obj": page_obj,
+            "summary_rows": page_obj.object_list,
+            "total_balance": grand_total,
         })
 
+    # =========================
+    # DETAIL VIEW
+    # =========================
+
+    paginator = Paginator(roots, 10)
+    page_obj = paginator.get_page(page_num)
+    paged_roots = list(page_obj.object_list)
+
+    detail_rows = []
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
+
+    def clean_desc(description: str):
+        d = description or ""
+        if d.lower().startswith("payment"):
+            d = d.replace("Payment", "Sales Collection", 1)
+        return d
+
+    def build_path(parent_path: str, node_id: int):
+        return f"{parent_path}/{node_id}" if parent_path else str(node_id)
+
+    def add_account_header(acc: Account, depth: int, path: str, has_children: bool):
+        detail_rows.append({
+            "kind": "account",
+            "depth": depth,
+            "path": path,
+            "account_id": acc.id,
+            "has_children": has_children,
+
+            "account_name": acc.account_name,
+            "account_number": acc.account_number or "",
+            "account_type": acc.get_account_type_display() if acc.account_type else "",
+            "detail_type": acc.detail_type or "",
+
+            "closing_balance": rolled_up_closing(acc),
+        })
+
+    def add_leaf_transactions(acc: Account, depth: int, path: str):
+        nonlocal total_debit, total_credit
+
+        lines = lines_by_account.get(acc.id, [])
+        if not lines:
+            return
+
+        running = Decimal("0.00")
+
+        for ln in lines:
+            debit = Decimal(str(ln.debit or "0.00"))
+            credit = Decimal(str(ln.credit or "0.00"))
+            running = apply_movement(acc, running, debit, credit)
+
+            detail_rows.append({
+                "kind": "tx",
+                "depth": depth,
+                "path": path,
+
+                "account_name": acc.account_name,
+                "account_number": acc.account_number or "",
+                "account_type": acc.get_account_type_display() if acc.account_type else "",
+                "detail_type": acc.detail_type or "",
+
+                "date": ln.entry.date,
+                "description": clean_desc(ln.entry.description),
+                "reference": ln.entry.id,
+                "debit": debit,
+                "credit": credit,
+                "balance": running,
+                "url": get_entry_link(ln.entry),
+
+                #NEW (optional to show in template later)
+                "supplier_id": ln.supplier_id,
+                "customer_id": ln.customer_id,
+            })
+
+            total_debit += debit
+            total_credit += credit
+
+    def walk_tree(node: Account, depth: int, parent_path: str):
+        if node.id not in visible_ids:
+            return
+
+        path = build_path(parent_path, node.id)
+
+        kids = [c for c in children_by_parent.get(node.id, []) if c.id in visible_ids]
+        has_children = len(kids) > 0
+        is_root = (depth == 0)
+
+        if is_root or has_children:
+            add_account_header(node, depth, path, has_children)
+
+        add_leaf_transactions(node, depth, path)
+
+        for ch in kids:
+            walk_tree(ch, depth + 1, path)
+
+    for r in paged_roots:
+        walk_tree(r, 0, "")
+
+    total_balance = total_debit - total_credit
+
+    if export == "excel":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="general_ledger_detail.csv"'
+        writer = csv.writer(response)
+        writer.writerow([
+            "Level", "Account Name", "Account Number", "Account Type", "Account Sub-Class",
+            "Date", "Description", "Journal Ref", "Debit", "Credit", "Balance"
+        ])
+
+        for r in detail_rows:
+            level = r.get("depth", 0)
+            if r.get("kind") == "account":
+                writer.writerow([
+                    level,
+                    r["account_name"],
+                    r["account_number"],
+                    r["account_type"],
+                    r["detail_type"],
+                    "", "", "",
+                    "", "",
+                    float(r.get("closing_balance") or Decimal("0.00")),
+                ])
+            else:
+                writer.writerow([
+                    level,
+                    r["account_name"],
+                    r["account_number"],
+                    r["account_type"],
+                    r["detail_type"],
+                    r["date"].strftime("%Y-%m-%d"),
+                    r["description"],
+                    r["reference"],
+                    float(r["debit"]),
+                    float(r["credit"]),
+                    float(r["balance"]),
+                ])
+        return response
+
     return render(request, "general_ledger.html", {
+        "mode": "detail",
+        "view_mode": view_mode,
+
         "accounts": accounts,
-        "rows": running_rows,
-        "page_obj": page_obj,
-        "total_debit": total_debit,
-        "total_credit": total_credit,
-        "total_balance": total_debit - total_credit,
-        "monthly_totals": monthly_totals.values(),
-        "query": query,
         "account_id": account_id,
+        "account_label": account_label,
         "date_from": date_from,
         "date_to": date_to,
+        "query": query,
+
+        #NEW
+        "supplier_id": supplier_id,
+        "customer_id": customer_id,
+
+        "page_obj": page_obj,
+        "detail_rows": detail_rows,
+
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "total_balance": total_balance,
     })
 
 # journel entry lists
@@ -784,52 +1018,205 @@ def _parse_range(request):
     dto   = parse_date(to_str) if to_str else None
     return dfrom, dto
 
-
 def report_trial_balance(request):
     """
-    Trial Balance = sum of debits & credits per account over a period,
-    straight from JournalLine.
+    Trial Balance (Journal-only + Parent-only display)
+
+    - CURRENT balance per account as at dto (or all-time if dto is None)
+    - Balance is computed from JournalLine ONLY:
+        Debit-normal (Assets, Expenses):  debits - credits
+        Credit-normal (Liab, Equity, Income): credits - debits
+
+    - If an account has sub-accounts (visible children), show ONLY the parent row
+      with rolled-up balance, and DO NOT show the children rows.
+    - Totals sum only displayed rows (safe because children are not displayed).
     """
+
     dfrom, dto = _parse_range(request)
 
-    lines = JournalLine.objects.select_related("entry", "account")
+    # ----- helper: normal side -----
+    def normal_side(acc):
+        if acc.level1_group in ["Assets", "Expenses"]:
+            return "debit"
+        return "credit"
 
-    if dfrom:
-        lines = lines.filter(entry__date__gte=dfrom)
+    def ending_balance_from_journal(acc, debit_sum: Decimal, credit_sum: Decimal) -> Decimal:
+        """
+        Journal-only ending:
+        Debit-normal:  debits - credits
+        Credit-normal: credits - debits
+        """
+        side = normal_side(acc)
+        if side == "debit":
+            return debit_sum - credit_sum
+        return credit_sum - debit_sum
+
+    def split_to_tb_columns(acc, ending: Decimal):
+        """
+        Put ending into TB debit/credit columns depending on normal side.
+        """
+        side = normal_side(acc)
+
+        # Debit-normal: + => Debit, - => Credit
+        if side == "debit":
+            if ending >= 0:
+                return ending, Decimal("0.00")
+            return Decimal("0.00"), -ending
+
+        # Credit-normal: + => Credit, - => Debit
+        if ending >= 0:
+            return Decimal("0.00"), ending
+        return -ending, Decimal("0.00")
+
+    # ----- Journal sums up to dto (or all time if dto is None) -----
+    lines = JournalLine.objects.select_related("entry", "account")
     if dto:
         lines = lines.filter(entry__date__lte=dto)
 
-    # group by account
-    agg = (
-        lines
-        .values("account_id", "account__account_name")
+    sums = (
+        lines.values("account_id")
         .annotate(
-            debit=Coalesce(Sum("debit"),  Value(Decimal("0.00")), output_field=DecimalField(max_digits=18, decimal_places=2)),
-            credit=Coalesce(Sum("credit"), Value(Decimal("0.00")), output_field=DecimalField(max_digits=18, decimal_places=2)),
+            debit=Coalesce(
+                Sum("debit"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            ),
+            credit=Coalesce(
+                Sum("credit"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            ),
         )
-        .order_by("account__account_name")
     )
 
+    sums_map = {
+        r["account_id"]: (r["debit"] or Decimal("0.00"), r["credit"] or Decimal("0.00"))
+        for r in sums
+    }
+
+    # ----- Build account tree -----
+    all_accounts = list(
+        Account.objects.filter(is_active=True).select_related("parent")
+    )
+    acc_by_id = {a.id: a for a in all_accounts}
+
+    children_by_parent = defaultdict(list)
+    for a in all_accounts:
+        if a.parent_id:
+            children_by_parent[a.parent_id].append(a)
+
+    def sort_key(a):
+        return (a.account_number or "", a.account_name or "")
+
+    for pid in list(children_by_parent.keys()):
+        children_by_parent[pid].sort(key=sort_key)
+
+    # ----- Compute base ending per account (self-only, JOURNAL-ONLY) -----
+    base_ending = {}
+    for acc in all_accounts:
+        d_sum, c_sum = sums_map.get(acc.id, (Decimal("0.00"), Decimal("0.00")))
+        base_ending[acc.id] = ending_balance_from_journal(acc, d_sum, c_sum)
+
+    # ----- Visible accounts: any with non-zero ending OR any activity, plus ancestors -----
+    visible_ids = set()
+
+    # activity
+    visible_ids |= set(sums_map.keys())
+
+    # non-zero ending
+    for acc in all_accounts:
+        if base_ending.get(acc.id, Decimal("0.00")) != 0:
+            visible_ids.add(acc.id)
+
+    # add ancestors
+    for aid in list(visible_ids):
+        cur = acc_by_id.get(aid)
+        while cur and cur.parent_id:
+            visible_ids.add(cur.parent_id)
+            cur = acc_by_id.get(cur.parent_id)
+
+    roots = [a for a in all_accounts if a.parent_id is None and a.id in visible_ids]
+    roots.sort(key=sort_key)
+
+    # ----- helper: collect subtree ids -----
+    def collect_subtree_ids(root_id: int):
+        out = []
+        stack = [root_id]
+        while stack:
+            nid = stack.pop()
+            out.append(nid)
+            for ch in children_by_parent.get(nid, []):
+                if ch.id in visible_ids:
+                    stack.append(ch.id)
+        return out
+
+    # ----- rolled-up ending for a node (sum of base endings in subtree) -----
+    def rolled_up_ending(acc: Account) -> Decimal:
+        total = Decimal("0.00")
+        for sid in collect_subtree_ids(acc.id):
+            total += base_ending.get(sid, Decimal("0.00"))
+        return total
+
+    # ----- Build rows: PARENT-ONLY (stop recursion when parent has children) -----
     rows = []
     total_debit = Decimal("0.00")
     total_credit = Decimal("0.00")
 
-    for r in agg:
-        d = r["debit"] or Decimal("0.00")
-        c = r["credit"] or Decimal("0.00")
+    def has_visible_children(acc: Account) -> bool:
+        return any(ch.id in visible_ids for ch in children_by_parent.get(acc.id, []))
+
+    def walk_parent_only(acc: Account, depth: int):
+        nonlocal total_debit, total_credit
+
+        if acc.id not in visible_ids:
+            return
+
+        children = [c for c in children_by_parent.get(acc.id, []) if c.id in visible_ids]
+        if children:
+            #show ONLY parent (rolled-up), do NOT show children
+            ending = rolled_up_ending(acc)
+            if ending == 0:
+                return
+            debit_bal, credit_bal = split_to_tb_columns(acc, ending)
+
+            rows.append({
+                "account_id": acc.id,
+                "account": acc.account_name,
+                "debit": debit_bal,
+                "credit": credit_bal,
+                "depth": depth,
+                "kind": "parent",
+            })
+
+            total_debit += debit_bal
+            total_credit += credit_bal
+            return
+
+        # leaf account (no children)
+        ending = base_ending.get(acc.id, Decimal("0.00"))
+        if ending == 0:
+            return
+
+        debit_bal, credit_bal = split_to_tb_columns(acc, ending)
 
         rows.append({
-            "account_id": r["account_id"],
-            "account": r["account__account_name"],
-            "debit": d,
-            "credit": c,
+            "account_id": acc.id,
+            "account": acc.account_name,
+            "debit": debit_bal,
+            "credit": credit_bal,
+            "depth": depth,
+            "kind": "leaf",
         })
-        total_debit += d
-        total_credit += c
+
+        total_debit += debit_bal
+        total_credit += credit_bal
+
+    for r in roots:
+        walk_parent_only(r, 0)
 
     context = {
-        "company_name": "YoAccountant",  # or pull from a Company model if you have one
-        "reporting_currency": "UGX",      # adjust if you store this elsewhere
+        "company_name": "YoAccountant",
+        "reporting_currency": "UGX",
         "rows": rows,
         "total_debit": total_debit,
         "total_credit": total_credit,
@@ -871,7 +1258,6 @@ def bankish_q():
 # Your COA codes (recommended) + fallback text matching
 INCOME_TYPES = {"OPERATING_INCOME", "INVESTING_INCOME"}
 EXPENSE_TYPES = {"OPERATING_EXPENSE", "INVESTING_EXPENSE", "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"}
-
 
 def report_pnl(request):
     # ---------- 1. Parse date filters ----------
@@ -917,10 +1303,11 @@ def report_pnl(request):
         jl = jl.filter(entry_id__in=cash_entry_ids)
 
     # Only accounts that actually have postings in this period (after basis filtering)
-    accounts = (
+    posted_accounts = (
         Account.objects
         .filter(journalline__in=jl)
         .distinct()
+        .select_related("parent")
     )
 
     # ---------- 5. Helper: classify accounts into P&L buckets ----------
@@ -954,7 +1341,71 @@ def report_pnl(request):
 
         return None
 
-    # ---------- 6. Build buckets ----------
+    # ============================================================
+    # ✅ NEW PART (minimal change): PARENT-ONLY ROLLUP LIKE TRIAL BALANCE
+    # ============================================================
+
+    # Build a lightweight tree map for ALL active accounts (needed for rollups)
+    all_active = list(Account.objects.filter(is_active=True).select_related("parent"))
+    children_by_parent = defaultdict(list)
+    acc_by_id = {}
+
+    for a in all_active:
+        acc_by_id[a.id] = a
+        if a.parent_id:
+            children_by_parent[a.parent_id].append(a)
+
+    # helper: get top-most parent (root) or "P&L parent" you want to show
+    def get_top_parent(acc: Account) -> Account:
+        cur = acc
+        while cur and cur.parent_id:
+            cur = cur.parent
+        return cur or acc
+
+    # If you want to show NOT ONLY root-level but "first non-subaccount parent",
+    # use this instead:
+    def get_display_parent(acc: Account) -> Account:
+        cur = acc
+        while cur and cur.parent_id and getattr(cur, "is_subaccount", False):
+            cur = cur.parent
+        # if still subaccount, climb until non-subaccount
+        while cur and getattr(cur, "is_subaccount", False) and cur.parent_id:
+            cur = cur.parent
+        return cur or acc
+
+    # collect all descendants (including itself)
+    def collect_subtree_ids(root_id: int):
+        out = []
+        stack = [root_id]
+        while stack:
+            nid = stack.pop()
+            out.append(nid)
+            for ch in children_by_parent.get(nid, []):
+                stack.append(ch.id)
+        return out
+
+    # Pre-aggregate debit/credit per account_id ONCE (fast)
+    agg_map = (
+        jl.values("account_id")
+          .annotate(debit=Sum("debit"), credit=Sum("credit"))
+    )
+    debit_by_id = defaultdict(lambda: Decimal("0.00"))
+    credit_by_id = defaultdict(lambda: Decimal("0.00"))
+
+    for row in agg_map:
+        aid = row["account_id"]
+        debit_by_id[aid] = dec(row["debit"])
+        credit_by_id[aid] = dec(row["credit"])
+
+    # Find which parent accounts should be displayed (parent-only)
+    display_parents = {}
+    for acc in posted_accounts:
+        parent = get_display_parent(acc)   # ✅ this is what hides subaccounts
+        if not parent:
+            continue
+        display_parents[parent.id] = parent
+
+    # ---------- 6. Build buckets (parent-only) ----------
     buckets = {"income": [], "cogs": [], "expense": []}
     totals = {
         "income": Decimal("0.00"),
@@ -962,17 +1413,19 @@ def report_pnl(request):
         "expense": Decimal("0.00"),
     }
 
-    for acc in accounts:
-        bucket = classify_account(acc)
+    # Sort parents by name for stable display
+    parent_list = sorted(display_parents.values(), key=lambda x: (x.account_name or "").lower())
+
+    for parent_acc in parent_list:
+        bucket = classify_account(parent_acc)
         if not bucket:
             continue
 
-        agg = jl.filter(account=acc).aggregate(
-            debit=Sum("debit"),
-            credit=Sum("credit"),
-        )
-        debit = dec(agg["debit"])
-        credit = dec(agg["credit"])
+        subtree_ids = collect_subtree_ids(parent_acc.id)
+
+        # Roll up debit/credit from all descendants that have postings
+        debit = sum((debit_by_id[aid] for aid in subtree_ids), Decimal("0.00"))
+        credit = sum((credit_by_id[aid] for aid in subtree_ids), Decimal("0.00"))
 
         # Income accounts: normally credit balance → credit - debit
         # Expense / COGS: normally debit balance → debit - credit
@@ -985,8 +1438,8 @@ def report_pnl(request):
             continue
 
         buckets[bucket].append({
-            "account": acc.account_name,
-            "account_id": acc.id,
+            "account": parent_acc.account_name,
+            "account_id": parent_acc.id,
             "amount": amount,
         })
         totals[bucket] += amount
@@ -1000,7 +1453,7 @@ def report_pnl(request):
         "company_name": "YoAccountant",
         "reporting_currency": "UGX",
 
-        "basis": basis,  # ✅ send to template
+        "basis": basis,  # send to template
 
         "buckets": buckets,
         "totals": totals,
@@ -1017,7 +1470,6 @@ def report_pnl(request):
     return render(request, "pnl.html", context)
 
 # balance sheet
-
 def report_balance_sheet(request):
     """
     Balance sheet 'as of' a single date, grouped into
@@ -1026,7 +1478,7 @@ def report_balance_sheet(request):
 
     Adds method toggle:
     - accrual: use all JournalLines up to 'asof'
-    - cash:    use ONLY JournalLines that hit bank/cash accounts (detail_type contains cash/bank)
+    - cash:    use ONLY JournalLines that hit bank/cash accounts
     """
 
     # 1) Read filters
@@ -1041,7 +1493,6 @@ def report_balance_sheet(request):
     else:
         asof = timezone.localdate()
 
-    # ---- helper: what counts as cash/bank in your 3-level COA ----
     def bankish_q():
         return (
             Q(account__detail_type__icontains="bank") |
@@ -1057,20 +1508,37 @@ def report_balance_sheet(request):
     if method == "cash":
         base_lines = base_lines.filter(bankish_q())
 
-    # 3) Aggregate per account
-    per_account = (
-        base_lines
-        .values(
-            "account_id",
-            "account__account_name",
-            "account__account_type",
-            "account__detail_type",
-        )
-        .annotate(
-            total_debit=Sum("debit"),
-            total_credit=Sum("credit"),
-        )
-    )
+    # =========================================================
+    # ✅ NEW PART: roll up subaccounts into their parent accounts
+    # Show ONLY non-subaccount accounts (like Trial Balance behavior)
+    # =========================================================
+
+    all_accs = list(Account.objects.filter(is_active=True).select_related("parent"))
+    acc_by_id = {a.id: a for a in all_accs}
+
+    children_by_parent = {}
+    for a in all_accs:
+        if a.parent_id:
+            children_by_parent.setdefault(a.parent_id, []).append(a.id)
+
+    def collect_subtree_ids(root_id: int) -> list[int]:
+        out = []
+        stack = [root_id]
+        while stack:
+            nid = stack.pop()
+            out.append(nid)
+            for ch_id in children_by_parent.get(nid, []):
+                stack.append(ch_id)
+        return out
+
+    def infer_is_current(acc_type_code: str, detail: str) -> bool:
+        detail_l = (detail or "").lower()
+        is_current_local = True
+        if "non current" in detail_l or "non-current" in detail_l:
+            is_current_local = False
+        if any(k in detail_l for k in ["fixed", "property", "equipment", "long term", "long-term", "ppe"]):
+            is_current_local = False
+        return is_current_local
 
     # Containers for rows
     asset_nc_rows = []
@@ -1079,57 +1547,62 @@ def report_balance_sheet(request):
     liab_nc_rows = []
     liab_curr_rows = []
 
-    def infer_is_current(acc_type_code: str, detail: str) -> bool:
-        """
-        Very simple heuristic to split current vs non-current.
-        """
-        detail_l = (detail or "").lower()
+    # Iterate ONLY over parent accounts
+    for acc in all_accs:
+        if getattr(acc, "is_subaccount", False):
+            continue
 
-        is_current_local = True
+        subtree_ids = collect_subtree_ids(acc.id)
 
-        if "non current" in detail_l or "non-current" in detail_l:
-            is_current_local = False
-        if any(k in detail_l for k in ["fixed", "property", "equipment", "long term", "long-term", "ppe"]):
-            is_current_local = False
+        # skip accounts with no postings in subtree
+        if not base_lines.filter(account_id__in=subtree_ids).exists():
+            continue
 
-        return is_current_local
+        agg = base_lines.filter(account_id__in=subtree_ids).aggregate(
+            total_debit=Sum("debit"),
+            total_credit=Sum("credit"),
+        )
+        debit = agg["total_debit"] or 0
+        credit = agg["total_credit"] or 0
 
-    # 4) Classify accounts + compute balances
-    for row in per_account:
-        code = row["account__account_type"] or ""
-        level1 = Account.ACCOUNT_LEVEL1_MAP.get(code, "")
-        detail_type = row.get("account__detail_type") or ""
-
-        debit = row["total_debit"] or 0
-        credit = row["total_credit"] or 0
         net = Decimal(debit) - Decimal(credit)  # debit-positive convention
 
+        code = acc.account_type or ""
+        level1 = Account.ACCOUNT_LEVEL1_MAP.get(code, "")
+        detail_type = getattr(acc, "detail_type", "") or ""
+
         if level1 == "Assets":
-            amount = net  # assets are debit balances
+            amount = net
             is_current = infer_is_current(code, detail_type)
             target_list = asset_curr_rows if is_current else asset_nc_rows
 
         elif level1 == "Liabilities":
-            amount = -net  # liabilities are credit balances
+            amount = -net
             is_current = infer_is_current(code, detail_type)
             target_list = liab_curr_rows if is_current else liab_nc_rows
 
         elif level1 == "Equity":
-            amount = -net  # equity is credit balance
+            amount = -net
             target_list = eq_rows
 
         else:
-            # ignore income/expense here; they flow via retained earnings
             continue
 
         if not amount:
             continue
 
         target_list.append({
-            "account": row["account__account_name"],
-            "account_id": row["account_id"],
+            "account": acc.account_name,
+            "account_id": acc.id,
             "amount": amount,
         })
+
+    # Optional: sort by account name
+    asset_nc_rows.sort(key=lambda x: (x["account"] or "").lower())
+    asset_curr_rows.sort(key=lambda x: (x["account"] or "").lower())
+    liab_nc_rows.sort(key=lambda x: (x["account"] or "").lower())
+    liab_curr_rows.sort(key=lambda x: (x["account"] or "").lower())
+    eq_rows.sort(key=lambda x: (x["account"] or "").lower())
 
     # 5) Totals
     asset_nc_total = sum(r["amount"] for r in asset_nc_rows) if asset_nc_rows else Decimal("0.00")
@@ -1145,7 +1618,6 @@ def report_balance_sheet(request):
     # 6) Balance check
     check_ok = round(asset_total, 2) == round(liab_total + eq_total, 2)
 
-    # Nice label for header
     method_label = "Cash basis" if method == "cash" else "Accrual basis"
 
     context = {
@@ -1174,6 +1646,7 @@ def report_balance_sheet(request):
     }
 
     return render(request, "balance_sheet.html", context)
+
 
 # cash flow
 

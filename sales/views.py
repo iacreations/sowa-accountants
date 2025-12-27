@@ -63,10 +63,6 @@ def apply_audit_fields(obj):
 
 
 def _find_control_account(detail_type=None, name_contains=None):
-    """
-    Helper to locate control accounts like A/R, VAT, Sales.
-    Tries detail_type first, then name_contains.
-    """
     qs = Account.objects.filter(is_active=True)
 
     if detail_type:
@@ -81,38 +77,89 @@ def _find_control_account(detail_type=None, name_contains=None):
 
     return None
 
-# posting invoice to general ledger
+
+def _get_or_create_ar_control_account():
+    """
+    Finds or auto-creates the Accounts Receivable (A/R) control account.
+    """
+    ar = (
+        _find_control_account(detail_type="Accounts Receivable (A/R)")
+        or _find_control_account(name_contains="accounts receivable")
+        or _find_control_account(name_contains="receivable")
+    )
+    if ar:
+        return ar
+
+    # Auto-create (adjust account_number if you already use a numbering scheme)
+    ar = Account.objects.create(
+        account_name="Accounts Receivable",
+        account_number="1100",
+        account_type="CURRENT_ASSET",          # <-- matches your Account model codes
+        detail_type="Accounts Receivable (A/R)",
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+        is_active=True,
+        description="System control account for customer balances (A/R).",
+    )
+    return ar
+
+
+def _get_or_create_customer_ar_subaccount(customer: Newcustomer) -> Account:
+    """
+    Creates/gets a CUSTOMER subaccount under A/R control.
+    This is your customer subledger.
+    """
+    ar_control = _get_or_create_ar_control_account()
+
+    name = _safe_name(customer.customer_name) or _safe_name(customer.company_name) or f"Customer {customer.id}"
+    sub_name = f"{name}"
+
+    acc = Account.objects.filter(
+        parent=ar_control,
+        account_name__iexact=sub_name,
+        is_active=True,
+    ).first()
+    if acc:
+        return acc
+
+    # Create subaccount
+    acc = Account.objects.create(
+        account_name=sub_name,
+        account_type=ar_control.account_type,   # still current asset
+        detail_type="Customer Subledger (A/R)",
+        is_active=True,
+        is_subaccount=True,
+        parent=ar_control,
+        opening_balance=Decimal("0.00"),
+    )
+    return acc
+
+def _safe_name(s: str) -> str:
+    return (s or "").strip()
 
 def _post_invoice_to_ledger(invoice: Newinvoice):
     """
-    Create / replace the journal entry for a given invoice.
+    INVOICE posting (Correct Accounting + Customer Subledger):
 
-    Pattern:
-      DR Accounts Receivable
+      DR Customer A/R Subaccount (child under Accounts Receivable control)
       CR Revenue (by product.income_account)
       CR VAT Payable (if VAT exists)
     """
 
     total_due = Decimal(str(invoice.total_due or "0"))
-    if total_due == 0:
-        # If invoice is zero, remove any journal that might exist
-        JournalEntry.objects.filter(
-            source_type="invoice",
-            source_id=invoice.id
-        ).delete()
+    if total_due <= 0:
+        JournalEntry.objects.filter(source_type="invoice", source_id=invoice.id).delete()
         return
 
-    # 1) Remove any previous journal for this invoice (for edits)
-    JournalEntry.objects.filter(
-        source_type="invoice",
-        source_id=invoice.id
-    ).delete()
+    # Remove previous JE for edits (your style for invoices is delete & recreate)
+    JournalEntry.objects.filter(source_type="invoice", source_id=invoice.id).delete()
 
-    # 2) Collect revenue per income account + VAT total
+    # Revenue split + VAT
     revenue_by_account = defaultdict(lambda: Decimal("0.00"))
     vat_total = Decimal("0.00")
 
-    # default income account if product has no income_account set
     default_income_acc = (
         _find_control_account(name_contains="Sales")
         or _find_control_account(name_contains="Revenue")
@@ -127,11 +174,7 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
             net_amount = Decimal("0.00")
 
         prod = line.product
-        income_acc = None
-        if prod:
-            # this matches your product form: product.income_account
-            income_acc = getattr(prod, "income_account", None)
-
+        income_acc = getattr(prod, "income_account", None) if prod else None
         if not income_acc:
             income_acc = default_income_acc
 
@@ -140,57 +183,44 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
 
         vat_total += Decimal(str(line.vat or "0"))
 
-    # Treat shipping as extra revenue on the default income account (for now)
     shipping_fee = Decimal(str(invoice.shipping_fee or "0"))
     if shipping_fee > 0 and default_income_acc:
         revenue_by_account[default_income_acc] += shipping_fee
 
-    # 3) Determine A/R & VAT accounts
-    ar_account = (
-        _find_control_account(detail_type="Accounts Receivable (A/R)")
-        or _find_control_account(name_contains="receivable")
-    )
-    vat_account = (
-        _find_control_account(name_contains="VAT")  # e.g. "VAT Payable", "Output VAT"
-    )
+    # Customer A/R subaccount
+    if not invoice.customer_id:
+        raise ValueError("Invoice must have a customer.")
+    customer_acc = _get_or_create_customer_ar_subaccount(invoice.customer)
 
-    # If we really don't find A/R, quietly skip posting to avoid bad GL
-    if not ar_account:
-        return
+    vat_account = _find_control_account(name_contains="VAT")
 
-    # 4) Create JournalEntry
-    entry_date = invoice.date_created or timezone.now().date()
-    bits = [f"Invoice {invoice.id:04d}"]
-    if invoice.customer_id and getattr(invoice.customer, "customer_name", None):
-        bits.append(f"– {invoice.customer.customer_name}")
-    description = " ".join(bits)
+    entry_date = (invoice.date_created.date() if invoice.date_created else timezone.localdate())
+    desc = f"Invoice {invoice.id:04d} – {invoice.customer.customer_name}"
 
     entry = JournalEntry.objects.create(
         date=entry_date,
-        description=description,
+        description=desc,
         source_type="invoice",
         source_id=invoice.id,
     )
 
-    # 5) Lines
-    # DR A/R
+    # DR Customer A/R
     JournalLine.objects.create(
         entry=entry,
-        account=ar_account,
+        account=customer_acc,
         debit=total_due,
         credit=Decimal("0.00"),
     )
 
-    # CR Revenue (per income account)
+    # CR Revenue
     for acc, amt in revenue_by_account.items():
-        if not acc or amt <= 0:
-            continue
-        JournalLine.objects.create(
-            entry=entry,
-            account=acc,
-            debit=Decimal("0.00"),
-            credit=amt,
-        )
+        if acc and amt > 0:
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=Decimal("0.00"),
+                credit=amt,
+            )
 
     # CR VAT
     if vat_total > 0 and vat_account:
@@ -202,60 +232,46 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
         )
 
 # posting for payments
+from decimal import Decimal
+from django.db.models import Sum, Value
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 def _post_payment_to_ledger(payment: Payment):
     """
-    Create / replace the journal entry for a given customer payment.
+    Customer payment posting (Correct Accounting + Customer Subledger):
 
-    Pattern:
       DR Bank/Cash (deposit_to)
-      CR Accounts Receivable
+      CR Customer A/R Subaccount (child under Accounts Receivable control)
     """
 
-    # 1) Total applied amount on this payment
     agg = (
         PaymentInvoice.objects
         .filter(payment=payment)
-        .aggregate(
-            total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00")))
-        )
+        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
     )
     total_applied = agg["total"] or Decimal("0.00")
 
-    # If nothing applied, remove any old journal and exit
     if total_applied <= 0:
-        JournalEntry.objects.filter(
-            source_type="payment",
-            source_id=payment.id
-        ).delete()
+        JournalEntry.objects.filter(source_type="payment", source_id=payment.id).delete()
         return
 
-    # 2) Remove previous JE for this payment (for edits)
-    JournalEntry.objects.filter(
-        source_type="payment",
-        source_id=payment.id
-    ).delete()
+    JournalEntry.objects.filter(source_type="payment", source_id=payment.id).delete()
 
-    # 3) Find AR & deposit_to account
-    ar_account = (
-        _find_control_account(detail_type="Accounts Receivable (A/R)")
-        or _find_control_account(name_contains="receivable")
-    )
+    if not payment.customer_id:
+        raise ValueError("Payment must have a customer.")
+
+    customer_acc = _get_or_create_customer_ar_subaccount(payment.customer)
     deposit_acc = payment.deposit_to
-
-    # If critical accounts are missing, fail silently to avoid corrupt GL
-    if not ar_account or not deposit_acc:
+    if not deposit_acc:
         return
 
-    # 4) Create JournalEntry
     entry_date = payment.payment_date or timezone.localdate()
-
     bits = [f"Sales Collection {payment.id:04d}"]
-    if payment.customer_id and getattr(payment.customer, "customer_name", None):
+    if payment.customer and payment.customer.customer_name:
         bits.append(f"– {payment.customer.customer_name}")
     if payment.reference_no:
         bits.append(f"(Ref {payment.reference_no})")
-
     description = " ".join(bits)
 
     entry = JournalEntry.objects.create(
@@ -265,8 +281,7 @@ def _post_payment_to_ledger(payment: Payment):
         source_id=payment.id,
     )
 
-    # 5) Lines
-    # DR Bank / Cash
+    # DR Bank/Cash
     JournalLine.objects.create(
         entry=entry,
         account=deposit_acc,
@@ -274,66 +289,53 @@ def _post_payment_to_ledger(payment: Payment):
         credit=Decimal("0.00"),
     )
 
-    # CR Accounts Receivable
+    # CR Customer subledger A/R
     JournalLine.objects.create(
         entry=entry,
-        account=ar_account,
+        account=customer_acc,
         debit=Decimal("0.00"),
         credit=total_applied,
     )
 
 
-# posting receipt to gl
-def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
+# posting sales to gl
+def _post_sales_receipt_to_ledger(receipt: "SalesReceipt"):
     """
-    Create / replace the journal entry for a given sales receipt.
+    SALES RECEIPT posting (Cash sale + Customer Subledger):
 
-    Pattern (cash sale):
-      DR Bank / Cash (deposit_to)          — amount_paid
-      DR Accounts Receivable (optional)    — balance (if > 0)
-      CR Revenue (per product.income_account, incl. shipping - discount)
+      DR Bank / Cash (deposit_to)                   — amount_paid
+      DR Customer A/R subaccount (optional)         — balance (if > 0)
+      CR Revenue (per product.income_account etc.)
       CR VAT Payable (if VAT exists)
-
-    Debit total = Credit total = receipt.total_amount
     """
 
     total_amount = Decimal(str(receipt.total_amount or "0"))
     amount_paid  = Decimal(str(receipt.amount_paid or "0"))
     balance      = Decimal(str(receipt.balance or "0"))
 
-    # If there is effectively no amount, clear any existing JE and exit
     if total_amount <= 0 and amount_paid <= 0 and balance <= 0:
-        JournalEntry.objects.filter(
-            source_type="sales_receipt",
-            source_id=receipt.id
-        ).delete()
+        JournalEntry.objects.filter(source_type="sales_receipt", source_id=receipt.id).delete()
         return
 
-    # Safety: keep balance consistent with total & paid
     if balance < 0:
         balance = Decimal("0.00")
+
     if total_amount != (amount_paid + balance):
-        # If mismatch, recompute balance from total & paid
         balance = max(total_amount - amount_paid, Decimal("0.00"))
 
-    # Remove any previous journal for this receipt (for edits)
-    JournalEntry.objects.filter(
-        source_type="sales_receipt",
-        source_id=receipt.id
-    ).delete()
+    # Replace posting on edit
+    JournalEntry.objects.filter(source_type="sales_receipt", source_id=receipt.id).delete()
 
-    # Collect revenue per income account + VAT total
     revenue_by_account = defaultdict(lambda: Decimal("0.00"))
     vat_total = Decimal("0.00")
 
-    # default income account (same logic as invoice)
     default_income_acc = (
         _find_control_account(name_contains="Sales")
         or _find_control_account(name_contains="Revenue")
     )
 
-    lines = receipt.lines.select_related("product").all()
-    for line in lines:
+    # NOTE: your SalesReceiptLine fields are: amount, discount_amt, vat_amt
+    for line in receipt.lines.select_related("product").all():
         line_amount = Decimal(str(line.amount or "0"))
         if line_amount <= 0:
             continue
@@ -353,24 +355,20 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
     if discount_amt > 0 and default_income_acc:
         revenue_by_account[default_income_acc] -= discount_amt
 
-    # Treat shipping as extra revenue on default income account
+    # Shipping as revenue (if you want separate shipping income later, we can)
     shipping_fee = Decimal(str(receipt.shipping_fee or "0"))
     if shipping_fee > 0 and default_income_acc:
         revenue_by_account[default_income_acc] += shipping_fee
 
-    # Find deposit / AR / VAT accounts
     deposit_acc = receipt.deposit_to
-    ar_account = (
-        _find_control_account(detail_type="Accounts Receivable (A/R)")
-        or _find_control_account(name_contains="receivable")
-    )
-    vat_account = _find_control_account(name_contains="VAT")
-
-    # If we don't have a deposit account, quietly skip to avoid bad GL
     if not deposit_acc:
         return
 
-    # Create JournalEntry
+    # Post any A/R part to the CUSTOMER subaccount
+    ar_posting_account = _get_or_create_customer_ar_subaccount(receipt.customer)
+
+    vat_account = _find_control_account(name_contains="VAT")
+
     entry_date = receipt.receipt_date or timezone.localdate()
     bits = [f"Receipt {receipt.id:04d}"]
     if receipt.customer_id and getattr(receipt.customer, "customer_name", None):
@@ -387,8 +385,6 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
     )
 
     # ----- DEBITS -----
-
-    # 1) DR Bank / Cash for amount actually received
     if amount_paid > 0:
         JournalLine.objects.create(
             entry=entry,
@@ -397,18 +393,15 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
             credit=Decimal("0.00"),
         )
 
-    # 2) DR Accounts Receivable for any remaining balance (if you allow part-paid receipts)
-    if balance > 0 and ar_account:
+    if balance > 0:
         JournalLine.objects.create(
             entry=entry,
-            account=ar_account,
+            account=ar_posting_account,
             debit=balance,
             credit=Decimal("0.00"),
         )
 
     # ----- CREDITS -----
-
-    # 3) CR Revenue per income account
     for acc, amt in revenue_by_account.items():
         if not acc or amt <= 0:
             continue
@@ -419,7 +412,6 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
             credit=amt,
         )
 
-    # 4) CR VAT (if any)
     if vat_total > 0 and vat_account:
         JournalLine.objects.create(
             entry=entry,

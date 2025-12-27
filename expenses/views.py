@@ -55,19 +55,6 @@ def _cat_label_from_lines(cat_lines, item_lines):
         return getattr(items[0].product, "name", "")
     return ""
 
-def _find_control_account(name_contains=None, detail_type=None):
-    """
-    Small helper to find a 'default' account when item lines
-    don't have a specific expense account configured.
-
-    We just pick the first matching account.
-    """
-    qs = Account.objects.all()
-    if name_contains:
-        qs = qs.filter(account_name__icontains=name_contains)
-    if detail_type:
-        qs = qs.filter(detail_type__iexact=detail_type)
-    return qs.order_by("id").first()
 # generate a po number
 def generate_unique_po_no(prefix="PO"):
     """
@@ -183,47 +170,111 @@ def _post_expense_to_ledger(expense: Expense):
             credit=total,
         )
 # post bill to ledger
-
-def _post_bill_to_ledger(bill: Bill):
+def _get_or_create_ap_control_account() -> "Account":
     """
-    Post a Bill to the GL.
+    Returns the A/P control account.
+    Creates it if missing.
+    """
+    acc = (
+        Account.objects.filter(is_active=True, detail_type__iexact="Accounts Payable (A/P)")
+        .first()
+    )
+    if acc:
+        return acc
 
-    Pattern:
-      DR Expense / Cost accounts (category + item lines)
-      CR Accounts Payable
+    # Auto-create A/P control account
+    # Adjust account_number if you have a numbering rule
+    return Account.objects.create(
+        account_name="Accounts Payable",
+        account_number="2000",
+        account_type="CURRENT_LIABILITY",
+        detail_type="Accounts Payable (A/P)",
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        is_active=True,
+    )
 
-    We only credit A/P for the total of the debits we actually post,
-    to avoid unbalanced entries if something is misconfigured.
+def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
+    """
+    Creates/gets a SUPPLIER subaccount under A/P control.
+    This is your supplier subledger.
+    """
+    ap_control = _get_or_create_ap_control_account()
+
+    name = _safe_name(supplier.company_name) or f"Supplier {supplier.id}"
+    sub_name = f"{name}"
+
+    acc = Account.objects.filter(
+        parent=ap_control,
+        account_name__iexact=sub_name,
+        is_active=True,
+    ).first()
+    if acc:
+        return acc
+
+    acc = Account.objects.create(
+        account_name=sub_name,
+        account_type=ap_control.account_type,   # still current liability
+        detail_type="Supplier Subledger (A/P)",
+        is_active=True,
+        is_subaccount=True,
+        parent=ap_control,
+        opening_balance=Decimal("0.00"),
+    )
+    return acc
+
+def _safe_name(s: str) -> str:
+    return (s or "").strip()
+
+def _find_control_account(detail_type=None, name_contains=None):
+    qs = Account.objects.filter(is_active=True)
+
+    if detail_type:
+        acc = qs.filter(detail_type__iexact=detail_type).first()
+        if acc:
+            return acc
+
+    if name_contains:
+        acc = qs.filter(account_name__icontains=name_contains).first()
+        if acc:
+            return acc
+
+    return None
+
+
+# posting bill to gl
+def _post_bill_to_ledger(bill: "Bill"):
+    """
+    BILL posting (Correct Accounting + Supplier Subledger):
+
+        DR  Expense/COGS accounts (from bill lines)
+        CR  Supplier A/P Subaccount (child under Accounts Payable control)
+
+    Uses bill.journal_entry so edits UPDATE the same JournalEntry (no duplicates).
     """
 
-    # 1) If total is zero, just remove any existing journal and stop
     total = Decimal(str(bill.total_amount or "0"))
-    if total == 0:
-        JournalEntry.objects.filter(
-            source_type="bill",
-            source_id=bill.id,
-        ).delete()
+    if total <= 0:
+        if bill.journal_entry_id:
+            bill.journal_entry.delete()
+            bill.journal_entry = None
+            bill.save(update_fields=["journal_entry"])
         return
 
-    # 2) Delete previous journal for this bill (for edits)
-    JournalEntry.objects.filter(
-        source_type="bill",
-        source_id=bill.id,
-    ).delete()
+    if not bill.supplier_id:
+        # You can decide to allow bills without suppliers, but subledger requires supplier
+        raise ValueError("Bill must have a Supplier selected to post to Accounts Payable subledger.")
 
-    # 3) Collect expenses per account
-    expense_by_account: dict[Account, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    # 1) Collect debits (expense accounts)
+    expense_by_account = defaultdict(lambda: Decimal("0.00"))
 
-    # --- Category lines: user picked the GL account directly ---
     for cl in bill.category_lines.select_related("category"):
-        if not cl.category:
-            continue
+        acc = cl.category
         amt = Decimal(str(cl.amount or "0"))
-        if amt <= 0:
-            continue
-        expense_by_account[cl.category] += amt
+        if acc and amt > 0:
+            expense_by_account[acc] += amt
 
-    # --- Item lines: infer an expense account from the product ---
     default_exp_acc = (
         _find_control_account(name_contains="Cost of Sales")
         or _find_control_account(name_contains="Expense")
@@ -235,68 +286,65 @@ def _post_bill_to_ledger(bill: Bill):
             continue
 
         acc = None
-        prod = il.product
-        if prod:
-            # try product.expense_account / cogs_account if your Product model has them
-            acc = getattr(prod, "expense_account", None) or getattr(prod, "cogs_account", None)
+        if il.product:
+            acc = getattr(il.product, "expense_account", None) or getattr(il.product, "cogs_account", None)
 
         if not acc:
             acc = default_exp_acc
 
-        if not acc:
-            # no reasonable account → skip this line in GL
-            continue
+        if acc:
+            expense_by_account[acc] += amt
 
-        expense_by_account[acc] += amt
-
-    # If nothing to post, just stop
     expense_total = sum(expense_by_account.values())
-    if expense_total == 0:
+    if expense_total <= 0:
         return
 
-    # 4) Find Accounts Payable control account
-    ap_account = (
-        _find_control_account(detail_type="Accounts Payable (A/P)")
-        or _find_control_account(name_contains="payable")
-    )
-    if not ap_account:
-        # silently skip posting if you don't have A/P yet
-        return
+    # 2) Supplier A/P subaccount (creates A/P control if missing)
+    supplier_acc = _get_or_create_supplier_ap_subaccount(bill.supplier)
 
-    # 5) Create JournalEntry
+    # 3) Create/update JournalEntry
     entry_date = bill.bill_date or timezone.localdate()
-    bits = [f"Bill {bill.bill_no}"]
-    if bill.supplier and getattr(bill.supplier, "company_name", None):
-        bits.append(f"– {bill.supplier.company_name}")
-    elif bill.supplier_name:
-        bits.append(f"– {bill.supplier_name}")
-    description = " ".join(bits)
+    vendor = bill.supplier.company_name if bill.supplier else (bill.supplier_name or "")
+    description = f"Bill {bill.bill_no}" + (f" – {vendor}" if vendor else "")
 
-    entry = JournalEntry.objects.create(
-        date=entry_date,
-        description=description,
-        source_type="bill",
-        source_id=bill.id,
-    )
-
-    # 6) DR Expense accounts
-    for acc, amt in expense_by_account.items():
-        if not acc or amt <= 0:
-            continue
-        JournalLine.objects.create(
-            entry=entry,
-            account=acc,
-            debit=amt,
-            credit=Decimal("0.00"),
+    entry = bill.journal_entry
+    if not entry:
+        entry = JournalEntry.objects.create(
+            date=entry_date,
+            description=description,
+            source_type="bill",
+            source_id=bill.id,
         )
+        bill.journal_entry = entry
+        bill.save(update_fields=["journal_entry"])
+    else:
+        entry.date = entry_date
+        entry.description = description
+        entry.source_type = "bill"
+        entry.source_id = bill.id
+        entry.save(update_fields=["date", "description", "source_type", "source_id"])
 
-    # 7) CR Accounts Payable for the total debits we actually posted
+    # 4) Replace JE lines
+    JournalLine.objects.filter(entry=entry).delete()
+
+    # 5) DR Expenses
+    for acc, amt in expense_by_account.items():
+        if amt > 0:
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=amt,
+                credit=Decimal("0.00"),
+            )
+
+    # 6) CR Supplier subledger account
     JournalLine.objects.create(
         entry=entry,
-        account=ap_account,
+        account=supplier_acc,
         debit=Decimal("0.00"),
         credit=expense_total,
     )
+
 # posting cheque to ledger 
 def _post_cheque_to_ledger(chq: Cheque):
     """
@@ -1232,14 +1280,16 @@ def generate_unique_bill_no():
     last = Bill.objects.order_by("-id").first()
     base = 10000000 if not last else (int(str(last.bill_no or 0).strip()[-8:]) if str(last.bill_no or "").isdigit() else last.id) + 1
     return f"{base:08d}"
+
 # adding a bill
+
 @transaction.atomic
 def add_bill(request):
-    
     if request.method == "POST":
         expense_qs = expense_accounts_qs()
-        supplier_id      = request.POST.get("supplier_id") or ""   # from dropdown
-        supplier_name    = request.POST.get("supplier") or ""      # optional free-text
+
+        supplier_id      = request.POST.get("supplier_id") or ""
+        supplier_name    = request.POST.get("supplier") or ""
         mailing_address  = request.POST.get("mailing_address") or ""
         terms            = request.POST.get("terms") or ""
         bill_date        = _parse_ymd(request.POST.get("bill_date"), timezone.localdate())
@@ -1251,7 +1301,6 @@ def add_bill(request):
 
         supplier = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
 
-        # unique bill no.
         if (not bill_no) or Bill.objects.filter(bill_no=bill_no).exists():
             bill_no = generate_unique_bill_no()
 
@@ -1320,7 +1369,7 @@ def add_bill(request):
 
             qty  = _dec(item_qtys[idx], "0")
             rate = _dec(item_rates[idx], "0")
-            amt  = _dec(item_amounts[idx]) if item_amounts[idx] else (qty * rate)
+            amt  = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
             if amt <= 0:
                 continue
 
@@ -1343,18 +1392,16 @@ def add_bill(request):
         bill.total_amount = total
         bill.save(update_fields=["total_amount"])
 
-        # ===== Post this bill into the General Ledger =====
+        # ✅ Post to ledger: Dr Expenses/Items, Cr Accounts Payable
         _post_bill_to_ledger(bill)
-        
-        # Redirect options
+
         action = request.POST.get("save_action") or "save"
         if action == "save":
             return redirect("expenses:bills-list")
         if action == "save&new":
             return redirect("expenses:add-bill")
         return redirect("expenses:bills-list")
-    # GET: choices
-    
+
     context = {
         "expense_accounts": expense_accounts_qs(),
         "all_accounts": Account.objects.all().order_by("account_name"),
@@ -1365,21 +1412,23 @@ def add_bill(request):
         "generated_bill_no": generate_unique_bill_no(),
     }
     return render(request, "bill_form.html", context)
-# bill edit
+
+
+# edit bill
 @transaction.atomic
 def edit_bill(request, pk: int):
     bill = get_object_or_404(
         Bill.objects.select_related("supplier")
-            .prefetch_related("category_lines__category",
-                              "item_lines__product"),
+            .prefetch_related("category_lines__category", "item_lines__product"),
         pk=pk
     )
 
     if request.method == "POST":
-        # ---------- Header ----------
         expense_qs = expense_accounts_qs()
+
         supplier_id      = request.POST.get("supplier_id") or ""
         supplier_manual  = request.POST.get("supplier") or ""
+
         bill.mailing_address = request.POST.get("mailing_address") or ""
         bill.terms           = request.POST.get("terms") or ""
         bill.bill_date       = _parse_ymd(request.POST.get("bill_date"), bill.bill_date or timezone.localdate())
@@ -1388,7 +1437,6 @@ def edit_bill(request, pk: int):
         bill.location        = request.POST.get("location") or ""
         bill.memo            = request.POST.get("memo") or ""
 
-        # Keep the old bill_no unless user actually changed it; if changed, ensure unique
         if new_bill_no and new_bill_no != (bill.bill_no or ""):
             if Bill.objects.exclude(pk=bill.pk).filter(bill_no=new_bill_no).exists():
                 messages.error(request, "Bill No. already exists. Please use another number.")
@@ -1399,19 +1447,18 @@ def edit_bill(request, pk: int):
         bill.supplier = supplier
         bill.supplier_name = None if supplier else supplier_manual
 
-        # Attachment (optional replace)
         if request.FILES.get("attachments"):
             bill.attachments = request.FILES["attachments"]
 
         bill.save()
 
-        # ---------- Replace lines ----------
+        # replace lines
         BillCategoryLine.objects.filter(bill=bill).delete()
         BillItemLine.objects.filter(bill=bill).delete()
 
         total = Decimal("0.00")
 
-        # Category lines
+        # ---- Category lines ----
         cat_category_ids = request.POST.getlist("cat_category[]")
         cat_descs        = request.POST.getlist("cat_desc[]")
         cat_amounts      = request.POST.getlist("cat_amount[]")
@@ -1423,7 +1470,6 @@ def edit_bill(request, pk: int):
             if not acc_id:
                 continue
             account = expense_qs.filter(pk=acc_id).first()
-
             if not account:
                 continue
 
@@ -1443,7 +1489,7 @@ def edit_bill(request, pk: int):
             )
             total += amt
 
-        # Item lines
+        # ---- Item lines ----
         item_product_ids  = request.POST.getlist("item_product[]")
         item_descs        = request.POST.getlist("item_desc[]")
         item_qtys         = request.POST.getlist("item_qty[]")
@@ -1462,7 +1508,7 @@ def edit_bill(request, pk: int):
 
             qty  = _dec(item_qtys[idx], "0")
             rate = _dec(item_rates[idx], "0")
-            amt  = _dec(item_amounts[idx]) if item_amounts[idx] else (qty * rate)
+            amt  = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
             if amt <= 0:
                 continue
 
@@ -1484,16 +1530,14 @@ def edit_bill(request, pk: int):
         bill.total_amount = total
         bill.save(update_fields=["total_amount"])
 
-        # ===== Post this bill into the General Ledger =====
+        # ✅ Update ledger entry (rewrite lines)
         _post_bill_to_ledger(bill)
 
-        # save actions
         action = request.POST.get("save_action") or "save"
         if action == "save&new":
             return redirect("expenses:add-bill")
         return redirect("expenses:bills-list")
 
-    # ---------- GET (prefill) ----------
     context = {
         "bill": bill,
         "suppliers": Newsupplier.objects.all().order_by("company_name"),
@@ -1506,6 +1550,7 @@ def edit_bill(request, pk: int):
         "item_lines": BillItemLine.objects.filter(bill=bill).select_related("product","customer","class_field"),
     }
     return render(request, "bill_form.html", context)
+
 # bill list
 def bills_list(request):
     """
