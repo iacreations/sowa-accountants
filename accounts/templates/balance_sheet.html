@@ -222,16 +222,24 @@
           {% for row in eq_rows %}
             <tr>
               <td style="padding-left:32px;">
-                <a class="gl-link"
-                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                {% if row.account_id %}
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                    {{ row.account }}
+                  </a>
+                {% else %}
                   {{ row.account }}
-                </a>
+                {% endif %}
               </td>
               <td class="num">
-                <a class="gl-link"
-                   href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                {% if row.account_id %}
+                  <a class="gl-link"
+                     href="{% url 'accounts:general-ledger' %}?account_id={{ row.account_id }}&date_to={{ asof|date:'Y-m-d' }}">
+                    {{ row.amount|floatformat:2|intcomma }}
+                  </a>
+                {% else %}
                   {{ row.amount|floatformat:2|intcomma }}
-                </a>
+                {% endif %}
               </td>
             </tr>
           {% endfor %}

@@ -1,0 +1,62 @@
+{% load humanize %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Supplier Refund</title>
+</head>
+<body>
+  <h2>Receive Supplier Refund</h2>
+  <p><b>Supplier:</b> {{ supplier.supplier_name }}</p>
+  <p><b>Max refundable:</b> {{ max_refundable|floatformat:2|intcomma }}</p>
+
+  {% if form_error %}
+    <div style="background:#ffecec; border:1px solid #ffb3b3; padding:10px; margin-bottom:10px;">
+      {{ form_error }}
+    </div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div>
+      <label>Refund Date</label><br>
+      <input type="date" name="refund_date">
+    </div>
+    <br>
+
+    <div>
+      <label>Received To (Bank/Cash)</label><br>
+      <select name="received_to" required>
+        <option value="">Select Account</option>
+        {% for acc in accounts %}
+          <option value="{{ acc.id }}">
+            {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
+            — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <br>
+
+    <div>
+      <label>Amount</label><br>
+      <input type="number" step="0.01" name="amount" required>
+    </div>
+    <br>
+
+    <div>
+      <label>Reference No</label><br>
+      <input type="text" name="reference_no">
+    </div>
+    <br>
+
+    <div>
+      <label>Memo</label><br>
+      <textarea name="memo" rows="3"></textarea>
+    </div>
+    <br>
+
+    <button type="submit">Save Refund</button>
+  </form>
+</body>
+</html>

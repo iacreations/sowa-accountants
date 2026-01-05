@@ -27,6 +27,7 @@ urlpatterns = [
     path("cheques/", views.cheque_list, name="cheque-list"),
     path("cheques/<int:pk>/", views.cheque_detail, name="cheque-detail"),
     path("cheques/<int:pk>/edit/", views.cheque_edit, name="cheque-edit"),
+    path("api/outstanding-bills/", views.outstanding_bills_api, name="outstanding_bills_api"),
 
     # Purchase Orders
     path("purchase-order", views.purchase_order, name="purchase_order"),
@@ -54,6 +55,8 @@ urlpatterns = [
     path("credit-card-credit/<int:pk>/edit/", views.credit_card_credit_edit, name="credit-card-credit-edit"),
 # end
     path('expenses/import_bills', views.import_bills, name='import-bills'),
+    path("supplier-prepayments/", views.supplier_prepayments_list, name="supplier-prepayments-list"),
+    path("supplier-prepayments/<int:supplier_id>/refund/new/", views.supplier_refund_new, name="supplier-refund-new"),
 
     
 ]

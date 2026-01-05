@@ -174,6 +174,69 @@
      background-color: green;
      color: white;
     }
+
+    /* TABLE: make columns wider (lengthy) + reduce height */
+    .table-scroll-x{
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      border-radius: 8px;
+    }
+
+    .invoice-table{
+      width: 100%;
+      min-width: 1700px;
+      table-layout: auto;
+    }
+
+    .invoice-table th,
+    .invoice-table td{
+      padding: 8px 10px;
+      vertical-align: middle;
+    }
+
+    .invoice-table th{
+      white-space: nowrap;
+      font-size: 14px;
+    }
+
+    .invoice-table input,
+    .invoice-table select{
+      height: 34px;
+      min-height: 34px;
+      padding: 6px 8px;
+      box-sizing: border-box;
+      width: 100%;
+    }
+
+    /* Column widths */
+    .invoice-table th:nth-child(1),
+    .invoice-table td:nth-child(1){ min-width: 280px; } /* Product */
+    .invoice-table th:nth-child(2),
+    .invoice-table td:nth-child(2){ min-width: 380px; } /* Description */
+    .invoice-table th:nth-child(3),
+    .invoice-table td:nth-child(3){ min-width: 130px; text-align:right; } /* Qty */
+
+    /* Rate like Amount */
+    .invoice-table th:nth-child(4),
+    .invoice-table td:nth-child(4){ min-width: 190px; text-align:right; } /* Rate */
+    .invoice-table th:nth-child(5),
+    .invoice-table td:nth-child(5){ min-width: 190px; text-align:right; } /* Amount */
+    .invoice-table th:nth-child(6),
+    .invoice-table td:nth-child(6){ min-width: 190px; text-align:right; } /* VAT */
+    .invoice-table th:nth-child(7),
+    .invoice-table td:nth-child(7){ min-width: 190px; text-align:right; } /* Discount % */
+    .invoice-table th:nth-child(8),
+    .invoice-table td:nth-child(8){ min-width: 220px; text-align:right; } /* Discount Amount */
+    .invoice-table th:nth-child(9),
+    .invoice-table td:nth-child(9){ min-width: 110px; text-align:center; } /* Action */
+
+    /* Ensure rate input stretches like amount input (override earlier 80px rule) */
+    td input.rate{
+      width: 100% !important;
+    }
+
     /* Laptops & small desktops */
     @media only screen and (min-width: 1024px) and (max-width: 1600px) {
       #container{
@@ -307,11 +370,11 @@
           <input type="text" name="sales_rep" value="{% if edit_mode %}{{ inv.sales_rep }}{% endif %}">
         </div>
 
-        <!-- ✅ CLASS with + Add (AJAX) -->
+        <!-- CLASS with + Add (AJAX) -->
         <div class="form-group">
           <label>Class</label>
           <div class="d-flex">
-            <select name="class_field" id="classSelect" class="form-control" required>
+            <select name="class_field" id="classSelect" class="form-control">
               <option value="">Select Class</option>
               {% for class in classes %}
                 <option value="{{ class.id }}" {% if edit_mode and inv.class_field_id == class.id %}selected{% endif %}>
@@ -341,94 +404,95 @@
 
         <div class="form-group">
           <label>PO Number</label>
-          <input type="number" name="po_number" value="{% if edit_mode %}{{ inv.po_num }}{% endif %}">
+          <input type="text" name="po_number" value="{% if edit_mode %}{{ inv.po_num }}{% endif %}">
         </div>
       </div>
 
       <!-- Line Items -->
       <h5 class="section-title" style="color:#39B54B; font-weight:600; margin:16px 0 8px;">Item Details</h5>
-      <table class="invoice-table" style="width:100%; border-collapse:collapse;">
-        <thead>
-          <tr style="background:#f9f9f9;">
-            <th>Product/Service</th>
-            <th>Description</th>
-            <th style="text-align:right;">Qty</th>
-            <th style="text-align:right;">Rate</th>
-            <th style="text-align:right;">Amount</th>
-            <th style="text-align:right;">VAT (18%)</th>
-            <th style="text-align:right;">Discount (%)</th>
-            <th style="text-align:right;">Discount Amount</th>
-            <th>Action</th>
-          </tr>
-        </thead>
 
-        <tbody id="invoice-items-table">
-          {% if edit_mode %}
-            {% for it in items %}
-            <tr>
-              <td>
-                <!-- ✅ FIX: remove duplicated id, keep class, add add_new option -->
-                <select class="form-control product-select" name="product[]" onchange="handleProductSelect(this)">
-                  <option value="">-- Select Product --</option>
-                  {% for product in products %}
-                    <option value="{{ product.id }}"
-                            data-description="{{ product.sales_description }}"
-                            data-rate="{{ product.sales_price }}"
-                            data-taxable="{{ product.taxable|yesno:'true,false' }}"
-                            {% if product.id == it.product_id %}selected{% endif %}>
-                      {{ product.name }}
-                    </option>
-                  {% endfor %}
-                  <option value="add_new">➕ Add New</option>
-                </select>
-              </td>
-              <td><input type="text" name="description[]" class="form-control description" value="{{ it.description }}" readonly></td>
-              <td><input type="number" name="qty[]" class="form-control qty" value="{{ it.qty }}" min="1" onchange="calculateRow(this)"></td>
-              <td><input type="number" name="unit_price[]" class="form-control rate" value="{{ it.unit_price }}"></td>
-              <td><input type="number" name="amount[]" class="form-control amount" value="{{ it.amount }}" readonly></td>
-              <td><input type="number" name="vat[]" class="form-control vat" value="{{ it.vat }}" readonly></td>
-              <td><input type="number" name="discount_num[]" class="form-control discount" value="{{ it.discount_num|default:'0' }}" min="0" max="100" onchange="calculateRow(this)"></td>
-              <td><input type="number" name="discount_amount[]" class="form-control discount-amt" value="{{ it.discount_amount|default:'0' }}" readonly></td>
-              <td class="text-center">
-                <button type="button" class="btn btn-sm" onclick="deleteRow(this)">
-                  <i class='bx bxs-trash' style="color: green;"></i>
-                </button>
-              </td>
+      <div class="table-scroll-x">
+        <table class="invoice-table" style="border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f9f9f9;">
+              <th>Product/Service</th>
+              <th>Description</th>
+              <th style="text-align:right;">Qty</th>
+              <th style="text-align:right;">Rate</th>
+              <th style="text-align:right;">Amount</th>
+              <th style="text-align:right;">VAT (18%)</th>
+              <th style="text-align:right;">Discount (%)</th>
+              <th style="text-align:right;">Discount Amount</th>
+              <th>Action</th>
             </tr>
-            {% endfor %}
-          {% else %}
-            <tr>
-              <td>
-                <!-- ✅ FIX: add add_new option -->
-                <select class="form-control product-select" name="product[]" onchange="handleProductSelect(this)">
-                  <option value="">-- Select Product --</option>
-                  {% for product in products %}
-                    <option value="{{ product.id }}"
-                            data-description="{{ product.sales_description }}"
-                            data-rate="{{ product.sales_price }}"
-                            data-taxable="{{ product.taxable|yesno:'true,false' }}">
-                      {{ product.name }}
-                    </option>
-                  {% endfor %}
-                  <option value="add_new">➕ Add New</option>
-                </select>
-              </td>
-              <td><input type="text" name="description[]" class="form-control description" readonly></td>
-              <td><input type="number" name="qty[]" class="form-control qty" value="1" min="1" onchange="calculateRow(this)"></td>
-              <td><input type="number" name="unit_price[]" class="form-control rate"></td>
-              <td><input type="number" name="amount[]" class="form-control amount" readonly></td>
-              <td><input type="number" name="vat[]" class="form-control vat" readonly></td>
-              <td><input type="number" name="discount_num[]" class="form-control discount" value="0" min="0" max="100" onchange="calculateRow(this)"></td>
-              <td><input type="number" name="discount_amount[]" class="form-control discount-amt" readonly></td>
-              <td class="text-center">
-                <button type="button" class="btn btn-sm" onclick="deleteRow(this)">
-                  <i class='bx bxs-trash' style="color: green;"></i>
-                </button>
-              </td>
-            </tr>
-          {% endif %}
-        </tbody>
-      </table>
+          </thead>
+
+          <tbody id="invoice-items-table">
+            {% if edit_mode %}
+              {% for it in items %}
+              <tr>
+                <td>
+                  <select class="form-control product-select" name="product[]" onchange="handleProductSelect(this)">
+                    <option value="">-- Select Product --</option>
+                    {% for product in products %}
+                      <option value="{{ product.id }}"
+                              data-description="{{ product.sales_description }}"
+                              data-rate="{{ product.sales_price }}"
+                              data-taxable="{{ product.taxable|yesno:'true,false' }}"
+                              {% if product.id == it.product_id %}selected{% endif %}>
+                        {{ product.name }}
+                      </option>
+                    {% endfor %}
+                    <option value="add_new">➕ Add New</option>
+                  </select>
+                </td>
+                <td><input type="text" name="description[]" class="form-control description" value="{{ it.description }}" readonly></td>
+                <td><input type="number" name="qty[]" class="form-control qty" value="{{ it.qty }}" min="1" onchange="calculateRow(this)"></td>
+                <td><input type="number" name="unit_price[]" class="form-control rate" value="{{ it.unit_price }}" onchange="calculateRow(this)"></td>
+                <td><input type="number" name="amount[]" class="form-control amount" value="{{ it.amount }}" readonly></td>
+                <td><input type="number" name="vat[]" class="form-control vat" value="{{ it.vat }}" readonly></td>
+                <td><input type="number" name="discount_num[]" class="form-control discount" value="{{ it.discount_num|default:'0' }}" min="0" max="100" onchange="calculateRow(this)"></td>
+                <td><input type="number" name="discount_amount[]" class="form-control discount-amt" value="{{ it.discount_amount|default:'0' }}" readonly></td>
+                <td class="text-center">
+                  <button type="button" class="btn btn-sm" onclick="deleteRow(this)">
+                    <i class='bx bxs-trash' style="color: green;"></i>
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td>
+                  <select class="form-control product-select" name="product[]" onchange="handleProductSelect(this)">
+                    <option value="">-- Select Product --</option>
+                    {% for product in products %}
+                      <option value="{{ product.id }}"
+                              data-description="{{ product.sales_description }}"
+                              data-rate="{{ product.sales_price }}"
+                              data-taxable="{{ product.taxable|yesno:'true,false' }}">
+                        {{ product.name }}
+                      </option>
+                    {% endfor %}
+                    <option value="add_new">➕ Add New</option>
+                  </select>
+                </td>
+                <td><input type="text" name="description[]" class="form-control description" readonly></td>
+                <td><input type="number" name="qty[]" class="form-control qty" value="1" min="1" onchange="calculateRow(this)"></td>
+                <td><input type="number" name="unit_price[]" class="form-control rate" onchange="calculateRow(this)"></td>
+                <td><input type="number" name="amount[]" class="form-control amount" readonly></td>
+                <td><input type="number" name="vat[]" class="form-control vat" readonly></td>
+                <td><input type="number" name="discount_num[]" class="form-control discount" value="0" min="0" max="100" onchange="calculateRow(this)"></td>
+                <td><input type="number" name="discount_amount[]" class="form-control discount-amt" readonly></td>
+                <td class="text-center">
+                  <button type="button" class="btn btn-sm" onclick="deleteRow(this)">
+                    <i class='bx bxs-trash' style="color: green;"></i>
+                  </button>
+                </td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
 
       <div class="mt-2 d-flex" style="display:flex; gap:8px;">
         <button type="button" class="btn btn-success btn-sm" onclick="addRow()">+ Add Row</button>
@@ -455,28 +519,23 @@
         <div class="summary-section" style="flex:1 1 40%; display:flex; flex-direction:column; align-items:flex-end;">
           <div class="form-group" style="width:100%; max-width:300px; margin-bottom:10px;">
             <label>Subtotal</label>
-            <input type="number" id="subtotal" name="subtotal"
-                   value="{% if edit_mode %}{{ inv.subtotal }}{% endif %}" readonly />
+            <input type="number" id="subtotal" name="subtotal" value="{% if edit_mode %}{{ inv.subtotal }}{% endif %}" readonly />
           </div>
           <div class="form-group" style="width:100%; max-width:300px; margin-bottom:10px;">
             <label>Total Discount</label>
-            <input type="number" id="discountAmount" name="total_discount"
-                   value="{% if edit_mode %}{{ inv.total_discount }}{% endif %}" readonly />
+            <input type="number" id="discountAmount" name="total_discount" value="{% if edit_mode %}{{ inv.total_discount }}{% endif %}" readonly />
           </div>
           <div class="form-group" style="width:100%; max-width:300px; margin-bottom:10px;">
             <label>Total VAT</label>
-            <input type="number" id="tax" name="vat"
-                   value="{% if edit_mode %}{{ inv.total_vat }}{% endif %}" readonly />
+            <input type="number" id="tax" name="vat" value="{% if edit_mode %}{{ inv.total_vat }}{% endif %}" readonly />
           </div>
           <div class="form-group" style="width:100%; max-width:300px; margin-bottom:10px;">
             <label>Shipping fee</label>
-            <input type="number" id="shipping" name="shipping_fee"
-                   value="{% if edit_mode %}{{ inv.shipping_fee }}{% endif %}" />
+            <input type="number" id="shipping" name="shipping_fee" value="{% if edit_mode %}{{ inv.shipping_fee }}{% endif %}" onchange="calculateTotal()"/>
           </div>
           <div class="form-group" style="width:100%; max-width:300px; margin-bottom:10px;">
             <label>Total Due</label>
-            <input type="number" id="totalDue" name="total_due"
-                   value="{% if edit_mode %}{{ inv.total_due }}{% endif %}" readonly />
+            <input type="number" id="totalDue" name="total_due" value="{% if edit_mode %}{{ inv.total_due }}{% endif %}" readonly />
           </div>
         </div>
       </div>
@@ -508,17 +567,106 @@
       }
     })();
 
-    // ✅ Product: open add product page from ANY row (table rows included)
+    // Product details URL template (pk injected in JS)
+    const PRODUCT_DETAILS_URL_TEMPLATE = "{% url 'sales:product-details' 0 %}";
+    function productDetailsUrl(pk){
+      return PRODUCT_DETAILS_URL_TEMPLATE.replace("/0/", "/" + pk + "/");
+    }
+
+    // Product: open add product page OR load details via AJAX
     function handleProductSelect(select){
       if(select.value === "add_new"){
         window.open("{% url 'inventory:add-products' %}", "_blank", "noopener");
         select.value = "";
         return;
       }
-      fillProductDetails(select); // keep your existing logic
+
+      if(!select.value){
+        clearProductRow(select);
+        calculateTotal();
+        return;
+      }
+
+      fetch(productDetailsUrl(select.value), { method: "GET" })
+        .then(res => res.ok ? res.json() : Promise.reject(res))
+        .then(data => {
+          if (data.error){
+            fillProductDetailsFromDataAttrs(select);
+            return;
+          }
+          fillProductDetailsFromAjax(select, data);
+        })
+        .catch(() => {
+          fillProductDetailsFromDataAttrs(select);
+        });
     }
 
-    // ✅ Class: show + save (AJAX) - same pattern you used in inventory
+    function clearProductRow(select){
+      const row = select.closest("tr");
+      row.querySelector(".description").value = "";
+      row.querySelector(".rate").value = "";
+      row.querySelector(".amount").value = "";
+      row.querySelector(".vat").value = "";
+      row.querySelector(".discount").value = 0;
+      row.querySelector(".discount-amt").value = "";
+    }
+
+    function fillProductDetailsFromAjax(select, data){
+      const row = select.closest("tr");
+
+      const description = row.querySelector(".description");
+      const rate = row.querySelector(".rate");
+      const qty = row.querySelector(".qty");
+      const amount = row.querySelector(".amount");
+      const vat = row.querySelector(".vat");
+
+      description.value = data.sales_description || "";
+
+      if(!rate.value){
+        rate.value = data.sales_price || 0;
+      }
+
+      qty.value = qty.value || 1;
+
+      const subtotal = (parseFloat(rate.value)||0) * (parseFloat(qty.value)||0);
+      amount.value = subtotal.toFixed(2);
+
+      const isTaxable = !!data.taxable;
+      vat.value = isTaxable ? ((subtotal * 18) / 100).toFixed(2) : "0.00";
+
+      calculateRow(rate);
+    }
+
+    function fillProductDetailsFromDataAttrs(select){
+      const row = select.closest("tr");
+      const option = select.options[select.selectedIndex];
+
+      const description = row.querySelector(".description");
+      const rate = row.querySelector(".rate");
+      const qty = row.querySelector(".qty");
+      const amount = row.querySelector(".amount");
+      const vat = row.querySelector(".vat");
+
+      if(option && option.value){
+        description.value = option.getAttribute("data-description") || "";
+        if(!rate.value){ rate.value = option.getAttribute("data-rate") || 0; }
+        qty.value = qty.value || 1;
+
+        const subtotal = (parseFloat(rate.value)||0) * (parseFloat(qty.value)||0);
+        amount.value = subtotal.toFixed(2);
+
+        const isTaxable = option.getAttribute("data-taxable") === "true";
+        vat.value = isTaxable ? ((subtotal * 18) / 100).toFixed(2) : "0.00";
+      } else {
+        description.value = "";
+        amount.value = "";
+        vat.value = "";
+      }
+
+      calculateRow(rate);
+    }
+
+    // Class: show + save (AJAX)
     function showAddClass() {
       document.getElementById("addClassBox").style.display = "block";
       const inp = document.getElementById("newClassName");
@@ -587,42 +735,13 @@
       const termsEl = document.getElementById('terms');
       if(!createdEl || !dueEl || !termsEl) return;
 
-      const base = createdEl.value; // yyyy-mm-dd
+      const base = createdEl.value;
       const opt = termsEl.options[termsEl.selectedIndex];
       const days = opt && opt.dataset ? opt.dataset.days : "";
 
-      // Only auto-fill if due date is blank (don’t override user value on edit)
       if(base && days !== "" && !dueEl.value){
         dueEl.value = addDaysISO(base, days);
       }
-    }
-
-    function fillProductDetails(select){
-      const row = select.closest("tr");
-      const option = select.options[select.selectedIndex];
-
-      const description = row.querySelector(".description");
-      const rate = row.querySelector(".rate");
-      const qty = row.querySelector(".qty");
-      const amount = row.querySelector(".amount");
-      const vat = row.querySelector(".vat");
-
-      if(option && option.value){
-        description.value = option.getAttribute("data-description") || "";
-        if(!rate.value){ rate.value = option.getAttribute("data-rate") || 0; } // don’t overwrite edits
-        qty.value = qty.value || 1;
-
-        const subtotal = (parseFloat(rate.value)||0) * (parseFloat(qty.value)||0);
-        amount.value = subtotal.toFixed(2);
-
-        const isTaxable = option.getAttribute("data-taxable") === "true";
-        vat.value = isTaxable ? ((subtotal * 18) / 100).toFixed(2) : "0.00";
-      } else {
-        description.value = "";
-        amount.value = "";
-        vat.value = "";
-      }
-      calculateTotal();
     }
 
     function calculateRow(el){
@@ -653,6 +772,7 @@
       let newRow;
       if(base){
         newRow = base.cloneNode(true);
+
         newRow.querySelector(".product-select").selectedIndex = 0;
         newRow.querySelector(".description").value = "";
         newRow.querySelector(".qty").value = 1;
@@ -718,8 +838,11 @@
     document.addEventListener('DOMContentLoaded', function(){
       const termsEl = document.getElementById('terms');
       const createdEl = document.getElementById('date_created');
+      const shippingEl = document.getElementById('shipping');
+
       if(termsEl) termsEl.addEventListener('change', recalcDue);
       if(createdEl) createdEl.addEventListener('change', recalcDue);
+      if(shippingEl) shippingEl.addEventListener('input', calculateTotal);
 
       calculateTotal();
     });

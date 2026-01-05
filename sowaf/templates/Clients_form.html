@@ -14,7 +14,7 @@
     body { background: #f4f6f8; padding: 30px; }
     .form-container {
       background: #fff; padding: 25px; border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 1100px; margin-top: 5%; margin-left: 29%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 80%; margin-top: 5%; margin-left: 29%;
     }
     h2 { text-align: center; color: #39B54B; margin-bottom: 30px; }
 
@@ -182,27 +182,27 @@
 
           <div class="field">
             <label>Company Name <span style="color:red">*</span></label>
-            <input type="text" name="company" value="{{ client.company|default_if_none:'' }}" required>
+            <input type="text" name="company" value="{{ client.company|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Phone <span style="color:red">*</span></label>
-            <input type="tel" name="phone" value="{{ client.phone|default_if_none:'' }}" required>
+            <input type="tel" name="phone" value="{{ client.phone|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Email <span style="color:red">*</span></label>
-            <input type="email" name="company_email" value="{{ client.company_email|default_if_none:'' }}" required>
+            <input type="email" name="company_email" value="{{ client.company_email|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Address <span style="color:red">*</span></label>
-            <input type="text" name="address" value="{{ client.address|default_if_none:'' }}" required>
+            <input type="text" name="address" value="{{ client.address|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Country <span style="color:red">*</span></label>
-            <input type="text" name="country" value="{{ client.country|default_if_none:'' }}" required>
+            <input type="text" name="country" value="{{ client.country|default_if_none:'' }}">
           </div>
 
           <div class="field">
@@ -223,22 +223,22 @@
         <div class="collapsible-content form-row">
           <div class="field">
             <label>Contact Name <span style="color:red">*</span></label>
-            <input type="text" name="contact_name" value="{{ client.contact_name|default_if_none:'' }}" required>
+            <input type="text" name="contact_name" value="{{ client.contact_name|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Position <span style="color:red">*</span></label>
-            <input type="text" name="position" value="{{ client.position|default_if_none:'' }}" required>
+            <input type="text" name="position" value="{{ client.position|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Contact Phone <span style="color:red">*</span></label>
-            <input type="tel" name="contact" value="{{ client.contact|default_if_none:'' }}" required>
+            <input type="tel" name="contact" value="{{ client.contact|default_if_none:'' }}">
           </div>
 
           <div class="field">
             <label>Contact Email <span style="color:red">*</span></label>
-            <input type="email" name="contact_email" value="{{ client.contact_email|default_if_none:'' }}" required>
+            <input type="email" name="contact_email" value="{{ client.contact_email|default_if_none:'' }}">
           </div>
         </div>
       </div>
@@ -264,7 +264,7 @@
 
           <div class="field">
             <label>Preferred Currency <span style="color:red">*</span></label>
-            <select name="currency" required>
+            <select name="currency">
               {% if client and client.currency and client.currency not in "UGX,USD" %}
                 <option value="{{ client.currency }}" selected hidden>{{ client.currency }}</option>
               {% endif %}
@@ -282,7 +282,7 @@
         <div class="collapsible-content form-row">
           <div class="field">
             <label>Industry / Sector <span style="color:red">*</span></label>
-            <select name="industry" required>
+            <select name="industry">
               {% if client and client.industry and client.industry not in "Consumer products,Energy and natural resources,Financial services,Healthcare,Industrial products,Not for profit,Individual private clients,Public sector,Real estate and construction,Services,Technology, media and telecommunications,Travel, tourism and leisure,Others" %}
                 <option value="{{ client.industry }}" selected hidden>{{ client.industry }}</option>
               {% endif %}
@@ -305,7 +305,7 @@
 
           <div class="field">
             <label>Status <span style="color:red">*</span></label>
-            <select name="status" required>
+            <select name="status">
               {% if client and client.status and client.status not in "Active,Inactive" %}
                 <option value="{{ client.status }}" selected hidden>{{ client.status }}</option>
               {% endif %}

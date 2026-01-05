@@ -190,7 +190,10 @@ def add_products(request):
     ]
 
     # ✅ Use the same "level1_group" idea you already rely on in General Ledger
-    income_accounts = [a for a in parent_accounts if getattr(a, "level1_group", "") == "Income"]
+    income_accounts = [
+        a for a in parent_accounts
+        if getattr(a, "level1_group", "") == "Cash and Cash"
+    ]
 
     # Expenses dropdown should include ALL Expense-side accounts (including COGS if you classify it there)
     expense_accounts = [
@@ -265,7 +268,7 @@ def product_edit(request, pk: int):
                             quantity=int(qty) if qty else 1
                         )
         else:
-            product.bundleitem_set.all().delete()
+            product.bundle_items.all().delete()
 
         action = request.POST.get("save_action")
         if action == "save&new":

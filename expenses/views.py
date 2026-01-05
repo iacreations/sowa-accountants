@@ -5,6 +5,7 @@ from django.db.models.functions import Coalesce
 from django.db.models import Sum, Value, DecimalField, Prefetch
 from django.views.decorators.csrf import csrf_exempt
 import json
+from django.views.decorators.http import require_GET
 from django.urls import reverse
 from django.db import transaction
 from django.shortcuts import render, redirect, get_object_or_404
@@ -12,14 +13,15 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.db.models import Q, Sum
 from django.core.paginator import Paginator
-from .models import (Expense, ExpenseCategoryLine, ExpenseItemLine,ColumnPreference,Bill, BillCategoryLine, BillItemLine,PurchaseOrder, PurchaseOrderLine,Cheque, ChequeCategoryLine, ChequeItemLine,SupplierCredit,SupplierCreditLine,PayDownCredit,CreditCardCredit,CreditCardCreditCategoryLine,CreditCardCreditItemLine)
+from .models import (Expense, ExpenseCategoryLine, ExpenseItemLine,ColumnPreference,Bill, BillCategoryLine, BillItemLine,PurchaseOrder, PurchaseOrderLine,Cheque, ChequeCategoryLine, ChequeItemLine,SupplierCredit,SupplierCreditLine,PayDownCredit,CreditCardCredit,CreditCardCreditCategoryLine,CreditCardCreditItemLine,ChequeBillLine,ChequeOpenBalanceLine,SupplierRefund)
 from sowaf.models import Newcustomer, Newsupplier
 from accounts.models import Account, JournalEntry, JournalLine
 from accounts.utils import deposit_accounts_qs, expense_accounts_qs
 from collections import defaultdict
 from django.db import transaction
+from django.views.decorators.http import require_http_methods
 from inventory.models import Product,Pclass
-from .utils import generate_unique_ref_no
+from .utils import (generate_unique_ref_no,_save_cheque_bill_allocations,bankish_q)
 
 # Expenses view
 
@@ -69,7 +71,211 @@ def generate_unique_po_no(prefix="PO"):
     next_num = last_num + 1
     return f"{prefix}{next_num:08d}"
 
+
+
+# ----------------------------
+# HELPERS: BILL BALANCE + SUPPLIER OPEN BALANCE
+# ----------------------------
+
+def _bill_balance(bill: "Bill", exclude_cheque_id: int | None = None) -> Decimal:
+    """
+    Bill balance = total_amount - sum(applied via cheques).
+    Optionally excludes one cheque (useful during edit).
+    """
+    total = _dec(bill.total_amount)
+
+    qs = ChequeBillLine.objects.filter(bill=bill)
+    if exclude_cheque_id:
+        qs = qs.exclude(cheque_id=exclude_cheque_id)
+
+    applied = qs.aggregate(s=Sum("amount_applied"))["s"] or Decimal("0.00")
+
+    bal = total - _dec(applied)
+    return bal if bal > 0 else Decimal("0.00")
+
+
+# def _supplier_open_balance(supplier_id: int | None, exclude_cheque_id: int | None = None) -> Decimal:
+#     """
+#     Total open balance across ALL supplier bills.
+#     Optionally excludes allocations from one cheque (edit-safe).
+#     """
+#     if not supplier_id:
+#         return Decimal("0.00")
+
+#     bills = Bill.objects.filter(supplier_id=supplier_id)
+#     total_open = Decimal("0.00")
+
+#     for b in bills:
+#         total_open += _bill_balance(b, exclude_cheque_id=exclude_cheque_id)
+
+#     return total_open
+
+
+def _account_credit_balance(account: "Account") -> Decimal:
+    """
+    Returns credit balance for an account:
+      opening_balance + SUM(credit - debit)
+    If negative, return 0 for our purpose here.
+    """
+    opening = Decimal(str(getattr(account, "opening_balance", 0) or "0"))
+    agg = (
+        JournalLine.objects
+        .filter(account=account)
+        .aggregate(
+            d=Sum("debit"),
+            c=Sum("credit"),
+        )
+    )
+    deb = Decimal(str(agg["d"] or "0"))
+    cred = Decimal(str(agg["c"] or "0"))
+
+    bal = opening + (cred - deb)
+    return bal if bal > 0 else Decimal("0.00")
+
+
+def _supplier_open_balance_amount(supplier: "Newsupplier") -> Decimal:
+    """
+    Open balance = Supplier A/P subaccount credit balance - total unpaid bill balances
+    (Anything in supplier A/P not represented by open bill balances is considered "open balance".)
+    """
+    if not supplier:
+        return Decimal("0.00")
+
+    supplier_acc = _get_or_create_supplier_ap_subaccount(supplier)
+
+    supplier_ap_bal = _account_credit_balance(supplier_acc)  # credit balance in A/P
+
+    # total unpaid bills for this supplier
+    total_unpaid_bills = Decimal("0.00")
+    for b in Bill.objects.filter(supplier=supplier):
+        total_unpaid_bills += _bill_balance(b)
+
+    open_bal = supplier_ap_bal - total_unpaid_bills
+    return open_bal if open_bal > 0 else Decimal("0.00")
+
+
+
+
+def _get_or_create_named_account(account_name: str, account_type: str, detail_type: str = "") -> Account:
+    acc = Account.objects.filter(account_name=account_name, is_active=True).first()
+    if acc:
+        return acc
+
+    return Account.objects.create(
+        account_name=account_name,
+        account_type=account_type,              # uses your codes e.g CURRENT_ASSET, CURRENT_LIABILITY
+        detail_type=detail_type or None,
+        is_active=True,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
+
+def _get_supplier_advance_account() -> "Account":
+    acc = Account.objects.filter(account_name__iexact="Supplier Advances", is_active=True).first()
+    if acc:
+        return acc
+
+    return Account.objects.create(
+        account_name="Supplier Advances",
+        account_type="CURRENT_LIABILITY",
+        detail_type="Supplier Advances",
+        is_active=True,
+    )
+
+
+def _supplier_prepayment_balance(supplier) -> Decimal:
+    if not supplier:
+        return Decimal("0.00")
+
+    adv = _get_supplier_advance_account()
+    agg = (
+        JournalLine.objects
+        .filter(account=adv, supplier=supplier)
+        .aggregate(
+            d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+    )
+    debit = Decimal(str(agg["d"] or "0.00"))
+    credit = Decimal(str(agg["c"] or "0.00"))
+
+    # Asset normal balance: DEBIT
+    bal = debit - credit
+    return bal if bal > 0 else Decimal("0.00")
+
+
+
+
+def _save_cheque_open_balance(request, cheque: "Cheque"):
+    """
+    Reads posted field: open_balance_amount
+    Saves it as ChequeOpenBalanceLine (edit-safe).
+    """
+    # delete old line if any (edit-safe)
+    ChequeOpenBalanceLine.objects.filter(cheque=cheque).delete()
+
+    raw = request.POST.get("open_balance_amount")
+    if raw is None or raw == "":
+        return
+
+    amt = _dec(raw, "0")
+    if amt <= 0:
+        return
+
+    # NOTE: do NOT clamp. If they enter more than current open balance, that becomes supplier credit.
+    ChequeOpenBalanceLine.objects.create(
+        cheque=cheque,
+        amount_applied=amt
+    )
+
+
 # posting to the chart of accounts
+
+def _post_supplier_refund_to_ledger(refund: SupplierRefund):
+    """
+    Supplier refund posting (supplier pays you back):
+
+      DR Bank/Cash (received_to)
+      CR Supplier Advances (Asset)     (reduces your prepaid balance)
+    """
+    amt = Decimal(str(refund.amount or "0.00"))
+    if amt <= 0:
+        JournalEntry.objects.filter(source_type="SUPPLIER_REFUND", source_id=refund.id).delete()
+        return
+
+    JournalEntry.objects.filter(source_type="SUPPLIER_REFUND", source_id=refund.id).delete()
+
+    adv = _get_supplier_advance_account()
+    bank = refund.received_to
+
+    entry = JournalEntry.objects.create(
+        date=refund.refund_date or timezone.localdate(),
+        description=f"Supplier Refund {refund.id:04d} – {getattr(refund.supplier, 'supplier_name', str(refund.supplier))}",
+        source_type="SUPPLIER_REFUND",
+        source_id=refund.id,
+    )
+
+    # DR Bank/Cash
+    JournalLine.objects.create(
+        entry=entry,
+        account=bank,
+        debit=amt,
+        credit=Decimal("0.00"),
+        supplier=refund.supplier,
+        customer=None,
+    )
+
+    # CR Supplier Advances
+    JournalLine.objects.create(
+        entry=entry,
+        account=adv,
+        debit=Decimal("0.00"),
+        credit=amt,
+        supplier=refund.supplier,
+        customer=None,
+    )
+
+
 def _post_expense_to_ledger(expense: Expense):
     """
     Post an Expense document into the General Ledger.
@@ -346,323 +552,357 @@ def _post_bill_to_ledger(bill: "Bill"):
     )
 
 # posting cheque to ledger 
-def _post_cheque_to_ledger(chq: Cheque):
+# ============================
+
+def _post_cheque_to_ledger(cheq: "Cheque"):
     """
-    Post a Cheque payment to the General Ledger.
+    CHEQUE posting (supports):
+      A) Paying Bills (allocations)     -> DR Supplier A/P subledger, CR Bank
+      B) Paying Open Balance (new)      -> DR Supplier A/P subledger, CR Bank
+      C) Direct expenses (cat/item)     -> DR Expense/COGS, CR Bank
 
-    Pattern:
-      DR Expense / Cost accounts (category + item lines)
-      CR Bank Account (the cheque bank_account)
-
-    We only credit the bank for the total debits we actually post.
+    Total CR Bank = (alloc_total + open_total + direct_total)
     """
 
-    total = Decimal(str(chq.total_amount or "0.00"))
-    if total == 0:
-        # remove any existing JE if cheque was cleared / zeroed out
-        JournalEntry.objects.filter(
-            source_type="cheque",
-            source_id=chq.id,
-        ).delete()
-        return
+    # -------- totals --------
+    alloc_total = (
+        ChequeBillLine.objects.filter(cheque=cheq)
+        .aggregate(s=Sum("amount_applied"))["s"]
+        or Decimal("0.00")
+    )
 
-    # Remove previous journal entry for this cheque (for edits)
-    JournalEntry.objects.filter(
-        source_type="cheque",
-        source_id=chq.id,
-    ).delete()
+    open_total = (
+        ChequeOpenBalanceLine.objects.filter(cheque=cheq)
+        .aggregate(s=Sum("amount_applied"))["s"]
+        or Decimal("0.00")
+    )
 
-    # --- Collect debits per account ---
-    debits_by_account: dict[Account, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    # collect direct expenses
+    expense_by_account = defaultdict(lambda: Decimal("0.00"))
 
-    # Category lines → direct GL accounts
-    for cl in ChequeCategoryLine.objects.filter(cheque=chq).select_related("category"):
+    # Category lines -> expense accounts directly
+    for cl in cheq.category_lines.select_related("category"):
         acc = cl.category
-        amt = Decimal(str(cl.amount or "0.00"))
+        amt = Decimal(str(cl.amount or "0"))
         if acc and amt > 0:
-            debits_by_account[acc] += amt
+            expense_by_account[acc] += amt
 
-    # Item lines → use product expense / cogs account if set, else fallback
-    from .views import _find_control_account  # or move helper to a common module
-
+    # Item lines -> product expense/cogs else fallback
     default_exp_acc = (
         _find_control_account(name_contains="Cost of Sales")
         or _find_control_account(name_contains="Expense")
     )
 
-    for il in ChequeItemLine.objects.filter(cheque=chq).select_related("product"):
-        line_amt = Decimal(str(il.amount or "0.00"))
-        if line_amt <= 0:
+    for il in cheq.item_lines.select_related("product"):
+        amt = Decimal(str(il.amount or "0"))
+        if amt <= 0:
             continue
 
         acc = None
-        prod = il.product
-        if prod is not None:
-            acc = getattr(prod, "expense_account", None) or getattr(prod, "cogs_account", None)
+        if il.product:
+            acc = getattr(il.product, "expense_account", None) or getattr(il.product, "cogs_account", None)
 
         if not acc:
             acc = default_exp_acc
 
-        if not acc:
-            continue
+        if acc:
+            expense_by_account[acc] += amt
 
-        debits_by_account[acc] += line_amt
+    direct_total = sum(expense_by_account.values()) if expense_by_account else Decimal("0.00")
 
-    debit_total = sum(debits_by_account.values())
-    if debit_total == 0:
+    total_bank_credit = (alloc_total + open_total + direct_total)
+
+    # Nothing to post?
+    if total_bank_credit <= 0:
+        # if you have a journal entry link on Cheque, delete/clear here if you want
         return
 
-    # --- Build JournalEntry description ---
-    bits = [f"Cheque {chq.cheque_no}"]
-    if chq.payee_supplier and getattr(chq.payee_supplier, "company_name", None):
-        bits.append(f"– {chq.payee_supplier.company_name}")
-    elif chq.payee_name:
-        bits.append(f"– {chq.payee_name}")
-    description = " ".join(bits)
+    # -------- accounts --------
+    if not cheq.bank_account_id:
+        raise ValueError("Cheque must have a bank account.")
 
-    entry_date = chq.payment_date or timezone.localdate()
+    bank_acc = cheq.bank_account
 
-    entry = JournalEntry.objects.create(
-        date=entry_date,
-        description=description,
-        source_type="cheque",
-        source_id=chq.id,
-    )
+    # Supplier AP subledger account (only if supplier exists AND we have alloc/open totals)
+    supplier_acc = None
+    supplier_ap_debit = (alloc_total + open_total)
+    if cheq.payee_supplier_id and supplier_ap_debit > 0:
+        supplier_acc = _get_or_create_supplier_ap_subaccount(cheq.payee_supplier)
 
-    # --- DR expense accounts ---
-    for acc, amt in debits_by_account.items():
-        if not acc or amt <= 0:
-            continue
+    # -------- journal entry header --------
+    entry_date = cheq.payment_date or timezone.localdate()
+    vendor = cheq.payee_supplier.company_name if cheq.payee_supplier else (cheq.payee_name or "")
+    desc_bits = [f"Cheque {cheq.cheque_no}"]
+    if vendor:
+        desc_bits.append(vendor)
+    description = " – ".join(desc_bits)
+
+    # If you already have cheq.journal_entry like Bill, keep it edit-safe
+    entry = getattr(cheq, "journal_entry", None)
+    if entry is None:
+        entry = JournalEntry.objects.create(
+            date=entry_date,
+            description=description,
+            source_type="cheque",
+            source_id=cheq.id,
+        )
+        # only if your Cheque has journal_entry field:
+        if hasattr(cheq, "journal_entry_id"):
+            cheq.journal_entry = entry
+            cheq.save(update_fields=["journal_entry"])
+    else:
+        entry.date = entry_date
+        entry.description = description
+        entry.source_type = "cheque"
+        entry.source_id = cheq.id
+        entry.save(update_fields=["date", "description", "source_type", "source_id"])
+
+    # Replace JE lines (edit-safe)
+    JournalLine.objects.filter(entry=entry).delete()
+
+    # -------- DR: expenses (direct) --------
+    for acc, amt in expense_by_account.items():
+        if amt > 0:
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=amt,
+                credit=Decimal("0.00"),
+            )
+
+    # -------- DR: Supplier A/P (bills + open balance) --------
+    if supplier_acc and supplier_ap_debit > 0:
         JournalLine.objects.create(
             entry=entry,
-            account=acc,
-            debit=amt,
+            account=supplier_acc,
+            debit=supplier_ap_debit,
             credit=Decimal("0.00"),
         )
 
-    # --- CR bank account ---
-    if chq.bank_account and debit_total > 0:
-        JournalLine.objects.create(
-            entry=entry,
-            account=chq.bank_account,
-            debit=Decimal("0.00"),
-            credit=debit_total,
-        )
+    # -------- CR: Bank (total cheque) --------
+    JournalLine.objects.create(
+        entry=entry,
+        account=bank_acc,
+        debit=Decimal("0.00"),
+        credit=total_bank_credit,
+    )
+
+
 # posting supplier credit to ledger
 
-def _post_supplier_credit_to_ledger(credit: SupplierCredit):
-    """
-    Post a Supplier Credit to the GL.
+# def _post_supplier_credit_to_ledger(credit: SupplierCredit):
+#     """
+#     Post a Supplier Credit to the GL.
 
-    Pattern (reverse of Bill):
-      DR Accounts Payable
-      CR Expense / Cost accounts
+#     Pattern (reverse of Bill):
+#       DR Accounts Payable
+#       CR Expense / Cost accounts
 
-    This effectively reduces liability and reverses expense.
-    """
+#     This effectively reduces liability and reverses expense.
+#     """
 
-    total = Decimal(str(credit.total_amount or "0"))
-    if total == 0:
-        JournalEntry.objects.filter(
-            source_type="supplier_credit",
-            source_id=credit.id,
-        ).delete()
-        return
+#     total = Decimal(str(credit.total_amount or "0"))
+#     if total == 0:
+#         JournalEntry.objects.filter(
+#             source_type="supplier_credit",
+#             source_id=credit.id,
+#         ).delete()
+#         return
 
-    # Remove previous journal if editing
-    JournalEntry.objects.filter(
-        source_type="supplier_credit",
-        source_id=credit.id,
-    ).delete()
+#     # Remove previous journal if editing
+#     JournalEntry.objects.filter(
+#         source_type="supplier_credit",
+#         source_id=credit.id,
+#     ).delete()
 
-    # Collect credits per expense account
-    expense_by_account: dict[Account, Decimal] = defaultdict(lambda: Decimal("0.00"))
+#     # Collect credits per expense account
+#     expense_by_account: dict[Account, Decimal] = defaultdict(lambda: Decimal("0.00"))
 
-    for line in credit.lines.select_related("category"):
-        if not line.category:
-            continue
-        amt = Decimal(str(line.amount or "0"))
-        if amt <= 0:
-            continue
-        expense_by_account[line.category] += amt
+#     for line in credit.lines.select_related("category"):
+#         if not line.category:
+#             continue
+#         amt = Decimal(str(line.amount or "0"))
+#         if amt <= 0:
+#             continue
+#         expense_by_account[line.category] += amt
 
-    expense_total = sum(expense_by_account.values())
-    if expense_total == 0:
-        return
+#     expense_total = sum(expense_by_account.values())
+#     if expense_total == 0:
+#         return
 
-    # Accounts Payable control account
-    ap_account = (
-        _find_control_account(detail_type="Accounts Payable (A/P)")
-        or _find_control_account(name_contains="payable")
-    )
-    if not ap_account:
-        # No A/P configured; skip posting
-        return
+#     # Accounts Payable control account
+#     ap_account = (
+#         _find_control_account(detail_type="Accounts Payable (A/P)")
+#         or _find_control_account(name_contains="payable")
+#     )
+#     if not ap_account:
+#         # No A/P configured; skip posting
+#         return
 
-    entry_date = credit.credit_date or timezone.localdate()
-    bits = [f"Supplier Credit {credit.ref_no}"]
-    if credit.supplier and getattr(credit.supplier, "company_name", None):
-        bits.append(f"– {credit.supplier.company_name}")
-    elif credit.supplier_name:
-        bits.append(f"– {credit.supplier_name}")
-    description = " ".join(bits)
+#     entry_date = credit.credit_date or timezone.localdate()
+#     bits = [f"Supplier Credit {credit.ref_no}"]
+#     if credit.supplier and getattr(credit.supplier, "company_name", None):
+#         bits.append(f"– {credit.supplier.company_name}")
+#     elif credit.supplier_name:
+#         bits.append(f"– {credit.supplier_name}")
+#     description = " ".join(bits)
 
-    entry = JournalEntry.objects.create(
-        date=entry_date,
-        description=description,
-        source_type="supplier_credit",
-        source_id=credit.id,
-    )
+#     entry = JournalEntry.objects.create(
+#         date=entry_date,
+#         description=description,
+#         source_type="supplier_credit",
+#         source_id=credit.id,
+#     )
 
-    # CR Expense accounts
-    for acc, amt in expense_by_account.items():
-        if not acc or amt <= 0:
-            continue
-        JournalLine.objects.create(
-            entry=entry,
-            account=acc,
-            debit=Decimal("0.00"),
-            credit=amt,
-        )
+#     # CR Expense accounts
+#     for acc, amt in expense_by_account.items():
+#         if not acc or amt <= 0:
+#             continue
+#         JournalLine.objects.create(
+#             entry=entry,
+#             account=acc,
+#             debit=Decimal("0.00"),
+#             credit=amt,
+#         )
 
-    # DR Accounts Payable
-    JournalLine.objects.create(
-        entry=entry,
-        account=ap_account,
-        debit=expense_total,
-        credit=Decimal("0.00"),
-    )
+#     # DR Accounts Payable
+#     JournalLine.objects.create(
+#         entry=entry,
+#         account=ap_account,
+#         debit=expense_total,
+#         credit=Decimal("0.00"),
+#     )
 # posting pay down credit to gl
-def _post_paydown_credit_to_ledger(pdc: PayDownCredit):
-    """
-    Post a PayDownCredit into the GL.
+# def _post_paydown_credit_to_ledger(pdc: PayDownCredit):
+#     """
+#     Post a PayDownCredit into the GL.
 
-      DR Credit Card liability
-      CR Bank / Cash account
-    """
-    amt = Decimal(str(pdc.amount or "0"))
+#       DR Credit Card liability
+#       CR Bank / Cash account
+#     """
+#     amt = Decimal(str(pdc.amount or "0"))
 
-    # If zero → delete any existing journal & stop
-    if amt == 0:
-        JournalEntry.objects.filter(
-            source_type="paydown_credit",
-            source_id=pdc.id,
-        ).delete()
-        return
+#     # If zero → delete any existing journal & stop
+#     if amt == 0:
+#         JournalEntry.objects.filter(
+#             source_type="paydown_credit",
+#             source_id=pdc.id,
+#         ).delete()
+#         return
 
-    # Remove previous entry (for edits)
-    JournalEntry.objects.filter(
-        source_type="paydown_credit",
-        source_id=pdc.id,
-    ).delete()
+#     # Remove previous entry (for edits)
+#     JournalEntry.objects.filter(
+#         source_type="paydown_credit",
+#         source_id=pdc.id,
+#     ).delete()
 
-    bits = [f"Pay down credit card {pdc.credit_card.account_name}"]
-    if pdc.ref_no:
-        bits.append(f"(Ref {pdc.ref_no})")
-    if pdc.payee_supplier and getattr(pdc.payee_supplier, "company_name", None):
-        bits.append(f"– {pdc.payee_supplier.company_name}")
-    elif pdc.payee_name:
-        bits.append(f"– {pdc.payee_name}")
+#     bits = [f"Pay down credit card {pdc.credit_card.account_name}"]
+#     if pdc.ref_no:
+#         bits.append(f"(Ref {pdc.ref_no})")
+#     if pdc.payee_supplier and getattr(pdc.payee_supplier, "company_name", None):
+#         bits.append(f"– {pdc.payee_supplier.company_name}")
+#     elif pdc.payee_name:
+#         bits.append(f"– {pdc.payee_name}")
 
-    description = " ".join(bits)
-    entry_date = pdc.payment_date or timezone.localdate()
+#     description = " ".join(bits)
+#     entry_date = pdc.payment_date or timezone.localdate()
 
-    entry = JournalEntry.objects.create(
-        date=entry_date,
-        description=description,
-        source_type="paydown_credit",
-        source_id=pdc.id,
-    )
+#     entry = JournalEntry.objects.create(
+#         date=entry_date,
+#         description=description,
+#         source_type="paydown_credit",
+#         source_id=pdc.id,
+#     )
 
-    # DR Credit Card
-    JournalLine.objects.create(
-        entry=entry,
-        account=pdc.credit_card,
-        debit=amt,
-        credit=Decimal("0.00"),
-    )
+#     # DR Credit Card
+#     JournalLine.objects.create(
+#         entry=entry,
+#         account=pdc.credit_card,
+#         debit=amt,
+#         credit=Decimal("0.00"),
+#     )
 
-    # CR Bank
-    JournalLine.objects.create(
-        entry=entry,
-        account=pdc.bank_account,
-        debit=Decimal("0.00"),
-        credit=amt,
-    )
+#     # CR Bank
+#     JournalLine.objects.create(
+#         entry=entry,
+#         account=pdc.bank_account,
+#         debit=Decimal("0.00"),
+#         credit=amt,
+#     )
 # post credit card 
-def _post_credit_card_credit_to_ledger(cc: CreditCardCredit):
-    """
-    Post a CreditCardCredit into the GL.
+# def _post_credit_card_credit_to_ledger(cc: CreditCardCredit):
+#     """
+#     Post a CreditCardCredit into the GL.
 
-    Concept (QuickBooks-style):
+#     Concept (QuickBooks-style):
 
-      For each category line:
-        DR Credit card liability
-        CR Expense/Other account
+#       For each category line:
+#         DR Credit card liability
+#         CR Expense/Other account
 
-      (Item logic can be extended later once inventory mapping is ready.)
-    """
-    # Remove any previous entries (for edits or zeroing)
-    JournalEntry.objects.filter(
-        source_type="credit_card_credit",
-        source_id=cc.id,
-    ).delete()
+#       (Item logic can be extended later once inventory mapping is ready.)
+#     """
+#     # Remove any previous entries (for edits or zeroing)
+#     JournalEntry.objects.filter(
+#         source_type="credit_card_credit",
+#         source_id=cc.id,
+#     ).delete()
 
-    # Sum category amounts (only these affect GL for now)
-    cat_amount = cc.category_lines.aggregate(
-        total=Coalesce(
-            Sum("amount"),
-            Value(Decimal("0.00"), output_field=DecimalField(max_digits=18, decimal_places=2))
-        )
-    )["total"] or Decimal("0.00")
+#     # Sum category amounts (only these affect GL for now)
+#     cat_amount = cc.category_lines.aggregate(
+#         total=Coalesce(
+#             Sum("amount"),
+#             Value(Decimal("0.00"), output_field=DecimalField(max_digits=18, decimal_places=2))
+#         )
+#     )["total"] or Decimal("0.00")
 
-    total = Decimal(cat_amount)
+#     total = Decimal(cat_amount)
 
-    # Update stored total
-    cc.total_amount = total
-    cc.save(update_fields=["total_amount"])
+#     # Update stored total
+#     cc.total_amount = total
+#     cc.save(update_fields=["total_amount"])
 
-    if total == 0:
-        # nothing to post
-        return
+#     if total == 0:
+#         # nothing to post
+#         return
 
-    bits = [f"Credit card credit – {cc.credit_card.account_name}"]
-    if cc.ref_no:
-        bits.append(f"(Ref {cc.ref_no})")
-    if cc.payee_supplier and getattr(cc.payee_supplier, "company_name", None):
-        bits.append(f"– {cc.payee_supplier.company_name}")
-    elif cc.payee_name:
-        bits.append(f"– {cc.payee_name}")
-    description = " ".join(bits)
+#     bits = [f"Credit card credit – {cc.credit_card.account_name}"]
+#     if cc.ref_no:
+#         bits.append(f"(Ref {cc.ref_no})")
+#     if cc.payee_supplier and getattr(cc.payee_supplier, "company_name", None):
+#         bits.append(f"– {cc.payee_supplier.company_name}")
+#     elif cc.payee_name:
+#         bits.append(f"– {cc.payee_name}")
+#     description = " ".join(bits)
 
-    entry_date = cc.credit_date or timezone.localdate()
+#     entry_date = cc.credit_date or timezone.localdate()
 
-    entry = JournalEntry.objects.create(
-        date=entry_date,
-        description=description,
-        source_type="credit_card_credit",
-        source_id=cc.id,
-    )
+#     entry = JournalEntry.objects.create(
+#         date=entry_date,
+#         description=description,
+#         source_type="credit_card_credit",
+#         source_id=cc.id,
+#     )
 
-    # DR credit card (liability decreases)
-    JournalLine.objects.create(
-        entry=entry,
-        account=cc.credit_card,
-        debit=total,
-        credit=Decimal("0.00"),
-    )
+#     # DR credit card (liability decreases)
+#     JournalLine.objects.create(
+#         entry=entry,
+#         account=cc.credit_card,
+#         debit=total,
+#         credit=Decimal("0.00"),
+#     )
 
-    # Credit per category line
-    for line in cc.category_lines.select_related("category"):
-        amt = Decimal(str(line.amount or "0"))
-        if amt == 0:
-            continue
-        JournalLine.objects.create(
-            entry=entry,
-            account=line.category,
-            debit=Decimal("0.00"),
-            credit=amt,
-        )
+#     # Credit per category line
+#     for line in cc.category_lines.select_related("category"):
+#         amt = Decimal(str(line.amount or "0"))
+#         if amt == 0:
+#             continue
+#         JournalLine.objects.create(
+#             entry=entry,
+#             account=line.category,
+#             debit=Decimal("0.00"),
+#             credit=amt,
+#         )
 
 # all expenses
 
@@ -1282,6 +1522,11 @@ def generate_unique_bill_no():
     return f"{base:08d}"
 
 # adding a bill
+def _dec(x, default="0.00") -> Decimal:
+    try:
+        return Decimal(str(x if x not in (None, "") else default))
+    except Exception:
+        return Decimal(default)
 
 @transaction.atomic
 def add_bill(request):
@@ -1392,7 +1637,7 @@ def add_bill(request):
         bill.total_amount = total
         bill.save(update_fields=["total_amount"])
 
-        # ✅ Post to ledger: Dr Expenses/Items, Cr Accounts Payable
+        # Post to ledger: Dr Expenses/Items, Cr Accounts Payable
         _post_bill_to_ledger(bill)
 
         action = request.POST.get("save_action") or "save"
@@ -1530,7 +1775,7 @@ def edit_bill(request, pk: int):
         bill.total_amount = total
         bill.save(update_fields=["total_amount"])
 
-        # ✅ Update ledger entry (rewrite lines)
+        # Update ledger entry (rewrite lines)
         _post_bill_to_ledger(bill)
 
         action = request.POST.get("save_action") or "save"
@@ -1677,36 +1922,139 @@ def generate_unique_cheque_no():
     last = Cheque.objects.order_by("-id").first()
     nxt = (last.id + 1) if last else 1
     return f"{nxt:06d}"
+def _account_credit_balance(account: "Account") -> Decimal:
+    """
+    Returns credit balance for an account:
+      opening_balance + SUM(credit - debit)
+    If negative, return 0 for our purpose here.
+    """
+    opening = Decimal(str(getattr(account, "opening_balance", 0) or "0"))
+    agg = (
+        JournalLine.objects
+        .filter(account=account)
+        .aggregate(
+            d=Sum("debit"),
+            c=Sum("credit"),
+        )
+    )
+    deb = Decimal(str(agg["d"] or "0"))
+    cred = Decimal(str(agg["c"] or "0"))
+
+    bal = opening + (cred - deb)
+    return bal if bal > 0 else Decimal("0.00")
+
+
+def _supplier_open_balance_amount(supplier: "Newsupplier") -> Decimal:
+    """
+    Open balance = Supplier A/P subaccount credit balance - total unpaid bill balances
+    (Anything in supplier A/P not represented by open bill balances is considered "open balance".)
+    """
+    if not supplier:
+        return Decimal("0.00")
+
+    supplier_acc = _get_or_create_supplier_ap_subaccount(supplier)
+
+    supplier_ap_bal = _account_credit_balance(supplier_acc)  # credit balance in A/P
+
+    # total unpaid bills for this supplier
+    total_unpaid_bills = Decimal("0.00")
+    for b in Bill.objects.filter(supplier=supplier):
+        total_unpaid_bills += _bill_balance(b)
+
+    open_bal = supplier_ap_bal - total_unpaid_bills
+    return open_bal if open_bal > 0 else Decimal("0.00")
+
+
+def _save_cheque_open_balance(request, cheque: "Cheque"):
+    """
+    Reads posted field: open_balance_amount
+    Saves it as ChequeOpenBalanceLine (edit-safe).
+    """
+    # delete old line if any (edit-safe)
+    ChequeOpenBalanceLine.objects.filter(cheque=cheque).delete()
+
+    raw = request.POST.get("open_balance_amount")
+    if raw is None or raw == "":
+        return
+
+    amt = _dec(raw, "0")
+    if amt <= 0:
+        return
+
+    # NOTE: do NOT clamp. If they enter more than current open balance, that becomes supplier credit.
+    ChequeOpenBalanceLine.objects.create(
+        cheque=cheque,
+        amount_applied=amt
+    )
+
+@require_GET
+def outstanding_bills_api(request):
+    supplier_id = request.GET.get("supplier")
+    if not supplier_id:
+        return JsonResponse({"bills": [], "open_balance": "0.00"})
+
+    supplier = Newsupplier.objects.filter(pk=supplier_id).first()
+    if not supplier:
+        return JsonResponse({"bills": [], "open_balance": "0.00"})
+
+    bills_payload = []
+
+    # compute balances map
+    applied_map = dict(
+        ChequeBillLine.objects
+        .filter(bill__supplier_id=supplier_id)
+        .values("bill_id").annotate(s=Sum("amount_applied"))
+        .values_list("bill_id", "s")
+    )
+
+    for b in Bill.objects.filter(supplier_id=supplier_id).order_by("-bill_date"):
+        total = Decimal(str(b.total_amount or "0"))
+        applied = Decimal(str(applied_map.get(b.id) or "0"))
+        balance = total - applied
+        if balance <= 0:
+            continue
+
+        bills_payload.append({
+            "id": b.id,
+            "bill_no": b.bill_no,
+            "bill_date": b.bill_date.strftime("%Y-%m-%d") if b.bill_date else None,
+            "due_date": b.due_date.strftime("%Y-%m-%d") if b.due_date else None,
+            "total": str(total),
+            "balance": str(balance),
+        })
+
+    open_balance = _supplier_open_balance_amount(supplier)
+
+    return JsonResponse({
+        "bills": bills_payload,
+        "open_balance": str(open_balance),
+    })
+
 # add cheque
 @transaction.atomic
 def add_cheque(request):
     if request.method == "POST":
+        expense_qs = expense_accounts_qs()
+
+        supplier_id = request.POST.get("payee_supplier") or ""
+        payee_name  = request.POST.get("payee_name") or ""
+        bank_id     = request.POST.get("bank_account") or ""
+        mailing     = request.POST.get("mailing_address") or ""
+        payment_date= _parse_ymd(request.POST.get("payment_date"), timezone.localdate())
+        cheque_no   = (request.POST.get("cheque_no") or "").strip()
+        location    = request.POST.get("location") or ""
+        memo        = request.POST.get("memo") or ""
+        attachment  = request.FILES.get("attachments")
+
+        supplier = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
+        bank_acc = Account.objects.filter(pk=bank_id).first() if bank_id else None
+
         with transaction.atomic():
-            expense_qs = expense_accounts_qs()
-            bank_qs    = deposit_accounts_qs()
-
-            supplier_id     = request.POST.get("payee_supplier") or ""
-            payee_name      = request.POST.get("payee_name") or ""
-            bank_account_id = request.POST.get("bank_account")
-            mailing_address = request.POST.get("mailing_address") or ""
-            payment_date    = request.POST.get("payment_date") or timezone.localdate()
-            cheque_no       = request.POST.get("cheque_no") or ""
-            location        = request.POST.get("location") or ""
-            memo            = request.POST.get("memo") or ""
-            attachment      = request.FILES.get("attachments")
-
-            bank_account = get_object_or_404(bank_qs, pk=bank_account_id)
-            supplier     = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
-
-            # ensure unique cheque no
-            if not cheque_no or Cheque.objects.filter(cheque_no=cheque_no).exists():
-                cheque_no = generate_unique_cheque_no()
-
-            chq = Cheque.objects.create(
-                payee_name=payee_name,
+            cheque = Cheque.objects.create(
                 payee_supplier=supplier,
-                bank_account=bank_account,
-                mailing_address=mailing_address,
+                payee_name="" if supplier else (payee_name or ""),
+                bank_account=bank_acc,
+                mailing_address=mailing,
                 payment_date=payment_date,
                 cheque_no=cheque_no,
                 location=location,
@@ -1714,224 +2062,334 @@ def add_cheque(request):
                 attachments=attachment,
             )
 
-            total = Decimal("0.00")
+            total_direct = Decimal("0.00")
 
             # ---------- Category lines ----------
-            cat_category_ids = request.POST.getlist("cat_category[]")
-            cat_descs        = request.POST.getlist("cat_desc[]")
-            cat_amounts      = request.POST.getlist("cat_amount[]")
-            cat_billable     = set(request.POST.getlist("cat_billable[]"))
-            cat_customer_ids = request.POST.getlist("cat_customer[]")
-            cat_class_ids    = request.POST.getlist("cat_class[]")
+            cat_ids   = request.POST.getlist("cat_category[]")
+            cat_descs = request.POST.getlist("cat_desc[]")
+            cat_amts  = request.POST.getlist("cat_amount[]")
+            cat_billable = set(request.POST.getlist("cat_billable[]"))
+            cat_cust  = request.POST.getlist("cat_customer[]")
+            cat_cls   = request.POST.getlist("cat_class[]")
 
-            for idx, acc_id in enumerate(cat_category_ids):
+            for idx, acc_id in enumerate(cat_ids):
                 if not acc_id:
                     continue
-                account = expense_qs.filter(pk=acc_id).first()  # only expense accounts
-                if not account:
+                acc = expense_qs.filter(pk=acc_id).first() or Account.objects.filter(pk=acc_id).first()
+                if not acc:
                     continue
-                amt = _dec(cat_amounts[idx])
+                amt = _dec(cat_amts[idx])
                 if amt <= 0:
                     continue
-                customer = Newcustomer.objects.filter(pk=cat_customer_ids[idx] or None).first()
-                klass    = Pclass.objects.filter(pk=cat_class_ids[idx] or None).first()
-                is_bill  = str(idx) in cat_billable
+
+                is_bill = str(idx) in cat_billable
+                customer = Newcustomer.objects.filter(pk=(cat_cust[idx] or None)).first()
+                klass    = Pclass.objects.filter(pk=(cat_cls[idx] or None)).first()
 
                 ChequeCategoryLine.objects.create(
-                    cheque=chq, category=account, description=cat_descs[idx],
-                    amount=amt, is_billable=is_bill, customer=customer, class_field=klass
+                    cheque=cheque,
+                    category=acc,
+                    description=(cat_descs[idx] or ""),
+                    amount=amt,
+                    is_billable=is_bill,
+                    customer=customer,
+                    class_field=klass,
                 )
-                total += amt
+                total_direct += amt
 
             # ---------- Item lines ----------
-            item_product_ids = request.POST.getlist("item_product[]")
-            item_descs       = request.POST.getlist("item_desc[]")
-            item_qtys        = request.POST.getlist("item_qty[]")
-            item_rates       = request.POST.getlist("item_rate[]")
-            item_amounts     = request.POST.getlist("item_amount[]")
-            item_billable    = set(request.POST.getlist("item_billable[]"))
-            item_customer_ids= request.POST.getlist("item_customer[]")
-            item_class_ids   = request.POST.getlist("item_class[]")
+            item_prod = request.POST.getlist("item_product[]")
+            item_desc = request.POST.getlist("item_desc[]")
+            item_qty  = request.POST.getlist("item_qty[]")
+            item_rate = request.POST.getlist("item_rate[]")
+            item_amt  = request.POST.getlist("item_amount[]")
+            item_billable = set(request.POST.getlist("item_billable[]"))
+            item_cust = request.POST.getlist("item_customer[]")
+            item_cls  = request.POST.getlist("item_class[]")
 
-            for idx, prod_id in enumerate(item_product_ids):
-                if not prod_id:
+            for idx, pid in enumerate(item_prod):
+                if not pid:
                     continue
-                product = Product.objects.filter(pk=prod_id).first()
+                product = Product.objects.filter(pk=pid).first()
                 if not product:
                     continue
-                qty  = _dec(item_qtys[idx], "0")
-                rate = _dec(item_rates[idx], "0")
-                amt  = _dec(item_amounts[idx]) or (qty * rate)
+
+                qty  = _dec(item_qty[idx], "0")
+                rate = _dec(item_rate[idx], "0")
+                amt  = _dec(item_amt[idx]) if (idx < len(item_amt) and item_amt[idx]) else (qty * rate)
                 if amt <= 0:
                     continue
-                customer = Newcustomer.objects.filter(pk=item_customer_ids[idx] or None).first()
-                klass    = Pclass.objects.filter(pk=item_class_ids[idx] or None).first()
-                is_bill  = str(idx) in item_billable
+
+                is_bill = str(idx) in item_billable
+                customer = Newcustomer.objects.filter(pk=(item_cust[idx] or None)).first()
+                klass    = Pclass.objects.filter(pk=(item_cls[idx] or None)).first()
 
                 ChequeItemLine.objects.create(
-                    cheque=chq, product=product, description=item_descs[idx],
-                    qty=qty, rate=rate, amount=amt,
-                    is_billable=is_bill, customer=customer, class_field=klass
+                    cheque=cheque,
+                    product=product,
+                    description=(item_desc[idx] or ""),
+                    qty=qty,
+                    rate=rate,
+                    amount=amt,
+                    is_billable=is_bill,
+                    customer=customer,
+                    class_field=klass,
                 )
-                total += amt
+                total_direct += amt
 
-            chq.total_amount = total
-            chq.save(update_fields=["total_amount"])
+            # ✅ Save allocations (bills)
+            _save_cheque_bill_allocations(request, cheque)
 
-            # === Post cheque into General Ledger ===
-            _post_cheque_to_ledger(chq)
-
-            action = request.POST.get("save_action") or "save"
-            if action == "save":
-                return redirect("expenses:expenses")
-            if action == "save&new":
-                return redirect("expenses:add-cheque")
-            return redirect("expenses:expenses")
-
-    # GET
-    context = {
-        "suppliers": Newsupplier.objects.all().order_by("company_name"),
-        "bank_accounts": deposit_accounts_qs(),
-        "expense_accounts": expense_accounts_qs(),
-        "products": Product.objects.all().order_by("name"),
-        "customers": Newcustomer.objects.all().order_by("customer_name"),
-        "classes": Pclass.objects.all().order_by("class_name"),
-        "generated_cheque_no": generate_unique_cheque_no(),
-        "today": timezone.localdate(),
-    }
-    return render(request, "cheque_form.html", context)
-
-# edit view
-@transaction.atomic
-def cheque_edit(request, pk: int):
-    chq = get_object_or_404(
-        Cheque.objects
-        .select_related("payee_supplier", "bank_account")
-        .prefetch_related("category_lines__category", "item_lines__product"),
-        pk=pk
-    )
-
-    if request.method == "POST":
-        with transaction.atomic():
-            expense_qs = expense_accounts_qs()
-            bank_qs    = deposit_accounts_qs()
-
-            supplier_id     = request.POST.get("payee_supplier") or ""
-            chq.payee_name  = request.POST.get("payee_name") or ""
-            chq.payee_supplier = (
-                Newsupplier.objects.filter(pk=supplier_id).first()
-                if supplier_id else None
+            alloc_total = (
+                ChequeBillLine.objects.filter(cheque=cheque)
+                .aggregate(s=Sum("amount_applied"))["s"]
+                or Decimal("0.00")
             )
 
-            bank_account_id = request.POST.get("bank_account") or ""
-            chq.bank_account = get_object_or_404(bank_qs, pk=bank_account_id)
+            # ✅ Save open balance amount
+            _save_cheque_open_balance(request, cheque)
 
-            chq.mailing_address = request.POST.get("mailing_address") or ""
-            chq.payment_date    = request.POST.get("payment_date") or timezone.localdate()
+            open_total = (
+                ChequeOpenBalanceLine.objects.filter(cheque=cheque)
+                .aggregate(s=Sum("amount_applied"))["s"]
+                or Decimal("0.00")
+            )
 
-            new_cheque_no = request.POST.get("cheque_no") or ""
-            if new_cheque_no and new_cheque_no != chq.cheque_no:
-                if Cheque.objects.exclude(pk=chq.pk).filter(cheque_no=new_cheque_no).exists():
-                    messages.error(request, "Cheque number already exists.")
-                    return redirect("expenses:cheque-edit", pk=chq.pk)
-                chq.cheque_no = new_cheque_no
+            # ✅ Total cheque = bills + open balance + direct expenses
+            cheque.total_amount = alloc_total + open_total + total_direct
+            cheque.save(update_fields=["total_amount"])
 
-            chq.location = request.POST.get("location") or ""
-            chq.memo     = request.POST.get("memo") or ""
-            if request.FILES.get("attachments"):
-                chq.attachments = request.FILES["attachments"]
+            # ✅ Post to GL (supports bills + open balance + direct)
+            _post_cheque_to_ledger(cheque)
 
-            chq.save()
+        action = request.POST.get("save_action") or "save"
+        if action == "save&new":
+            return redirect("expenses:add-cheque")
+        if action == "save&close":
+            return redirect("expenses:expenses")
+        return redirect("expenses:expenses")
 
-            # Replace lines
-            ChequeCategoryLine.objects.filter(cheque=chq).delete()
-            ChequeItemLine.objects.filter(cheque=chq).delete()
-
-            total = Decimal("0.00")
-
-            # Category lines
-            cat_category_ids = request.POST.getlist("cat_category[]")
-            cat_descs        = request.POST.getlist("cat_desc[]")
-            cat_amounts      = request.POST.getlist("cat_amount[]")
-            cat_billable     = set(request.POST.getlist("cat_billable[]"))
-            cat_customer_ids = request.POST.getlist("cat_customer[]")
-            cat_class_ids    = request.POST.getlist("cat_class[]")
-
-            for idx, acc_id in enumerate(cat_category_ids):
-                if not acc_id:
-                    continue
-                account = expense_qs.filter(pk=acc_id).first()
-                if not account:
-                    continue
-                amt = _dec(cat_amounts[idx])
-                if amt <= 0:
-                    continue
-                customer = Newcustomer.objects.filter(pk=cat_customer_ids[idx] or None).first()
-                klass    = Pclass.objects.filter(pk=cat_class_ids[idx] or None).first()
-                is_bill  = str(idx) in cat_billable
-
-                ChequeCategoryLine.objects.create(
-                    cheque=chq, category=account, description=cat_descs[idx],
-                    amount=amt, is_billable=is_bill, customer=customer, class_field=klass
-                )
-                total += amt
-
-            # Item lines
-            item_product_ids = request.POST.getlist("item_product[]")
-            item_descs       = request.POST.getlist("item_desc[]")
-            item_qtys        = request.POST.getlist("item_qty[]")
-            item_rates       = request.POST.getlist("item_rate[]")
-            item_amounts     = request.POST.getlist("item_amount[]")
-            item_billable    = set(request.POST.getlist("item_billable[]"))
-            item_customer_ids= request.POST.getlist("item_customer[]")
-            item_class_ids   = request.POST.getlist("item_class[]")
-
-            for idx, prod_id in enumerate(item_product_ids):
-                if not prod_id:
-                    continue
-                product = Product.objects.filter(pk=prod_id).first()
-                if not product:
-                    continue
-                qty  = _dec(item_qtys[idx], "0")
-                rate = _dec(item_rates[idx], "0")
-                amt  = _dec(item_amounts[idx]) or (qty * rate)
-                if amt <= 0:
-                    continue
-                customer = Newcustomer.objects.filter(pk=item_customer_ids[idx] or None).first()
-                klass    = Pclass.objects.filter(pk=item_class_ids[idx] or None).first()
-                is_bill  = str(idx) in item_billable
-
-                ChequeItemLine.objects.create(
-                    cheque=chq, product=product, description=item_descs[idx],
-                    qty=qty, rate=rate, amount=amt,
-                    is_billable=is_bill, customer=customer, class_field=klass
-                )
-                total += amt
-
-            chq.total_amount = total
-            chq.save(update_fields=["total_amount"])
-
-            # Re-post to GL
-            _post_cheque_to_ledger(chq)
-
-            action = request.POST.get("save_action") or "save"
-            if action == "save&new":
-                return redirect("expenses:add-cheque")
-            return redirect("expenses:cheque-detail", pk=chq.pk)
-
-    # GET – prefill
     context = {
-        "cheque": chq,
+        "cheque": None,
+        "today": timezone.localdate(),
+        "generated_cheque_no": "CHQ-" + timezone.now().strftime("%H%M%S"),
         "suppliers": Newsupplier.objects.all().order_by("company_name"),
-        "bank_accounts": deposit_accounts_qs(),
-        "expense_accounts": expense_accounts_qs(),
-        "products": Product.objects.all().order_by("name"),
         "customers": Newcustomer.objects.all().order_by("customer_name"),
         "classes": Pclass.objects.all().order_by("class_name"),
-        "cat_lines": chq.category_lines.select_related("category", "customer", "class_field").all(),
-        "item_lines": chq.item_lines.select_related("product", "customer", "class_field").all(),
+        "products": Product.objects.all().order_by("name"),
+        "expense_accounts": expense_accounts_qs(),
+        "bank_accounts": Account.objects.filter(is_active=True).filter(bankish_q()).order_by("account_name"),
+        "cat_lines": [],
+        "item_lines": [],
+        "bill_prefill": [],
+        "open_balance_prefill": None,   # for edit only (kept)
     }
     return render(request, "cheque_form.html", context)
+
+
+# ----------------------------
+# CHEQUE EDIT
+# ----------------------------
+def cheque_edit(request, pk: int):
+    cheque = get_object_or_404(Cheque, pk=pk)
+
+    if request.method == "POST":
+        expense_qs = expense_accounts_qs()
+
+        supplier_id = request.POST.get("payee_supplier") or ""
+        payee_name  = request.POST.get("payee_name") or ""
+        bank_id     = request.POST.get("bank_account") or ""
+        mailing     = request.POST.get("mailing_address") or ""
+        payment_date= _parse_ymd(request.POST.get("payment_date"), cheque.payment_date)
+        location    = request.POST.get("location") or ""
+        memo        = request.POST.get("memo") or ""
+        attachment  = request.FILES.get("attachments")
+
+        supplier = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
+        bank_acc = Account.objects.filter(pk=bank_id).first() if bank_id else None
+
+        with transaction.atomic():
+            cheque.payee_supplier  = supplier
+            cheque.payee_name      = "" if supplier else (payee_name or "")
+            cheque.bank_account    = bank_acc
+            cheque.mailing_address = mailing
+            cheque.payment_date    = payment_date
+            cheque.location        = location
+            cheque.memo            = memo
+            if attachment:
+                cheque.attachments = attachment
+            cheque.save()
+
+            ChequeCategoryLine.objects.filter(cheque=cheque).delete()
+            ChequeItemLine.objects.filter(cheque=cheque).delete()
+
+            total_direct = Decimal("0.00")
+
+            # ---------- Category lines ----------
+            cat_ids   = request.POST.getlist("cat_category[]")
+            cat_descs = request.POST.getlist("cat_desc[]")
+            cat_amts  = request.POST.getlist("cat_amount[]")
+            cat_billable = set(request.POST.getlist("cat_billable[]"))
+            cat_cust  = request.POST.getlist("cat_customer[]")
+            cat_cls   = request.POST.getlist("cat_class[]")
+
+            for idx, acc_id in enumerate(cat_ids):
+                if not acc_id:
+                    continue
+                acc = expense_qs.filter(pk=acc_id).first() or Account.objects.filter(pk=acc_id).first()
+                if not acc:
+                    continue
+                amt = _dec(cat_amts[idx])
+                if amt <= 0:
+                    continue
+
+                is_bill = str(idx) in cat_billable
+                customer = Newcustomer.objects.filter(pk=(cat_cust[idx] or None)).first()
+                klass    = Pclass.objects.filter(pk=(cat_cls[idx] or None)).first()
+
+                ChequeCategoryLine.objects.create(
+                    cheque=cheque,
+                    category=acc,
+                    description=(cat_descs[idx] or ""),
+                    amount=amt,
+                    is_billable=is_bill,
+                    customer=customer,
+                    class_field=klass,
+                )
+                total_direct += amt
+
+            # ---------- Item lines ----------
+            item_prod = request.POST.getlist("item_product[]")
+            item_desc = request.POST.getlist("item_desc[]")
+            item_qty  = request.POST.getlist("item_qty[]")
+            item_rate = request.POST.getlist("item_rate[]")
+            item_amt  = request.POST.getlist("item_amount[]")
+            item_billable = set(request.POST.getlist("item_billable[]"))
+            item_cust = request.POST.getlist("item_customer[]")
+            item_cls  = request.POST.getlist("item_class[]")
+
+            for idx, pid in enumerate(item_prod):
+                if not pid:
+                    continue
+                product = Product.objects.filter(pk=pid).first()
+                if not product:
+                    continue
+
+                qty  = _dec(item_qty[idx], "0")
+                rate = _dec(item_rate[idx], "0")
+                amt  = _dec(item_amt[idx]) if (idx < len(item_amt) and item_amt[idx]) else (qty * rate)
+                if amt <= 0:
+                    continue
+
+                is_bill = str(idx) in item_billable
+                customer = Newcustomer.objects.filter(pk=(item_cust[idx] or None)).first()
+                klass    = Pclass.objects.filter(pk=(item_cls[idx] or None)).first()
+
+                ChequeItemLine.objects.create(
+                    cheque=cheque,
+                    product=product,
+                    description=(item_desc[idx] or ""),
+                    qty=qty,
+                    rate=rate,
+                    amount=amt,
+                    is_billable=is_bill,
+                    customer=customer,
+                    class_field=klass,
+                )
+                total_direct += amt
+
+            # ✅ Save allocations (bills)
+            _save_cheque_bill_allocations(request, cheque)
+            alloc_total = (
+                ChequeBillLine.objects.filter(cheque=cheque)
+                .aggregate(s=Sum("amount_applied"))["s"]
+                or Decimal("0.00")
+            )
+
+            # ✅ Save open balance
+            _save_cheque_open_balance(request, cheque)
+            open_total = (
+                ChequeOpenBalanceLine.objects.filter(cheque=cheque)
+                .aggregate(s=Sum("amount_applied"))["s"]
+                or Decimal("0.00")
+            )
+
+            cheque.total_amount = alloc_total + open_total + total_direct
+            cheque.save(update_fields=["total_amount"])
+
+            _post_cheque_to_ledger(cheque)
+
+        action = request.POST.get("save_action") or "save"
+        if action == "save&new":
+            return redirect("expenses:add-cheque")
+        if action == "save&close":
+            return redirect("expenses:expenses")
+        return redirect("expenses:expenses")
+
+    # GET prefill
+    cat_lines = list(ChequeCategoryLine.objects.filter(cheque=cheque).values(
+        "category_id", "description", "amount", "is_billable", "customer_id", "class_field_id"
+    ))
+    item_lines = list(ChequeItemLine.objects.filter(cheque=cheque).values(
+        "product_id", "description", "qty", "rate", "amount", "is_billable", "customer_id", "class_field_id"
+    ))
+
+    bill_prefill = []
+    open_balance_prefill = None
+    open_balance_value = Decimal("0.00")
+
+    if cheque.payee_supplier_id:
+        allocs = {x.bill_id: x.amount_applied for x in ChequeBillLine.objects.filter(cheque=cheque)}
+
+        applied_map = dict(
+            ChequeBillLine.objects
+            .filter(bill__supplier_id=cheque.payee_supplier_id)
+            .values("bill_id").annotate(s=Sum("amount_applied"))
+            .values_list("bill_id", "s")
+        )
+
+        for b in Bill.objects.filter(supplier_id=cheque.payee_supplier_id).order_by("-bill_date"):
+            total = Decimal(str(b.total_amount or "0"))
+            applied_all = Decimal(str(applied_map.get(b.id) or "0"))
+            balance = total - applied_all
+            if balance <= 0:
+                continue
+
+            bill_prefill.append({
+                "id": b.id,
+                "bill_no": b.bill_no,
+                "bill_date": b.bill_date,
+                "due_date": b.due_date,
+                "total": total,
+                "balance": balance,
+                "applied": allocs.get(b.id, Decimal("0.00")),
+            })
+
+        # current computed open balance
+        open_balance_value = _supplier_open_balance_amount(cheque.payee_supplier)
+
+        # prefill what user applied on this cheque
+        ob_line = ChequeOpenBalanceLine.objects.filter(cheque=cheque).first()
+        open_balance_prefill = Decimal(str(ob_line.amount_applied)) if ob_line else Decimal("0.00")
+
+    context = {
+        "cheque": cheque,
+        "today": timezone.localdate(),
+        "generated_cheque_no": cheque.cheque_no,
+        "suppliers": Newsupplier.objects.all().order_by("company_name"),
+        "customers": Newcustomer.objects.all().order_by("customer_name"),
+        "classes": Pclass.objects.all().order_by("class_name"),
+        "products": Product.objects.all().order_by("name"),
+        "expense_accounts": expense_accounts_qs(),
+        "bank_accounts": Account.objects.filter(is_active=True).filter(bankish_q()).order_by("account_name"),
+        "cat_lines": cat_lines,
+        "item_lines": item_lines,
+        "bill_prefill": bill_prefill,
+        "open_balance_value": open_balance_value,
+        "open_balance_prefill": open_balance_prefill,
+    }
+    return render(request, "cheque_form.html", context)
+
 # cheque lists 
 def cheque_list(request):
     """
@@ -2358,7 +2816,7 @@ def add_supplier_credit(request):
                 credit.save(update_fields=["total_amount"])
 
                 # Post to GL
-                _post_supplier_credit_to_ledger(credit)
+                # _post_supplier_credit_to_ledger(credit)
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save":
@@ -2468,7 +2926,7 @@ def supplier_credit_edit(request, pk: int):
                 credit.total_amount = total
                 credit.save(update_fields=["total_amount"])
 
-                _post_supplier_credit_to_ledger(credit)
+                # _post_supplier_credit_to_ledger(credit)
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save&new":
@@ -2621,7 +3079,7 @@ def add_paydown_credit(request):
                     attachments=attachment,
                 )
 
-                _post_paydown_credit_to_ledger(pdc)
+                # _post_paydown_credit_to_ledger(pdc)
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save":
@@ -2692,7 +3150,7 @@ def paydown_credit_edit(request, pk: int):
 
                 pdc.save()
 
-                _post_paydown_credit_to_ledger(pdc)
+                # _post_paydown_credit_to_ledger(pdc)
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save&new":
@@ -2880,7 +3338,7 @@ def add_credit_card_credit(request):
                 cc.total_amount = total_amount
                 cc.save()
 
-                _post_credit_card_credit_to_ledger(cc)
+                # _post_credit_card_credit_to_ledger(cc)
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save":
@@ -3007,7 +3465,7 @@ def credit_card_credit_edit(request, pk: int):
                 cc.total_amount = total_amount
                 cc.save()
 
-                _post_credit_card_credit_to_ledger(cc)
+                # _post_credit_card_credit_to_ledger(cc)
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save&new":
@@ -3085,4 +3543,86 @@ def credit_card_credit_list(request):
         "q": q,
         "from": date_from,
         "to": date_to,
+    })
+
+# @login_required
+def supplier_prepayments_list(request):
+    suppliers = Newsupplier.objects.order_by("company_name")
+
+    rows = []
+    for s in suppliers:
+        bal = _supplier_prepayment_balance(s)
+        if bal and bal > Decimal("0.00"):
+            rows.append({"supplier": s, "prepayment": bal})
+
+    return render(request, "supplier_prepayments_list.html", {"rows": rows})
+
+
+# @login_required
+@require_http_methods(["GET", "POST"])
+@transaction.atomic
+def supplier_refund_new(request, supplier_id: int):
+    supplier = get_object_or_404(Newsupplier, pk=supplier_id)
+    accounts = deposit_accounts_qs()  # ✅ Bank/Cash list
+
+    max_refundable = _supplier_prepayment_balance(supplier)
+
+    if request.method == "POST":
+        refund_date = request.POST.get("refund_date") or ""
+        received_to_id = (request.POST.get("received_to") or "").strip()
+        amount = _dec(request.POST.get("amount") or "0.00")
+        memo = (request.POST.get("memo") or "").strip()
+        reference_no = (request.POST.get("reference_no") or "").strip()
+
+        received_to = None
+        if received_to_id.isdigit():
+            received_to = accounts.filter(id=int(received_to_id)).first()
+
+        if not received_to:
+            return render(request, "supplier_refund_form.html", {
+                "supplier": supplier,
+                "accounts": accounts,
+                "max_refundable": max_refundable,
+                "form_error": "Select a valid Bank/Cash account.",
+            })
+
+        if amount <= 0:
+            return render(request, "supplier_refund_form.html", {
+                "supplier": supplier,
+                "accounts": accounts,
+                "max_refundable": max_refundable,
+                "form_error": "Refund amount must be > 0.",
+            })
+
+        if amount > max_refundable:
+            return render(request, "supplier_refund_form.html", {
+                "supplier": supplier,
+                "accounts": accounts,
+                "max_refundable": max_refundable,
+                "form_error": f"Refund exceeds available supplier prepayment ({max_refundable}).",
+            })
+
+        # parse date safely
+        try:
+            from django.utils.dateparse import parse_date
+            d = parse_date(refund_date) or None
+        except Exception:
+            d = None
+
+        refund = SupplierRefund.objects.create(
+            supplier=supplier,
+            refund_date=d,
+            received_to=received_to,
+            amount=amount,
+            memo=memo,
+            reference_no=reference_no,
+        )
+
+        _post_supplier_refund_to_ledger(refund)
+        return redirect("expenses:supplier-prepayments-list")
+
+    return render(request, "supplier_refund_form.html", {
+        "supplier": supplier,
+        "accounts": accounts,
+        "max_refundable": max_refundable,
     })

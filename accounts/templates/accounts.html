@@ -390,9 +390,12 @@
                       {{ coa.account_name }}
                     {% endif %}
                   </td>
+
+                  <!-- ✅ ONLY CHANGE IS HERE -->
                   <td data-col="opening_balance">
-                    {{ coa.opening_balance|floatformat:2|intcomma }}
+                    {{ coa.current_balance|floatformat:2|intcomma }}
                   </td>
+
                   <td data-col="as_of">
                     {{ coa.as_of|date:"d/m/Y" }}
                   </td>
@@ -477,7 +480,7 @@ document.addEventListener("DOMContentLoaded", () => {
     account_type:    true,
     detail_type:     true,
     description:     true,
-    actions:         true,   // <– make sure Actions is ON by default
+    actions:         true,
   };
 
   // load saved prefs from JSON
@@ -498,7 +501,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".col-toggle").forEach(cb=>{
       const col = cb.dataset.col;
 
-      // if we have something saved, use it; otherwise use defaultCols
       let value;
       if (savedPrefs.hasOwnProperty(col)) {
         value = savedPrefs[col];

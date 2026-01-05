@@ -240,6 +240,36 @@ class ChequeItemLine(models.Model):
     customer    = models.ForeignKey(Newcustomer, null=True, blank=True, on_delete=models.CASCADE)
     class_field = models.ForeignKey(Pclass, null=True, blank=True, on_delete=models.CASCADE)
 
+class ChequeBillLine(models.Model):
+    cheque = models.ForeignKey(
+        "Cheque",
+        on_delete=models.CASCADE,
+        related_name="bill_lines",
+    )
+    bill = models.ForeignKey(
+        "Bill",
+        on_delete=models.CASCADE,
+        related_name="cheque_bill_lines",
+    )
+    amount_applied = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        unique_together = ("cheque", "bill")
+
+    def __str__(self):
+        return f"Cheque {self.cheque_id} -> Bill {self.bill_id}: {self.amount_applied}"
+
+class ChequeOpenBalanceLine(models.Model):
+    cheque = models.OneToOneField(
+        "Cheque",
+        on_delete=models.CASCADE,
+        related_name="open_balance_line",
+    )
+    amount_applied = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"Cheque {self.cheque_id} Open Balance: {self.amount_applied}"
+
     # purchase order
 class PurchaseOrder(models.Model):
         vendor = models.ForeignKey(Newsupplier, null=True, blank=True, on_delete=models.CASCADE)
@@ -503,3 +533,24 @@ class CreditCardCreditItemLine(models.Model):
     def __str__(self):
         return f"CC Credit Item Line {self.id} ({self.amount})"
 
+
+
+class SupplierRefund(models.Model):
+    supplier = models.ForeignKey(Newsupplier, on_delete=models.CASCADE, related_name="supplier_refunds")
+    refund_date = models.DateField(default=timezone.localdate)
+
+    # money is RECEIVED into Bank/Cash
+    received_to = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        limit_choices_to={'account_type__in': ['Bank', 'Cash and Cash Equivalents']},  # keep your logic
+        related_name="supplier_refund_received_to",
+    )
+
+    reference_no = models.CharField(max_length=50, blank=True, null=True)
+    memo = models.TextField(blank=True, null=True)
+
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"Supplier Refund {self.id} - {self.supplier} ({self.amount})"

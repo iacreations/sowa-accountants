@@ -30,15 +30,14 @@
     .section-title { color:#39B54B; font-weight:600; margin:8px 0; }
     .hint { color:#6c757d; font-size:.9rem; }
 
-        @media only screen and (min-width: 1024px) and (max-width: 1600px) {
-#container{
- width: 80%;
- margin-right: 0%;
- margin-left: -5%;
- margin-top: 5%;
-  }
-}
- 
+    @media only screen and (min-width: 1024px) and (max-width: 1600px) {
+      #container{
+        width: 80%;
+        margin-right: 0%;
+        margin-left: -5%;
+        margin-top: 5%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -51,6 +50,7 @@
     <h2 style="color: #39B54B; margin-top: 3%;">{% if edit_mode %}Edit Collection{% else %}Make a Collection{% endif %}</h2>
 
     {% if form_error %}<div class="err">{{ form_error }}</div>{% endif %}
+    {% if request.GET.ok %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
 
     <form style="margin-top: 3%;" method="post"
           action="{% if edit_mode and payment %}{% url 'sales:payment-edit' payment.id %}{% else %}{% url 'sales:receive-payment' %}{% endif %}">
@@ -69,7 +69,7 @@
             {% endfor %}
             <option value="add_new">➕ Add New</option>
           </select>
-          <div class="hint">Open invoices for this customer will appear below.</div>
+          <div class="hint">Outstanding invoices + Open Balance will appear below.</div>
         </div>
 
         <!-- Payment Date -->
@@ -94,22 +94,30 @@
         </div>
 
         <!-- Deposit To -->
+        <div class="form-group">
+          <label>Deposit To</label>
+          <select name="deposit_to" required>
+            <option value="">Select Account</option>
+            {% for acc in accounts %}
+              <option value="{{ acc.id }}"
+                {% if edit_mode and payment and payment.deposit_to_id == acc.id %}selected{% endif %}>
+                {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
+                — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="hint">Includes Bank and Cash &amp; Cash Equivalents accounts.</div>
+        </div>
 
-<div class="form-group">
-  <label>Deposit To</label>
-  <select name="deposit_to" required>
-    <option value="">Select Account</option>
-    {% for acc in accounts %}
-      <option value="{{ acc.id }}"
-        {% if edit_mode and payment and payment.deposit_to_id == acc.id %}selected{% endif %}>
-        {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
-        — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
-      </option>
-    {% endfor %}
-  </select>
-  <div class="hint">Includes Bank and Cash &amp; Cash Equivalents accounts.</div>
-</div>
-
+        <!-- Amount Received -->
+        <div class="form-group">
+          <label>Amount Received</label>
+          <input type="number" step="0.01" name="amount_received"
+                 value="{% if edit_mode and payment %}{{ payment.amount_received|default:'0.00' }}{% endif %}"
+                 placeholder="0.00"
+                 required>
+          <div class="hint">Used to automatically calculate customer credit (excess).</div>
+        </div>
 
         <!-- Reference No -->
         <div class="form-group">
@@ -136,7 +144,10 @@
         <textarea name="memo" rows="3" placeholder="Optional notes or comments...">{% if edit_mode and payment %}{{ payment.memo|default:'' }}{% endif %}</textarea>
       </div>
 
-      <div class="section-title">Outstanding Invoices</div>
+      <div class="section-title">Outstanding Invoices + Open Balance</div>
+      <div class="hint">
+        Tip: Enter invoice amounts first. Then Open Balance. Any remaining from Amount Received becomes customer credit automatically.
+      </div>
 
       <table>
         <thead>
@@ -151,8 +162,20 @@
         </thead>
 
         <tbody id="invoice-rows">
+          {% if edit_mode %}
+            <tr>
+              <td colspan="4" style="font-weight:600;">Open Balance</td>
+              <td style="text-align:right;">—</td>
+              <td>
+                <input type="number" step="0.01"
+                       name="open_balance_amount"
+                       value="{{ open_balance_prefill|default:'0.00' }}"
+                       placeholder="0.00">
+              </td>
+            </tr>
+          {% endif %}
+
           {% if edit_mode and prefill_rows %}
-            {# Server-side prefill of already-applied lines #}
             {% for r in prefill_rows %}
               <tr>
                 <td>INV-{{ r.id|stringformat:"04d" }}</td>
@@ -214,13 +237,33 @@
           })
           .then(data => {
             const invoices = data.invoices || [];
+            const openBal  = Number(data.open_balance || 0);
+
+            let rows = "";
+
+            if (openBal > 0) {
+              rows += `
+                <tr>
+                  <td colspan="4" style="font-weight:600;">Open Balance</td>
+                  <td style="text-align:right;">${fmt(openBal)}</td>
+                  <td>
+                    <input type="number" step="0.01"
+                           name="open_balance_amount"
+                           max="${openBal}"
+                           placeholder="0.00">
+                  </td>
+                </tr>
+              `;
+            }
+
             if (!invoices.length) {
-              tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">No outstanding invoices for this customer.</td></tr>`;
+              tbody.innerHTML = rows || `<tr><td colspan="6" style="text-align:center; color:#888;">No outstanding invoices for this customer.</td></tr>`;
               return;
             }
-            tbody.innerHTML = invoices.map(inv => `
+
+            rows += invoices.map(inv => `
               <tr>
-                <td>${inv.id}</td>
+                <td>INV-${String(inv.id).padStart(4,'0')}</td>
                 <td>${inv.date_created ?? '—'}</td>
                 <td>${inv.due_date ?? '—'}</td>
                 <td style="text-align:right;">${fmt(inv.total_due)}</td>
@@ -233,6 +276,8 @@
                 </td>
               </tr>
             `).join('');
+
+            tbody.innerHTML = rows;
           })
           .catch(() => {
             tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#c00;">Failed to load invoices.</td></tr>`;
@@ -245,11 +290,6 @@
         return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       }
     })();
-
-     const url = "{% url 'sales:outstanding_invoices_api' %}?customer=" + encodeURIComponent(customerId);
-  fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-    .then(r => r.json())
-    .then(data => { /* render */ });
   </script>
 
   {% include 'includes/footer.html' %}

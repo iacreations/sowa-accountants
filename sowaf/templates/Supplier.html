@@ -14,23 +14,19 @@
     #main{ padding:15%; margin-left:-20%; margin-top:65%; }
     #template{ position:fixed; margin-top:-3%; margin-left:70%; }
   }
-
-  /* existing */
-  tr.inactive { opacity: 0.55; }
-  .dd { position: relative; display: inline-block; }
-  .dd-toggle { background: transparent; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-  .dd-menu { display:none; position:absolute; right:0; top:100%; background:#fff; border:1px solid #e5e7eb; border-radius:8px; min-width:200px; box-shadow:0 8px 24px rgba(0,0,0,.12); z-index:10; }
-  .dd-menu a { display:block; padding:10px 12px; text-decoration:none; color:inherit; }
-  .dd-menu a:hover { background:#f2f2f2; }
-  .dd.open .dd-menu { display:block; }
-
+  
+  /* Dropdown */
+  .dd{position:relative; display:inline-block;}
+  .dd-toggle{background:transparent; border:0; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+  .dd-menu{display:none; position:absolute; right:0; top:100%; background:#fff; border:1px solid #e5e7eb; border-radius:8px; min-width:200px; box-shadow:0 8px 24px rgba(0,0,0,.12); z-index:10;}
+  .dd-menu a{display:block; padding:10px 12px; text-decoration:none; color:inherit;}
+  .dd-menu a:hover{background:#f2f2f2;}
+  .dd.open .dd-menu{display:block;}
+  tr.inactive{opacity:.55;}
   /* Laptops & small desktops */
   @media only screen and (min-width: 1024px) and (max-width: 1600px) {
     #main{ margin-top:18%; }
-
   }
-
-  /* ------ Small additions (no changes to your existing styles) ------ */
 
   /* KPI banners (mirrors the style used on Customers page) */
  .analytics-wrap{
@@ -88,33 +84,33 @@
     <span id="customize" class="button_icon"><i class='bx bxs-customize'></i></span>
   </button>
 </div>
+
 <div class="main_body" id="main">
-<!-- KPI banners (values provided by view as 'supp_kpis') -->
-<div class="analytics-wrap">
-  <div class="kpi-row">
-    <div class="kpi k-unbilled">
-      <div class="label">Unbilled last 365 days</div>
-      <div class="value">Ush{{ supp_kpis.unbilled_amount|default:0|floatformat:2|intcomma }}</div>
-      <div class="sub">{{ supp_kpis.unbilled_count|default:0 }} purchase orders</div>
-    </div>
-    <div class="kpi k-overdue">
-      <div class="label">Unpaid last 365 days</div>
-      <div class="value">Ush{{ supp_kpis.unpaid_amount|default:0|floatformat:2|intcomma }}</div>
-      <div class="sub">{{ supp_kpis.unpaid_count|default:0 }} overdue</div>
-    </div>
-    <div class="kpi k-open">
-      <div class="label">Open bills</div>
-      <div class="value">Ush{{ supp_kpis.open_bills_amount|default:0|floatformat:2|intcomma }}</div>
-      <div class="sub">{{ supp_kpis.open_bills_count|default:0 }} open</div>
-    </div>
-    <div class="kpi k-recent">
-      <div class="label">Paid last 30 days</div>
-      <div class="value">Ush{{ supp_kpis.paid_30_amount|default:0|floatformat:2|intcomma }}</div>
-      <div class="sub">{{ supp_kpis.paid_30_count|default:0 }} payments</div>
+  <!-- KPI banners (values provided by view as 'supp_kpis') -->
+  <div class="analytics-wrap">
+    <div class="kpi-row">
+      <div class="kpi k-unbilled">
+        <div class="label">Unbilled last 365 days</div>
+        <div class="value">Ush{{ supp_kpis.unbilled_amount|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ supp_kpis.unbilled_count|default:0 }} purchase orders</div>
+      </div>
+      <div class="kpi k-overdue">
+        <div class="label">Unpaid last 365 days</div>
+        <div class="value">Ush{{ supp_kpis.unpaid_amount|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ supp_kpis.unpaid_count|default:0 }} overdue</div>
+      </div>
+      <div class="kpi k-open">
+        <div class="label">Open bills</div>
+        <div class="value">Ush{{ supp_kpis.open_bills_amount|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ supp_kpis.open_bills_count|default:0 }} open</div>
+      </div>
+      <div class="kpi k-recent">
+        <div class="label">Paid last 30 days</div>
+        <div class="value">Ush{{ supp_kpis.paid_30_amount|default:0|floatformat:2|intcomma }}</div>
+        <div class="sub">{{ supp_kpis.paid_30_count|default:0 }} payments</div>
+      </div>
     </div>
   </div>
-</div>
-
 
   <table class="content-table">
     <thead>
@@ -146,8 +142,35 @@
         <td>{{ supplier.email }}</td>
         <td>{{ supplier.open_balance }}</td>
 
-        <td>
+        {% comment %} <td>
           <div class="dd" onclick="event.stopPropagation()">
+            <button type="button" class="dd-toggle">
+              <a href="{% url 'sowaf:edit-supplier' supplier.id %}" style="color:#39B54B;">Edit</a>
+              <i class='bx bxs-down-arrow' style="color:#39B54B;"></i>
+            </button>
+
+             {% if supplier.is_active %}
+         
+            <div class="dd-menu">
+             <a href="{% url 'expenses:supplier-prepayments-list' %}">Supplier credits / advances</a>
+
+                <!-- Refund this supplier (opens refund form for THIS supplier) -->
+                <a href="{% url 'expenses:supplier-refund-new' supplier.id %}">Refund supplier advance</a>
+
+                <a href="">Retired</a>
+                <a href="{% url 'sowaf:make-inactive-supplier' supplier.id %}">Make inactive</a>
+              </div>
+
+            {% else %}
+             <div class="dd-menu">
+                <a href="{% url 'sowaf:make-active-supplier' supplier.id %}">Make active</a>
+              </div>
+            {% endif %}
+          </div>
+        </td> {% endcomment %}
+
+<td>
+          <div class="dd">
             <button type="button" class="dd-toggle">
               <a href="{% url 'sowaf:edit-supplier' supplier.id %}" style="color:#39B54B;">Edit</a>
               <i class='bx bxs-down-arrow' style="color:#39B54B;"></i>
@@ -155,6 +178,10 @@
 
             {% if supplier.is_active %}
               <div class="dd-menu">
+                <a href="{% url 'expenses:supplier-prepayments-list' %}">Supplier credits / advances</a>
+
+                <!-- Refund this supplier (opens refund form for THIS supplier) -->
+                <a href="{% url 'expenses:supplier-refund-new' supplier.id %}">Refund supplier advance</a>
                 <a href="">Retired</a>
                 <a href="{% url 'sowaf:make-inactive-supplier' supplier.id %}">Make inactive</a>
               </div>
@@ -165,6 +192,7 @@
             {% endif %}
           </div>
         </td>
+
       </tr>
       {% empty %}
       <tr><td colspan="7">No supplier available.</td></tr>
@@ -178,24 +206,24 @@
 </div>
 
 <script>
-  // dropdowns
-  document.addEventListener('click', function (e) {
-    document.querySelectorAll('.dd.open').forEach(dd => {
-      if (!dd.contains(e.target)) dd.classList.remove('open');
-    });
-    const toggle = e.target.closest('.dd-toggle');
-    if (toggle) toggle.closest('.dd').classList.toggle('open');
+  /* close dropdowns when clicking outside */
+document.addEventListener('click', function(e){
+  document.querySelectorAll('.dd.open').forEach(dd=>{
+    if(!dd.contains(e.target)) dd.classList.remove('open');
   });
+  const toggle = e.target.closest('.dd-toggle');
+  if (toggle){ toggle.closest('.dd').classList.toggle('open'); }
+});
 
-  // make table rows clickable (ignore inner links/buttons/menus)
-  document.querySelectorAll('.clickable-row').forEach(tr=>{
-    tr.addEventListener('click', function(e){
-      const interactive = e.target.closest('a,button,.dd,.dd-toggle,.dd-menu');
-      if (interactive) return;
-      const href = this.dataset.href;
-      if (href) window.location.href = href;
-    });
+/* make entire row clickable (but ignore clicks on links/buttons inside) */
+document.querySelectorAll('.clickable-row').forEach(tr=>{
+  tr.addEventListener('click', function(e){
+    const isInteractive = e.target.closest('a,button,.dd,.dd-toggle,.dd-menu');
+    if (isInteractive) return;
+    const href = this.dataset.href;
+    if(href) window.location.href = href;
   });
+});
 </script>
 
 {% include 'includes/footer.html' %}

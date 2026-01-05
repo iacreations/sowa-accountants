@@ -37,8 +37,17 @@ from expenses.models import Bill,Expense,Cheque
 from . models import Newcustomer, Newsupplier,Newclient,Newemployee,Newasset
 from accounts.utils import deposit_accounts_qs, expense_accounts_qs
 from accounts.date_ranges import resolve_date_range, RANGE_LABELS, RANGE_OPTIONS
-# Create your views here.
+
 # Constants / helpers
+from datetime import datetime
+
+def parse_date_or_none(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 def _dec(val, default="0.00") -> Decimal:
     try:
         return Decimal(str(val)) if val not in (None, "", "None", "null") else Decimal(default)
@@ -62,6 +71,71 @@ def _safe_date(val, fallback=None):
         return timezone.datetime.fromisoformat(str(val)).date()
     except Exception:
         return fallback
+
+
+def D(x) -> Decimal:
+    try:
+        return Decimal(str(x or "0.00"))
+    except Exception:
+        return Decimal("0.00")
+
+
+def get_or_create_ar_account():
+    """
+    Your AR control account in COA. Must exist.
+    Use the exact name you want to standardize in your system.
+    """
+    ar, _ = Account.objects.get_or_create(
+        account_name="Accounts Receivable",
+        defaults={
+            "account_type": "CURRENT_ASSET",
+            "detail_type": "Accounts receivable",
+            "is_active": True,
+        },
+    )
+    return ar
+
+
+def post_journal_entry(*, date, description, source_type, source_id, lines):
+    """
+    lines = [
+      {"account": Account, "debit": Decimal, "credit": Decimal, "customer": Newcustomer|None, "supplier": None},
+      ...
+    ]
+    """
+    with transaction.atomic():
+        je = JournalEntry.objects.create(
+            date=date,
+            description=description,
+            source_type=source_type,
+            source_id=source_id,
+        )
+
+        for ln in lines:
+            JournalLine.objects.create(
+                entry=je,
+                account=ln["account"],
+                debit=D(ln.get("debit")),
+                credit=D(ln.get("credit")),
+                customer=ln.get("customer"),
+                supplier=ln.get("supplier"),
+            )
+        return je
+
+
+def customer_ar_balance(customer: Newcustomer) -> Decimal:
+    """
+    AR = (DR - CR) on Accounts Receivable lines filtered by this customer.
+    This becomes the customer's current open balance.
+    """
+    ar = get_or_create_ar_account()
+    agg = JournalLine.objects.filter(account=ar, customer=customer).aggregate(
+        dr=transaction.models.Sum("debit"),
+        cr=transaction.models.Sum("credit"),
+    )
+    dr = D(agg.get("dr"))
+    cr = D(agg.get("cr"))
+    return dr - cr
 
 def _get_or_create_opening_equity():
     opening_equity, _ = Account.objects.get_or_create(
@@ -199,12 +273,18 @@ def _upsert_opening_balance_je(
 ):
     """
     Creates or updates ONE JE for opening balance, replaces its lines.
+    Also sets supplier/customer links on the CR side when source_type matches.
+
+    - Supplier opening: source_type="SUPP_OPEN_BALANCE" source_id=supplier.id
+      -> CR is supplier AP subaccount, should have supplier_id set.
+    - Customer opening: source_type="CUST_OPEN_BALANCE" source_id=customer.id
+      -> DR/CR accordingly; usually DR customer AR subaccount, should have customer_id set.
     """
     je_date = _safe_date(je_date, timezone.localdate())
 
     je = JournalEntry.objects.filter(source_type=source_type, source_id=source_id).first()
 
-    if amount == 0:
+    if amount == 0 or amount == Decimal("0.00"):
         if je:
             je.delete()
         return
@@ -221,23 +301,83 @@ def _upsert_opening_balance_je(
         je.description = description
         je.save(update_fields=["date", "description"])
 
+        # replace lines
         JournalLine.objects.filter(entry=je).delete()
 
-    # DR
+    # Decide sub-ledger linkage
+    supplier_obj = None
+    customer_obj = None
+
+    if source_type == "SUPP_OPEN_BALANCE":
+        try:
+            supplier_obj = Newsupplier.objects.get(pk=source_id)
+        except Newsupplier.DoesNotExist:
+            supplier_obj = None
+
+    if source_type == "CUST_OPEN_BALANCE":
+        try:
+            customer_obj = Newcustomer.objects.get(pk=source_id)
+        except Newcustomer.DoesNotExist:
+            customer_obj = None
+
+    # DR line (normally Opening Equity)
     JournalLine.objects.create(
         entry=je,
         account=dr_account,
         debit=amount,
         credit=Decimal("0.00"),
+        supplier=None,
+        customer=None,
     )
-    # CR
+
+    # CR line (supplier/customer sub-ledger depending on source_type)
     JournalLine.objects.create(
         entry=je,
         account=cr_account,
         debit=Decimal("0.00"),
         credit=amount,
+        supplier=supplier_obj,   
+        customer=customer_obj,   
+    )
+    return je
+
+def _get_or_create_sales_income_account() -> Account:
+    acc = (
+        Account.objects.filter(account_name__iexact="Sales Income", is_active=True).first()
+        or Account.objects.filter(account_name__icontains="sales", account_type__in=["OPERATING_INCOME", "INVESTING_INCOME"], is_active=True).first()
+    )
+    if acc:
+        return acc
+
+    return Account.objects.create(
+        account_name="Sales Income",
+        account_type="OPERATING_INCOME",
+        detail_type="Sales",
+        is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
     )
 
+def _get_or_create_vat_payable_account() -> Account:
+    acc = (
+        Account.objects.filter(account_name__iexact="VAT Payable", is_active=True).first()
+        or Account.objects.filter(account_name__icontains="vat", account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"], is_active=True).first()
+    )
+    if acc:
+        return acc
+
+    return Account.objects.create(
+        account_name="VAT Payable",
+        account_type="CURRENT_LIABILITY",
+        detail_type="Taxes payable",
+        is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
 
 def _as_date(d):
     if isinstance(d, datetime):
@@ -1134,7 +1274,6 @@ def make_active_customer(request, pk):
     return redirect('sowaf:customers')
 
 # customer form view
-
 @transaction.atomic
 def add_customer(request):
     if request.method == "POST":
@@ -1144,75 +1283,59 @@ def add_customer(request):
                 messages.error(request, "Only PNG files are allowed for the logo.")
                 return redirect(request.path)
             if logo.size > 1048576:
-                messages.error(request, "logo file size must not exceed 800kps.")
+                messages.error(request, "Logo file size must not exceed 1MB.")
                 return redirect(request.path)
-
-        customer_name = request.POST.get("name")
-        company_name  = request.POST.get("company")
-        email         = request.POST.get("email")
-        phone_number  = request.POST.get("phonenum")
-        mobile_number = request.POST.get("mobilenum")
-        website       = request.POST.get("website")
-        tin_number    = request.POST.get("tin")
 
         opening_balance = _dec(request.POST.get("balance"), "0.00")
 
-        registration_date = request.POST.get("registration_date")
-        street_one   = request.POST.get("street1")
-        street_two   = request.POST.get("street2")
-        city         = request.POST.get("city")
-        province     = request.POST.get("province")
-        postal_code  = request.POST.get("postalcode")
-        country      = request.POST.get("country")
-        notes        = request.POST.get("notes")
-        attachments  = request.FILES.get("attachments")
+        registration_date = parse_date_or_none(
+            request.POST.get("registration_date")
+        )
 
         new_customer = Newcustomer(
             logo=logo,
-            customer_name=customer_name,
-            company_name=company_name,
-            email=email,
-            phone_number=phone_number,
-            mobile_number=mobile_number,
-            website=website,
-            tin_number=tin_number,
+            customer_name=request.POST.get("name"),
+            company_name=request.POST.get("company"),
+            email=request.POST.get("email"),
+            phone_number=request.POST.get("phonenum"),
+            mobile_number=request.POST.get("mobilenum"),
+            website=request.POST.get("website"),
+            tin_number=request.POST.get("tin"),
             opening_balance=opening_balance,
-            registration_date=registration_date,
-            street_one=street_one,
-            street_two=street_two,
-            city=city,
-            province=province,
-            postal_code=postal_code,
-            country=country,
-            notes=notes,
-            attachments=attachments,
+            registration_date=registration_date,  # ✅ FIXED
+            street_one=request.POST.get("street1"),
+            street_two=request.POST.get("street2"),
+            city=request.POST.get("city"),
+            province=request.POST.get("province"),
+            postal_code=request.POST.get("postalcode"),
+            country=request.POST.get("country"),
+            notes=request.POST.get("notes"),
+            attachments=request.FILES.get("attachments"),
         )
+
         new_customer.save()
 
-        # ✅ Post customer opening balance to CUSTOMER subaccount under A/R
+        # Opening balance journal entry
         if opening_balance != 0:
             opening_equity = _get_or_create_opening_equity()
             customer_ar_sub = _get_or_create_customer_ar_subaccount(new_customer)
 
-            amt = abs(opening_balance)
-
-            # Customer opening balance = customer owes us => DR Customer A/R Subaccount, CR Opening Equity
             _upsert_opening_balance_je(
                 source_type="CUSTOMER_OPENING_BALANCE",
                 source_id=new_customer.id,
-                je_date=_safe_date(registration_date, timezone.localdate()),
-                description=f"Opening balance for customer {new_customer.customer_name or new_customer.company_name or new_customer.id}",
+                je_date=registration_date or timezone.localdate(),
+                description=f"Opening balance for customer {new_customer}",
                 dr_account=customer_ar_sub,
                 cr_account=opening_equity,
-                amount=amt,
+                amount=abs(opening_balance),
             )
 
-        save_action = request.POST.get("save_action")
-        if save_action == "save&new":
+        if request.POST.get("save_action") == "save&new":
             return redirect("sowaf:add-customer")
+
         return redirect("sowaf:customers")
 
-    return render(request, "customers_form.html", {})
+    return render(request, "customers_form.html")
 
 
 @transaction.atomic
@@ -1231,7 +1354,9 @@ def edit_customer(request, pk):
         new_opening_balance = _dec(request.POST.get("balance"), "0.00")
         customer.opening_balance = new_opening_balance
 
-        customer.registration_date = request.POST.get("registration_date", customer.registration_date)
+        customer.registration_date = parse_date_or_none(
+            request.POST.get("registration_date")
+            ) or customer.registration_date
 
         customer.street_one  = request.POST.get("street1", customer.street_one)
         customer.street_two  = request.POST.get("street2", customer.street_two)

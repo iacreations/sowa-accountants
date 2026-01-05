@@ -1,0 +1,53 @@
+{% load humanize %}
+
+  {% include 'includes/navbar.html' %}
+  {% include 'includes/sidebar.html' %}
+<style>
+    body { background:#f4f6f8; font-family:"Poppins",sans-serif; padding:30px; width:100%; }
+    .container-box { background:#fff; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.08); padding:20px; margin-left:18%; margin-top:3%; width:83%;}
+    h2 { color:#39B54B; margin-bottom:18px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:12px; border:1px solid #e9ecef; }
+    th { background:#f9f9f9; }
+    .btn-green { background:#39B54B; color:#fff; border:none; border-radius:6px; padding:8px 12px; font-weight:600; }
+    .btn-light { background:#f0f0f0; border:none; border-radius:6px; padding:8px 12px; }
+  </style>
+  <a href="{% url 'sales:sales' %}" class="text-decoration-none">&lt; Back to sales</a>
+
+  <div class="container container-box">
+    <div class="d-flex justify-content-between align-items-center">
+      <h2>Customer Credits (Advanced Amount)</h2>
+      <a href="{% url 'sales:customer-refunds-list' %}" class="btn btn-light">Refund History</a>
+    </div>
+
+    {% if rows %}
+      <div class="table-responsive mt-3">
+        <table class="table table-bordered align-middle">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th style="text-align:right;">Credit Balance</th>
+              <th style="width:220px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>{{ r.customer.customer_name }}</td>
+                <td style="text-align:right;">{{ r.credit|floatformat:2|intcomma }}</td>
+                <td>
+                  <a class="btn btn-green btn-sm"
+                     href="{% url 'sales:customer-refund-new' r.customer.id %}">
+                    Refund Customer
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-info mt-3">No customers have credit balances yet.</div>
+    {% endif %}
+  </div>
+{% include 'includes/footer.html' %}

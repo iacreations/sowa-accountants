@@ -174,6 +174,11 @@
                 <a href="{% url 'sales:add-invoice' %}?customer_id={{ customer.id }}">Create invoice</a>
                 <a href="{% url 'sales:add-receipt' %}?customer_id={{ customer.id }}">Create sales receipt</a>
                 <a href="#">Create charge</a>
+                  <!-- Customer Credits / Advances -->
+  <a href="{% url 'sales:customer-refunds-list' %}">Customer credits / advances</a>
+
+  <!-- Refund this customer (goes to refund form for this customer) -->
+  <a href="{% url 'sales:customer-refund-new' customer.id %}">Refund customer credit</a>
                 <a href="#">Create time activity</a>
                 <a href="{% url 'sowaf:make-inactive' customer.id %}">Make inactive</a>
               </div>

@@ -21,10 +21,11 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from .models import Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,SalesReceipt,SalesReceiptLine
+from .models import Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,PaymentOpenBalanceLine,SalesReceipt,SalesReceiptLine,CustomerRefund
 from sowaf.models import Newcustomer
 from .models import Statement, StatementLine
 from django.http import JsonResponse
+from django.views.decorators.http import require_GET
 from django.db.models import Sum, F, Value
 from django.utils.dateparse import parse_date
 from inventory.models import Product,Pclass
@@ -34,6 +35,7 @@ from accounts.utils import deposit_accounts_qs
 from collections import defaultdict
 from accounts.middleware import get_current_user, get_current_ip
 from datetime import datetime, date
+from decimal import Decimal, InvalidOperation
 
 def _as_date(d):
     if isinstance(d, datetime):
@@ -42,6 +44,140 @@ def _as_date(d):
         return d
     return date.min  
 
+def _customer_credit_balance(customer) -> Decimal:
+    if not customer:
+        return Decimal("0.00")
+
+    adv = _get_customer_advance_account()
+    agg = (
+        JournalLine.objects
+        .filter(account=adv, customer=customer)
+        .aggregate(
+            d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+    )
+    debit = Decimal(str(agg["d"] or "0.00"))
+    credit = Decimal(str(agg["c"] or "0.00"))
+
+    # Liability normal balance is CREDIT, so credit - debit
+    bal = credit - debit
+    return bal if bal > 0 else Decimal("0.00")
+
+
+def _get_or_create_named_account(account_name: str, account_type: str, detail_type: str = "") -> Account:
+    acc = Account.objects.filter(account_name=account_name, is_active=True).first()
+    if acc:
+        return acc
+    return Account.objects.create(
+        account_name=account_name,
+        account_type=account_type,
+        detail_type=detail_type or None,
+        is_active=True,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
+    )
+
+def _get_customer_advance_account() -> Account:
+    # Liability (you owe the customer)
+    return _get_or_create_named_account(
+        account_name="Customer Advances",
+        account_type="CURRENT_LIABILITY",
+        detail_type="Customer Credits",
+    )
+
+def _get_supplier_advance_account() -> Account:
+    # Asset (supplier owes you / you prepaid)
+    return _get_or_create_named_account(
+        account_name="Supplier Advances",
+        account_type="CURRENT_ASSET",
+        detail_type="Supplier Prepayments",
+    )
+
+
+def _dec(val, default="0.00") -> Decimal:
+    """
+    Safe decimal parser.
+    Accepts both: _dec(val) and _dec(val, "0.00")
+    """
+    try:
+        s = str(val).strip() if val is not None else ""
+        if s == "":
+            return Decimal(str(default))
+        return Decimal(s)
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal(str(default))
+
+
+def _account_debit_balance(account: "Account") -> Decimal:
+    """
+    Returns debit balance for an account:
+      opening_balance + SUM(debit - credit)
+    """
+    opening = Decimal(str(getattr(account, "opening_balance", 0) or "0"))
+    agg = (
+        JournalLine.objects
+        .filter(account=account)
+        .aggregate(
+            d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+    )
+    deb = Decimal(str(agg["d"] or "0"))
+    cred = Decimal(str(agg["c"] or "0"))
+    return opening + (deb - cred)
+
+
+def _invoice_outstanding(inv: "Newinvoice") -> Decimal:
+    total_due = Decimal(str(inv.total_due or "0"))
+    paid = (
+        PaymentInvoice.objects
+        .filter(invoice=inv)
+        .aggregate(s=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["s"]
+        or Decimal("0.00")
+    )
+    bal = total_due - paid
+    return bal if bal > 0 else Decimal("0.00")
+
+
+def _customer_open_balance_amount(customer: "Newcustomer") -> Decimal:
+    """
+    Open Balance = Customer A/R subaccount debit balance - total outstanding invoice balances
+    (Anything in A/R not represented by invoice balances is considered "open balance".)
+    """
+    if not customer:
+        return Decimal("0.00")
+
+    customer_acc = _get_or_create_customer_ar_subaccount(customer)
+
+    ar_debit_bal = _account_debit_balance(customer_acc)
+
+    total_unpaid_invoices = Decimal("0.00")
+    for inv in Newinvoice.objects.filter(customer=customer):
+        total_unpaid_invoices += _invoice_outstanding(inv)
+
+    open_bal = ar_debit_bal - total_unpaid_invoices
+    return open_bal if open_bal > 0 else Decimal("0.00")
+
+def _save_payment_open_balance(payment: "Payment", amount: Decimal):
+    PaymentOpenBalanceLine.objects.filter(payment=payment).delete()
+    if amount and amount > 0:
+        PaymentOpenBalanceLine.objects.create(payment=payment, amount_applied=amount)
+
+def _get_customer_advance_account() -> "Account":
+    """
+    Customer Advances = LIABILITY account (customer credit balance).
+    """
+    acc = Account.objects.filter(account_name__iexact="Customer Advances", is_active=True).first()
+    if acc:
+        return acc
+
+    return Account.objects.create(
+        account_name="Customer Advances",
+        account_type="CURRENT_LIABILITY",   
+        detail_type="Customer Advances",  
+        is_active=True,
+    )
 
 def apply_audit_fields(obj):
     """
@@ -138,25 +274,137 @@ def _get_or_create_customer_ar_subaccount(customer: Newcustomer) -> Account:
 
 def _safe_name(s: str) -> str:
     return (s or "").strip()
+def _safe_date(val, default):
+    try:
+        if val:
+            return val
+    except Exception:
+        pass
+    return default
+
+def _get_sales_income_account() -> "Account":
+    """
+    Returns a Sales/Revenue income account.
+    Tries to find an existing one; otherwise creates a fallback using your Account codes.
+    """
+    acc = (
+        Account.objects
+        .filter(is_active=True)
+        .filter(account_name__iexact="Sales")
+        .first()
+    )
+    if acc:
+        return acc
+
+    acc = (
+        Account.objects
+        .filter(is_active=True)
+        .filter(account_name__icontains="Sales")
+        .first()
+    )
+    if acc:
+        return acc
+
+    acc = (
+        Account.objects
+        .filter(is_active=True)
+        .filter(account_name__icontains="Revenue")
+        .first()
+    )
+    if acc:
+        return acc
+
+    # fallback create (matches your ACCOUNT_TYPES codes)
+    return Account.objects.create(
+        account_name="Sales",
+        account_type="OPERATING_INCOME",
+        detail_type="Sales",
+        is_active=True,
+    )
+
+
+def _post_customer_refund_to_ledger(refund: CustomerRefund):
+    amt = Decimal(str(refund.amount or "0.00"))
+    if amt <= 0:
+        JournalEntry.objects.filter(source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
+        return
+
+    JournalEntry.objects.filter(source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
+
+    adv = _get_customer_advance_account()
+    bank = refund.paid_from
+
+    entry = JournalEntry.objects.create(
+        date=refund.refund_date or timezone.localdate(),
+        description=f"Customer Refund {refund.id:04d} – {refund.customer.customer_name}",
+        source_type="CUSTOMER_REFUND",
+        source_id=refund.id,
+    )
+
+    # DR Customer Advances (reduce credit)
+    JournalLine.objects.create(
+        entry=entry, account=adv,
+        debit=amt, credit=Decimal("0.00"),
+        customer=refund.customer, supplier=None,
+    )
+
+    # CR Bank/Cash
+    JournalLine.objects.create(
+        entry=entry, account=bank,
+        debit=Decimal("0.00"), credit=amt,
+        customer=refund.customer, supplier=None,
+    )
+
+def _post_customer_refund_to_ledger(refund: CustomerRefund):
+    amt = Decimal(str(refund.amount or "0.00"))
+    if amt <= 0:
+        JournalEntry.objects.filter(source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
+        return
+
+    JournalEntry.objects.filter(source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
+
+    adv = _get_customer_advance_account()
+    bank = refund.paid_from
+
+    entry = JournalEntry.objects.create(
+        date=refund.refund_date or timezone.localdate(),
+        description=f"Customer Refund {refund.id:04d} – {refund.customer.customer_name}",
+        source_type="CUSTOMER_REFUND",
+        source_id=refund.id,
+    )
+
+    # DR Customer Advances (reduce credit)
+    JournalLine.objects.create(
+        entry=entry, account=adv,
+        debit=amt, credit=Decimal("0.00"),
+        customer=refund.customer, supplier=None,
+    )
+
+    # CR Bank/Cash
+    JournalLine.objects.create(
+        entry=entry, account=bank,
+        debit=Decimal("0.00"), credit=amt,
+        customer=refund.customer, supplier=None,
+    )
+
 
 def _post_invoice_to_ledger(invoice: Newinvoice):
     """
-    INVOICE posting (Correct Accounting + Customer Subledger):
+    INVOICE posting:
 
-      DR Customer A/R Subaccount (child under Accounts Receivable control)
+      DR Customer A/R Subaccount
       CR Revenue (by product.income_account)
       CR VAT Payable (if VAT exists)
     """
 
-    total_due = Decimal(str(invoice.total_due or "0"))
+    total_due = Decimal(str(getattr(invoice, "total_due", None) or "0"))
     if total_due <= 0:
         JournalEntry.objects.filter(source_type="invoice", source_id=invoice.id).delete()
         return
 
-    # Remove previous JE for edits (your style for invoices is delete & recreate)
+    # delete & recreate style
     JournalEntry.objects.filter(source_type="invoice", source_id=invoice.id).delete()
 
-    # Revenue split + VAT
     revenue_by_account = defaultdict(lambda: Decimal("0.00"))
     vat_total = Decimal("0.00")
 
@@ -165,15 +413,15 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
         or _find_control_account(name_contains="Revenue")
     )
 
-    items = invoice.items.select_related("product").all()
-    for line in items:
-        line_amount   = Decimal(str(line.amount or "0"))
-        line_discount = Decimal(str(line.discount_amount or "0"))
+    items_qs = invoice.items.select_related("product").all()  #must match your related_name
+    for line in items_qs:
+        line_amount   = Decimal(str(getattr(line, "amount", None) or "0"))
+        line_discount = Decimal(str(getattr(line, "discount_amount", None) or "0"))
         net_amount    = line_amount - line_discount
         if net_amount < 0:
             net_amount = Decimal("0.00")
 
-        prod = line.product
+        prod = getattr(line, "product", None)
         income_acc = getattr(prod, "income_account", None) if prod else None
         if not income_acc:
             income_acc = default_income_acc
@@ -181,21 +429,21 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
         if income_acc and net_amount > 0:
             revenue_by_account[income_acc] += net_amount
 
-        vat_total += Decimal(str(line.vat or "0"))
+        vat_total += Decimal(str(getattr(line, "vat", None) or "0"))
 
-    shipping_fee = Decimal(str(invoice.shipping_fee or "0"))
+    shipping_fee = Decimal(str(getattr(invoice, "shipping_fee", None) or "0"))
     if shipping_fee > 0 and default_income_acc:
         revenue_by_account[default_income_acc] += shipping_fee
 
-    # Customer A/R subaccount
-    if not invoice.customer_id:
+    if not getattr(invoice, "customer_id", None):
         raise ValueError("Invoice must have a customer.")
     customer_acc = _get_or_create_customer_ar_subaccount(invoice.customer)
 
     vat_account = _find_control_account(name_contains="VAT")
 
-    entry_date = (invoice.date_created.date() if invoice.date_created else timezone.localdate())
-    desc = f"Invoice {invoice.id:04d} – {invoice.customer.customer_name}"
+    entry_date = invoice.date_created.date() if getattr(invoice, "date_created", None) else timezone.localdate()
+    cust_name = getattr(invoice.customer, "customer_name", None) or getattr(invoice.customer, "company_name", None) or ""
+    desc = f"Invoice {invoice.id:04d} – {cust_name}".strip(" –")
 
     entry = JournalEntry.objects.create(
         date=entry_date,
@@ -204,12 +452,14 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
         source_id=invoice.id,
     )
 
-    # DR Customer A/R
+    #DR Customer A/R (with customer link)
     JournalLine.objects.create(
         entry=entry,
         account=customer_acc,
         debit=total_due,
         credit=Decimal("0.00"),
+        customer=invoice.customer,
+        supplier=None,
     )
 
     # CR Revenue
@@ -220,6 +470,8 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
                 account=acc,
                 debit=Decimal("0.00"),
                 credit=amt,
+                customer=None,
+                supplier=None,
             )
 
     # CR VAT
@@ -229,47 +481,100 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
             account=vat_account,
             debit=Decimal("0.00"),
             credit=vat_total,
+            customer=None,
+            supplier=None,
         )
-
-# posting for payments
-from decimal import Decimal
-from django.db.models import Sum, Value
-from django.db.models.functions import Coalesce
-from django.utils import timezone
 
 def _post_payment_to_ledger(payment: Payment):
     """
-    Customer payment posting (Correct Accounting + Customer Subledger):
+    Customer payment posting:
 
-      DR Bank/Cash (deposit_to)
-      CR Customer A/R Subaccount (child under Accounts Receivable control)
+      DR Bank/Cash (deposit_to)                = amount_received
+      CR Customer A/R Subaccount               = invoices + open balance applied
+      CR Customer Advances (liability)         = unapplied_amount (excess), if any
     """
 
-    agg = (
+    invoice_total = (
         PaymentInvoice.objects
         .filter(payment=payment)
-        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
+        .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["total"]
+        or Decimal("0.00")
     )
-    total_applied = agg["total"] or Decimal("0.00")
 
-    if total_applied <= 0:
+    ob_total = (
+        PaymentOpenBalanceLine.objects
+        .filter(payment=payment)
+        .aggregate(total=Coalesce(Sum("amount_applied"), Value(Decimal("0.00"))))["total"]
+        or Decimal("0.00")
+    )
+
+    amount_received = Decimal(str(getattr(payment, "amount_received", Decimal("0.00")) or "0.00"))
+    unapplied = Decimal(str(getattr(payment, "unapplied_amount", Decimal("0.00")) or "0.00"))
+
+    # what should be applied to AR
+    total_applied_to_ar = invoice_total + ob_total
+
+    # ✅ SAFETY: normalize negative values
+    if amount_received < 0:
+        amount_received = Decimal("0.00")
+    if unapplied < 0:
+        unapplied = Decimal("0.00")
+    if total_applied_to_ar < 0:
+        total_applied_to_ar = Decimal("0.00")
+
+    # ✅ SAFETY: enforce consistency:
+    # amount_received should equal applied_to_ar + unapplied
+    expected_total = total_applied_to_ar + unapplied
+
+    # If view didn't compute unapplied correctly, auto-fix here
+    # (Do not allow ledger to go out of sync.)
+    if amount_received > 0 and expected_total != amount_received:
+        # Recompute unapplied from amount_received - applied_to_ar
+        recalculated_unapplied = amount_received - total_applied_to_ar
+
+        # If recalculated_unapplied is negative, it means allocations exceed amount received
+        # That should have been blocked in the view; but we protect ledger anyway.
+        if recalculated_unapplied < 0:
+            # clamp unapplied to 0 and clamp applied_to_ar down to amount_received
+            unapplied = Decimal("0.00")
+            total_applied_to_ar = amount_received
+        else:
+            unapplied = recalculated_unapplied
+
+        # keep payment record in sync
+        try:
+            Payment.objects.filter(pk=payment.pk).update(unapplied_amount=unapplied)
+            payment.unapplied_amount = unapplied
+        except Exception:
+            # if update fails, still continue posting correctly
+            pass
+
+    # if nothing meaningful, remove journal
+    if amount_received <= 0:
         JournalEntry.objects.filter(source_type="payment", source_id=payment.id).delete()
         return
 
+    # clear existing journal for this payment
     JournalEntry.objects.filter(source_type="payment", source_id=payment.id).delete()
 
     if not payment.customer_id:
         raise ValueError("Payment must have a customer.")
 
-    customer_acc = _get_or_create_customer_ar_subaccount(payment.customer)
+    customer_ar = _get_or_create_customer_ar_subaccount(payment.customer)
     deposit_acc = payment.deposit_to
     if not deposit_acc:
         return
 
+    advance_acc = None
+    if unapplied > 0:
+        advance_acc = _get_customer_advance_account()
+
     entry_date = payment.payment_date or timezone.localdate()
+
     bits = [f"Sales Collection {payment.id:04d}"]
-    if payment.customer and payment.customer.customer_name:
-        bits.append(f"– {payment.customer.customer_name}")
+    cust_name = payment.customer.customer_name or getattr(payment.customer, "company_name", None)
+    if cust_name:
+        bits.append(f"– {cust_name}")
     if payment.reference_no:
         bits.append(f"(Ref {payment.reference_no})")
     description = " ".join(bits)
@@ -281,51 +586,89 @@ def _post_payment_to_ledger(payment: Payment):
         source_id=payment.id,
     )
 
-    # DR Bank/Cash
+    # DR Bank/Cash = full amount received
     JournalLine.objects.create(
         entry=entry,
         account=deposit_acc,
-        debit=total_applied,
+        debit=amount_received,
         credit=Decimal("0.00"),
+        customer=payment.customer,
+        supplier=None,
     )
 
-    # CR Customer subledger A/R
-    JournalLine.objects.create(
-        entry=entry,
-        account=customer_acc,
-        debit=Decimal("0.00"),
-        credit=total_applied,
-    )
+    # CR A/R = what was applied to invoices + open balance
+    if total_applied_to_ar > 0:
+        JournalLine.objects.create(
+            entry=entry,
+            account=customer_ar,
+            debit=Decimal("0.00"),
+            credit=total_applied_to_ar,
+            customer=payment.customer,
+            supplier=None,
+        )
 
+    # CR Customer Advances = excess/credit
+    if advance_acc and unapplied > 0:
+        JournalLine.objects.create(
+            entry=entry,
+            account=advance_acc,
+            debit=Decimal("0.00"),
+            credit=unapplied,
+            customer=payment.customer,
+            supplier=None,
+        )
+from decimal import Decimal
+from collections import defaultdict
+from django.db.models import Sum, Value
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 
-# posting sales to gl
-def _post_sales_receipt_to_ledger(receipt: "SalesReceipt"):
+def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
     """
-    SALES RECEIPT posting (Cash sale + Customer Subledger):
+    SALES RECEIPT posting (GL-safe + supports overpayment):
 
-      DR Bank / Cash (deposit_to)                   — amount_paid
-      DR Customer A/R subaccount (optional)         — balance (if > 0)
-      CR Revenue (per product.income_account etc.)
-      CR VAT Payable (if VAT exists)
+      - If amount_paid <= total_amount:
+            DR Bank/Cash (deposit_to)           = amount_paid
+            DR Customer A/R (optional)          = (total_amount - amount_paid)
+            CR Revenue (allocated by lines)     = sales portion
+            CR VAT Payable (if any)             = vat_total
+
+      - If amount_paid > total_amount:
+            DR Bank/Cash (deposit_to)           = amount_paid
+            CR Revenue (allocated by lines)     = sales portion
+            CR VAT Payable (if any)             = vat_total
+            CR Customer Advances (liability)    = (amount_paid - total_amount)
     """
 
-    total_amount = Decimal(str(receipt.total_amount or "0"))
-    amount_paid  = Decimal(str(receipt.amount_paid or "0"))
-    balance      = Decimal(str(receipt.balance or "0"))
+    # ----------------------------
+    # Read totals from receipt
+    # ----------------------------
+    total_amount = Decimal(str(getattr(receipt, "total_amount", None) or "0"))
+    amount_paid  = Decimal(str(getattr(receipt, "amount_paid", None) or "0"))
 
-    if total_amount <= 0 and amount_paid <= 0 and balance <= 0:
+    if total_amount < 0:
+        total_amount = Decimal("0.00")
+    if amount_paid < 0:
+        amount_paid = Decimal("0.00")
+
+    # If nothing meaningful, delete JE and return
+    if total_amount <= 0 and amount_paid <= 0:
         JournalEntry.objects.filter(source_type="sales_receipt", source_id=receipt.id).delete()
         return
 
-    if balance < 0:
+    # ----------------------------
+    # Compute balance + excess (overpayment)
+    # ----------------------------
+    if amount_paid >= total_amount:
         balance = Decimal("0.00")
+        excess  = amount_paid - total_amount
+    else:
+        balance = total_amount - amount_paid
+        excess  = Decimal("0.00")
 
-    if total_amount != (amount_paid + balance):
-        balance = max(total_amount - amount_paid, Decimal("0.00"))
-
-    # Replace posting on edit
-    JournalEntry.objects.filter(source_type="sales_receipt", source_id=receipt.id).delete()
-
+    # ----------------------------
+    # Build revenue split (by product income accounts)
+    # ----------------------------
     revenue_by_account = defaultdict(lambda: Decimal("0.00"))
     vat_total = Decimal("0.00")
 
@@ -334,47 +677,91 @@ def _post_sales_receipt_to_ledger(receipt: "SalesReceipt"):
         or _find_control_account(name_contains="Revenue")
     )
 
-    # NOTE: your SalesReceiptLine fields are: amount, discount_amt, vat_amt
+    # lines → revenue + VAT
     for line in receipt.lines.select_related("product").all():
-        line_amount = Decimal(str(line.amount or "0"))
-        if line_amount <= 0:
-            continue
+        line_amount = Decimal(str(getattr(line, "amount", None) or "0"))
+        if line_amount < 0:
+            line_amount = Decimal("0.00")
 
-        prod = line.product
+        prod = getattr(line, "product", None)
         income_acc = getattr(prod, "income_account", None) if prod else None
         if not income_acc:
             income_acc = default_income_acc
 
-        if income_acc:
+        if income_acc and line_amount > 0:
             revenue_by_account[income_acc] += line_amount
 
-        vat_total += Decimal(str(getattr(line, "vat_amt", "0") or "0"))
+        vat_total += Decimal(str(getattr(line, "vat_amt", None) or "0"))
 
-    # Apply overall discount as negative revenue on default income account
-    discount_amt = Decimal(str(receipt.total_discount or "0"))
-    if discount_amt > 0 and default_income_acc:
-        revenue_by_account[default_income_acc] -= discount_amt
+    if vat_total < 0:
+        vat_total = Decimal("0.00")
 
-    # Shipping as revenue (if you want separate shipping income later, we can)
-    shipping_fee = Decimal(str(receipt.shipping_fee or "0"))
-    if shipping_fee > 0 and default_income_acc:
-        revenue_by_account[default_income_acc] += shipping_fee
+    # optional header adjustments you already do
+    discount_amt = Decimal(str(getattr(receipt, "total_discount", None) or "0"))
+    if discount_amt < 0:
+        discount_amt = Decimal("0.00")
 
-    deposit_acc = receipt.deposit_to
+    shipping_fee = Decimal(str(getattr(receipt, "shipping_fee", None) or "0"))
+    if shipping_fee < 0:
+        shipping_fee = Decimal("0.00")
+
+    # Apply discount/shipping to default income account (same as your logic)
+    if default_income_acc:
+        if discount_amt > 0:
+            revenue_by_account[default_income_acc] -= discount_amt
+        if shipping_fee > 0:
+            revenue_by_account[default_income_acc] += shipping_fee
+
+    # ----------------------------
+    # Ensure SALES credits match expected sale portion
+    # We assume: total_amount = sales_portion + vat_total
+    # so sales_portion = total_amount - vat_total
+    # ----------------------------
+    sales_target = total_amount - vat_total
+    if sales_target < 0:
+        sales_target = Decimal("0.00")
+
+    current_sales_credit = sum((amt for amt in revenue_by_account.values()), Decimal("0.00"))
+
+    # Adjust rounding/differences into default income account to keep JE balanced
+    diff = sales_target - current_sales_credit
+    # allow tiny rounding differences
+    if default_income_acc and diff != 0:
+        revenue_by_account[default_income_acc] += diff
+
+    # ----------------------------
+    # Accounts
+    # ----------------------------
+    deposit_acc = getattr(receipt, "deposit_to", None)
     if not deposit_acc:
         return
 
-    # Post any A/R part to the CUSTOMER subaccount
+    if not getattr(receipt, "customer_id", None):
+        raise ValueError("Sales receipt must have a customer.")
+
     ar_posting_account = _get_or_create_customer_ar_subaccount(receipt.customer)
 
+    # VAT Payable account (optional)
     vat_account = _find_control_account(name_contains="VAT")
 
-    entry_date = receipt.receipt_date or timezone.localdate()
+    # Customer Advances account (needed only when excess > 0)
+    advance_acc = None
+    if excess > 0:
+        advance_acc = _get_customer_advance_account()
+
+    # ----------------------------
+    # Recreate JE (edit-safe for your current approach)
+    # ----------------------------
+    JournalEntry.objects.filter(source_type="sales_receipt", source_id=receipt.id).delete()
+
+    entry_date = _safe_date(getattr(receipt, "receipt_date", None), timezone.localdate())
     bits = [f"Receipt {receipt.id:04d}"]
-    if receipt.customer_id and getattr(receipt.customer, "customer_name", None):
-        bits.append(f"– {receipt.customer.customer_name}")
-    if receipt.reference_no:
-        bits.append(f"(Ref {receipt.reference_no})")
+    cust_name = getattr(receipt.customer, "customer_name", None) or getattr(receipt.customer, "company_name", None)
+    if cust_name:
+        bits.append(f"– {cust_name}")
+    ref = getattr(receipt, "reference_no", None)
+    if ref:
+        bits.append(f"(Ref {ref})")
     description = " ".join(bits)
 
     entry = JournalEntry.objects.create(
@@ -384,13 +771,17 @@ def _post_sales_receipt_to_ledger(receipt: "SalesReceipt"):
         source_id=receipt.id,
     )
 
-    # ----- DEBITS -----
+    # ----------------------------
+    # DEBITS
+    # ----------------------------
     if amount_paid > 0:
         JournalLine.objects.create(
             entry=entry,
             account=deposit_acc,
             debit=amount_paid,
             credit=Decimal("0.00"),
+            customer=receipt.customer,
+            supplier=None,
         )
 
     if balance > 0:
@@ -399,34 +790,85 @@ def _post_sales_receipt_to_ledger(receipt: "SalesReceipt"):
             account=ar_posting_account,
             debit=balance,
             credit=Decimal("0.00"),
+            customer=receipt.customer,
+            supplier=None,
         )
 
-    # ----- CREDITS -----
+    # ----------------------------
+    # CREDITS (Revenue)
+    # ----------------------------
     for acc, amt in revenue_by_account.items():
-        if not acc or amt <= 0:
+        # allow negative adjustments only if needed; but skip fully zero lines
+        if not acc or amt == 0:
             continue
-        JournalLine.objects.create(
-            entry=entry,
-            account=acc,
-            debit=Decimal("0.00"),
-            credit=amt,
-        )
 
+        if amt > 0:
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=Decimal("0.00"),
+                credit=amt,
+                customer=None,
+                supplier=None,
+            )
+        else:
+            # negative revenue adjustment → debit revenue account
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=abs(amt),
+                credit=Decimal("0.00"),
+                customer=None,
+                supplier=None,
+            )
+
+    # VAT payable
     if vat_total > 0 and vat_account:
         JournalLine.objects.create(
             entry=entry,
             account=vat_account,
             debit=Decimal("0.00"),
             credit=vat_total,
+            customer=None,
+            supplier=None,
         )
 
-# sales analytics
-def dec(val) -> Decimal:
-    try:
-        return Decimal(str(val or "0"))
-    except Exception:
-        return Decimal("0.00")
+    # Customer Advances (excess/overpayment)
+    if advance_acc and excess > 0:
+        JournalLine.objects.create(
+            entry=entry,
+            account=advance_acc,
+            debit=Decimal("0.00"),
+            credit=excess,
+            customer=receipt.customer,
+            supplier=None,
+        )
 
+def _get_vat_payable_account() -> "Account":
+    """
+    Returns VAT Payable (liability). If you’re not using VAT now, it will still be ready.
+    """
+    acc = (
+        Account.objects
+        .filter(is_active=True)
+        .filter(account_name__iexact="VAT Payable")
+        .first()
+    )
+    if acc:
+        return acc
+
+    acc = (
+        Account.objects
+        .filter(is_active=True)
+        .filter(account_name__icontains="VAT")
+        .filter(account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"])
+        .first()
+    )
+    if acc:
+        return acc
+    
+    
+# sales analytics
 
 def _invoice_analytics():
     today = timezone.localdate()
@@ -441,11 +883,11 @@ def _invoice_analytics():
     paid_cnt = unpaid_cnt = overdue_cnt = 0
 
     for inv in invs:
-        total = dec(inv.total_due)
-        paid = sum((dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
+        total = _dec(inv.total_due)
+        paid = sum((_dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
         bal = total - paid
 
-        due = _as_date(getattr(inv, "due_date", None))  # ✅ normalize
+        due = _as_date(getattr(inv, "due_date", None))  #normalize
 
         if bal <= Decimal("0.00001"):
             paid_cnt += 1
@@ -482,8 +924,8 @@ def sales(request):
         .order_by("-date_created", "-id")
     )
     for inv in inv_qs:
-        total = dec(inv.total_due)
-        paid = sum((dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
+        total = _dec(inv.total_due)
+        paid = sum((_dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
         bal = total - paid
         status = status_for_invoice(inv, total, paid, bal)
 
@@ -537,8 +979,8 @@ def sales(request):
         .order_by("-receipt_date", "-id")
     )
     for r in sr_qs:
-        total = dec(r.total_amount)
-        paid  = dec(r.amount_paid)
+        total = _dec(r.total_amount)
+        paid  = _dec(r.amount_paid)
         status = _receipt_status(r)  # you already have this
 
         rows.append({
@@ -554,7 +996,7 @@ def sales(request):
             "print_url": reverse("sales:receipt-print", args=[r.id]),
         })
 
-    # ✅ sort newest first, safely even if a row has date=None
+    #sort newest first, safely even if a row has date=None
     def sort_key(x):
         d = _as_date(x.get("date"))
         return (d or date.min, x.get("type", ""))
@@ -572,20 +1014,22 @@ def sales(request):
         },
     )
 # invoice form view
-
 def get_product_details(request, pk):
+    """
+    Returns key fields needed to auto-fill invoice row.
+    """
     try:
         product = Product.objects.get(pk=pk)
         data = {
             "id": product.id,
             "name": product.name,
+            "sales_description": product.sales_description or "",
             "sales_price": str(product.sales_price or 0),
-            "taxable": product.taxable,
+            "taxable": bool(product.taxable),
         }
         return JsonResponse(data)
     except Product.DoesNotExist:
         return JsonResponse({"error": "Product not found"}, status=404)
-
 
 TERMS_DAYS = {
     "due_on_receipt": 0, "one_day": 1, "two_days": 2, "net_7": 7,
@@ -603,14 +1047,13 @@ def parse_date_flexible(s):
             continue
     return None  # if nothing matched
 
-
+@transaction.atomic
 def add_invoice(request):
     if request.method == "POST":
-        # Parse customer and invoice info
-        raw_date_created = request.POST.get("date_created") or ""
-        raw_due_date     = request.POST.get("due_date") or ""
-        customer_id      = request.POST.get("customer")
+        raw_date_created = (request.POST.get("date_created") or "").strip()
+        raw_due_date     = (request.POST.get("due_date") or "").strip()
 
+        customer_id = request.POST.get("customer")
         customer = None
         if customer_id:
             try:
@@ -633,32 +1076,26 @@ def add_invoice(request):
                 class_field = None
 
         tags          = request.POST.get("tags")
-        po_num        = request.POST.get("po_num")
+        po_num        = request.POST.get("po_number")  #FIX: your form uses po_number
         memo          = request.POST.get("memo")
         customs_notes = request.POST.get("customs_notes")
 
-        subtotal       = Decimal(request.POST.get("subtotal") or 0)
-        total_discount = Decimal(request.POST.get("total_discount") or 0)
-        shipping_fee   = Decimal(request.POST.get("shipping_fee") or 0)
-        total_due      = Decimal(request.POST.get("total_due") or 0)
+        subtotal       = Decimal(request.POST.get("subtotal") or "0")
+        total_discount = Decimal(request.POST.get("total_discount") or "0")
+        shipping_fee   = Decimal(request.POST.get("shipping_fee") or "0")
 
-        # parse to date objects (your existing helper returns date)
         created_dt = parse_date_flexible(raw_date_created)
         due_dt     = parse_date_flexible(raw_due_date)
 
-        # if user didn't enter a due date, compute it from terms + created date
         if not due_dt and created_dt and terms in TERMS_DAYS:
             due_dt = created_dt + timedelta(days=TERMS_DAYS[terms])
 
-        # Invoice totals
-        total_vat = Decimal("0")
-
-        # ✅ Create invoice (FIX: store aware datetime into DateTimeFields)
+        # Create invoice first
         invoice = Newinvoice.objects.create(
             customer=customer,
             email=email,
             date_created=as_aware_datetime(created_dt),
-            due_date=as_aware_datetime(due_dt),        
+            due_date=as_aware_datetime(due_dt),
             billing_address=billing_address,
             shipping_address=shipping_address,
             class_field=class_field,
@@ -670,12 +1107,12 @@ def add_invoice(request):
             customs_notes=customs_notes,
             subtotal=subtotal,
             total_discount=total_discount,
-            total_vat=total_vat,   # will update after items
+            total_vat=Decimal("0"),
             shipping_fee=shipping_fee,
-            total_due=total_due,   # will update later
+            total_due=Decimal("0"),
         )
 
-        # ✅ Line items (loop through arrays from form)
+        # Line items arrays
         products          = request.POST.getlist("product[]")
         descriptions      = request.POST.getlist("description[]")
         qtys              = request.POST.getlist("qty[]")
@@ -685,43 +1122,51 @@ def add_invoice(request):
         discount_nums     = request.POST.getlist("discount_num[]")
         discount_amounts  = request.POST.getlist("discount_amount[]")
 
+        total_vat = Decimal("0")
+
         for i in range(len(products)):
             if not products[i]:
                 continue
 
             product = get_object_or_404(Product, pk=products[i])
 
+            qty_val = Decimal(qtys[i] or "0") if i < len(qtys) else Decimal("0")
+            rate_val = Decimal(rates[i] or "0") if i < len(rates) else Decimal("0")
+            amt_val = Decimal(amounts[i] or "0") if i < len(amounts) else Decimal("0")
+            vat_val = Decimal(vats[i] or "0") if i < len(vats) else Decimal("0")
+            disc_num_val = Decimal(discount_nums[i] or "0") if i < len(discount_nums) else Decimal("0")
+            disc_amt_val = Decimal(discount_amounts[i] or "0") if i < len(discount_amounts) else Decimal("0")
+            desc_val = descriptions[i] if i < len(descriptions) else ""
+
             InvoiceItem.objects.create(
                 invoice=invoice,
                 product=product,
-                description=descriptions[i] if i < len(descriptions) else "",
-                qty=Decimal(qtys[i] or "0") if i < len(qtys) else Decimal("0"),
-                unit_price=Decimal(rates[i] or "0") if i < len(rates) else Decimal("0"),
-                amount=Decimal(amounts[i] or "0") if i < len(amounts) else Decimal("0"),
-                vat=Decimal(vats[i] or "0") if i < len(vats) else Decimal("0"),
-                discount_num=Decimal(discount_nums[i] or "0") if i < len(discount_nums) else Decimal("0"),
-                discount_amount=Decimal(discount_amounts[i] or "0") if i < len(discount_amounts) else Decimal("0"),
+                description=desc_val,
+                qty=qty_val,
+                unit_price=rate_val,
+                amount=amt_val,
+                vat=vat_val,
+                discount_num=disc_num_val,
+                discount_amount=disc_amt_val,
             )
 
-        # Apply discount and shipping
-        total_due = (subtotal - total_discount) + shipping_fee + total_vat
+            total_vat += vat_val
 
-        # Update invoice totals
+        # Update totals
+        total_due = (subtotal - total_discount) + shipping_fee + total_vat
         invoice.total_vat = total_vat
         invoice.total_due = total_due
         apply_audit_fields(invoice)
         invoice.save()
 
-        # ⇨ Post to General Ledger
         _post_invoice_to_ledger(invoice)
 
-        # Decide redirect
         save_action = request.POST.get("save_action")
         if save_action == "save":
             return redirect("sales:invoices")
         if save_action == "save&new":
             return redirect("sales:add-invoice")
-        elif save_action == "save&close":
+        if save_action == "save&close":
             return redirect("sales:sales")
 
         return redirect("sales:add-invoice")
@@ -833,11 +1278,11 @@ def edit_invoice(request, pk: int):
         if line_rows:
             InvoiceItem.objects.bulk_create(line_rows)
 
-        # ✅ Save header fields (FIX: store aware datetime into DateTimeFields)
+        #Save header fields (FIX: store aware datetime into DateTimeFields)
         inv.customer         = customer
         inv.email            = email
-        inv.date_created     = as_aware_datetime(created_dt)  # ✅ FIX
-        inv.due_date         = as_aware_datetime(due_dt)      # ✅ FIX
+        inv.date_created     = as_aware_datetime(created_dt)  #FIX
+        inv.due_date         = as_aware_datetime(due_dt)      #FIX
         inv.billing_address  = billing_addr
         inv.shipping_address = shipping_addr
         inv.class_field      = class_field
@@ -1066,82 +1511,86 @@ def invoice_print(request, pk: int):
         "org": org,
     })
 
+# ------------------------------------------------------------
+# RECEIVE PAYMENT (CREATE)
+# ------------------------------------------------------------
 
-# receipt form view
-
-def add_receipt(request):
-    
-    return render(request, 'receipt_form.html', {})
-# receive payment form view
 @transaction.atomic
 def receive_payment_view(request):
     customers = Newcustomer.objects.order_by("customer_name")
-    accounts = deposit_accounts_qs()   # only Bank + Cash & Cash Equivalents
+    accounts = deposit_accounts_qs()  # only Bank + Cash & Cash Equivalents
 
     if request.method == "POST":
-        customer_id   = (request.POST.get("customer") or "").strip()
-        payment_date  = parse_date(request.POST.get("payment_date") or "")
-        payment_method= (request.POST.get("payment_method") or "cash").strip()
-        deposit_to_id = (request.POST.get("deposit_to") or "").strip()
-        reference_no  = (request.POST.get("reference_no") or "").strip()
-        tags          = (request.POST.get("tags") or "").strip()
-        memo          = (request.POST.get("memo") or "").strip()
+        customer_id    = (request.POST.get("customer") or "").strip()
+        payment_date   = parse_date(request.POST.get("payment_date") or "")
+        payment_method = (request.POST.get("payment_method") or "cash").strip()
+        deposit_to_id  = (request.POST.get("deposit_to") or "").strip()
+        reference_no   = (request.POST.get("reference_no") or "").strip()
+        tags           = (request.POST.get("tags") or "").strip()
+        memo           = (request.POST.get("memo") or "").strip()
 
-        # resolve & validate deposit account **only from allowed set**
+        # ✅ Amount received (from your HTML)
+        amount_received = _dec(request.POST.get("amount_received"), "0.00")
+
+        # resolve deposit account (only allowed set)
         deposit_account = None
         if deposit_to_id.isdigit():
             deposit_account = accounts.filter(id=int(deposit_to_id)).first()
 
-        # ensure we have a valid 8-digit numeric ref; if not, generate one
+        # ensure reference
         if not (len(reference_no) == 8 and reference_no.isdigit()):
             reference_no = generate_unique_ref_no()
-        # guard against the (very rare) race where the same ref got used meanwhile
         if Payment.objects.filter(reference_no=reference_no).exists():
             reference_no = generate_unique_ref_no()
 
         if not (customer_id.isdigit() and payment_date and deposit_account):
-            # return the same prefilled ref back to the form so it stays visible
             return render(request, "receive_payment.html", {
                 "customers": customers,
                 "accounts": accounts,
                 "reference_no": reference_no,
-                "form_error": "Please select a customer, a valid Bank/Cash & Cash Equivalents account, and a date.",
+                "form_error": "Please select a customer, a valid Bank/Cash account, and a date.",
+            })
+
+        if amount_received <= 0:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "reference_no": reference_no,
+                "form_error": "Amount Received must be greater than 0.",
             })
 
         customer = get_object_or_404(Newcustomer, pk=int(customer_id))
 
-        # collect allocations like amount_paid_<invoice_id>
+        # --------------------------
+        # invoice allocations: amount_paid_<invoice_id>
+        # --------------------------
         allocations = []
         for key, val in request.POST.items():
             if key.startswith("amount_paid_"):
                 inv_id = key.split("_")[-1]
                 if inv_id.isdigit():
-                    s = (val or "").strip()
-                    if s:
-                        amt = Decimal(s)
-                        if amt > 0:
-                            allocations.append((int(inv_id), amt))
+                    amt = _dec(val, "0.00")
+                    if amt > 0:
+                        allocations.append((int(inv_id), amt))
 
-        if not allocations:
-            return render(request, "receive_payment.html", {
-                "customers": customers,
-                "accounts": accounts,
-                "reference_no": reference_no,
-                "form_error": "Enter at least one positive Amount to Apply.",
-            })
+        # open balance typed (optional)
+        raw_ob = request.POST.get("open_balance_amount")
+        open_balance_manual = _dec(raw_ob, "0.00") if raw_ob is not None else Decimal("0.00")
+        if open_balance_manual < 0:
+            open_balance_manual = Decimal("0.00")
 
-        # validate vs outstanding & save
-        with transaction.atomic():
+        # validate invoice allocations not exceeding their balances
+        if allocations:
             balances = (
                 Newinvoice.objects.filter(id__in=[i for i, _ in allocations])
                 .annotate(
-                    total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
-                    total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00")))
+                    total_due_dec=F("total_due"),
+                    total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
                 )
                 .annotate(outstanding_balance=F("total_due_dec") - F("total_paid"))
                 .values_list("id", "outstanding_balance")
             )
-            balance_map = {iid: bal for iid, bal in balances}
+            balance_map = {iid: Decimal(str(bal or "0")) for iid, bal in balances}
 
             for invoice_id, amount in allocations:
                 max_allowed = balance_map.get(invoice_id)
@@ -1153,72 +1602,303 @@ def receive_payment_view(request):
                         "form_error": f"Allocation {amount} exceeds outstanding balance {max_allowed} on invoice {invoice_id}.",
                     })
 
-            payment = Payment.objects.create(
-                customer=customer,
-                payment_date=payment_date,
-                payment_method=payment_method,
-                deposit_to=deposit_account,
-                reference_no=reference_no,
-                tags=tags,
-                memo=memo,
-            )
-            apply_audit_fields(payment)
-            payment.save()
+        invoice_total = sum((amt for _, amt in allocations), Decimal("0.00"))
+
+        # current open balance BEFORE this payment
+        current_open_balance = _customer_open_balance_amount(customer)
+
+        # remaining after invoices
+        remaining_after_invoices = amount_received - invoice_total
+        if remaining_after_invoices < 0:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "reference_no": reference_no,
+                "form_error": "Amount Received is less than invoice allocations.",
+            })
+
+        # decide open balance apply:
+        # if user typed open_balance_amount use that, else auto-apply remaining to OB (up to current_open_balance)
+        if open_balance_manual > 0:
+            open_balance_apply = open_balance_manual
+        else:
+            open_balance_apply = min(remaining_after_invoices, current_open_balance)
+
+        if open_balance_apply < 0:
+            open_balance_apply = Decimal("0.00")
+
+        remaining_after_open_balance = remaining_after_invoices - open_balance_apply
+
+        # ✅ any remaining is customer credit (unapplied)
+        unapplied = remaining_after_open_balance if remaining_after_open_balance > 0 else Decimal("0.00")
+
+        # must have something meaningful
+        if invoice_total <= 0 and open_balance_apply <= 0 and unapplied <= 0:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "reference_no": reference_no,
+                "form_error": "Nothing to apply. Enter invoice amounts or open balance.",
+            })
+
+        payment = Payment.objects.create(
+            customer=customer,
+            payment_date=payment_date,
+            payment_method=payment_method,
+            deposit_to=deposit_account,
+            reference_no=reference_no,
+            tags=tags,
+            memo=memo,
+            amount_received=amount_received,  # ✅ stored
+            unapplied_amount=unapplied,       # ✅ stored
+        )
+        apply_audit_fields(payment)
+        payment.save()
+
+        if allocations:
             PaymentInvoice.objects.bulk_create([
                 PaymentInvoice(payment=payment, invoice_id=inv_id, amount_paid=amt)
                 for inv_id, amt in allocations
             ])
 
-            # === Post this payment into the General Ledger ===
-            _post_payment_to_ledger(payment)
+        # save open balance line
+        _save_payment_open_balance(payment, open_balance_apply)
+
+        # ✅ Post to GL (DR Bank, CR Customer AR) for full amount_received
+        _post_payment_to_ledger(payment)
 
         return redirect(f"{request.path}?ok=1")
 
-    # GET: pre-generate and pass to template so it’s visible immediately
     reference_no = generate_unique_ref_no()
     return render(request, "receive_payment.html", {
         "customers": customers,
         "accounts": accounts,
-        "reference_no": reference_no,   # <-- make sure the template uses this
+        "reference_no": reference_no,
     })
+
+# ------------------------------------------------------------
+# PAYMENT EDIT (NO amount_received logic)
+# ------------------------------------------------------------
+@transaction.atomic
+def payment_edit(request, pk: int):
+    payment = get_object_or_404(
+        Payment.objects.select_related("customer", "deposit_to"),
+        pk=pk
+    )
+    customers = Newcustomer.objects.order_by("customer_name")
+    accounts  = deposit_accounts_qs()
+
+    if request.method == "POST":
+        customer_id    = (request.POST.get("customer") or "").strip()
+        payment_date   = parse_date(request.POST.get("payment_date") or "")
+        payment_method = (request.POST.get("payment_method") or "cash").strip()
+        deposit_to_id  = (request.POST.get("deposit_to") or "").strip()
+        reference_no   = (request.POST.get("reference_no") or "").strip()
+        tags           = (request.POST.get("tags") or "").strip()
+        memo           = (request.POST.get("memo") or "").strip()
+
+        amount_received = _dec(request.POST.get("amount_received"), "0.00")
+
+        if not (customer_id.isdigit() and payment_date and deposit_to_id.isdigit()):
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "payment": payment,
+                "reference_no": payment.reference_no or generate_unique_ref_no(),
+                "prefill_rows": _payment_prefill_rows(payment),
+                "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+                "edit_mode": True,
+                "form_error": "Please select a customer, a valid Bank/Cash account, and a date.",
+            })
+
+        if amount_received <= 0:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "payment": payment,
+                "reference_no": payment.reference_no or generate_unique_ref_no(),
+                "prefill_rows": _payment_prefill_rows(payment),
+                "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+                "edit_mode": True,
+                "form_error": "Enter Amount Received (must be > 0).",
+            })
+
+        customer = get_object_or_404(Newcustomer, pk=int(customer_id))
+        deposit_account = get_object_or_404(accounts, pk=int(deposit_to_id))
+
+        # allocations
+        allocations = []
+        for key, val in request.POST.items():
+            if key.startswith("amount_paid_"):
+                inv_id = key.split("_")[-1]
+                if inv_id.isdigit():
+                    amt = _dec(val, "0.00")
+                    if amt > 0:
+                        allocations.append((int(inv_id), amt))
+
+        # open balance
+        raw_ob = request.POST.get("open_balance_amount")
+        open_balance_amount = _dec(raw_ob, "0.00")
+        if open_balance_amount < 0:
+            open_balance_amount = Decimal("0.00")
+
+        # validate allocations (edit-safe)
+        prev_alloc_qs = PaymentInvoice.objects.filter(payment=payment).values_list("invoice_id", "amount_paid")
+        prev_map = {}
+        for iid, amt in prev_alloc_qs:
+            prev_map[iid] = prev_map.get(iid, Decimal("0.00")) + Decimal(amt or 0)
+
+        if allocations:
+            invoice_ids = [i for i, _ in allocations]
+            balances = (
+                Newinvoice.objects.filter(id__in=invoice_ids)
+                .annotate(
+                    total_due_dec=F("total_due"),
+                    total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+                )
+                .annotate(outstanding_balance=F("total_due_dec") - F("total_paid"))
+                .values_list("id", "outstanding_balance")
+            )
+            balance_map = {iid: Decimal(str(bal or "0")) for iid, bal in balances}
+
+            for invoice_id, new_amt in allocations:
+                allowed = balance_map.get(invoice_id, Decimal("0.00")) + prev_map.get(invoice_id, Decimal("0.00"))
+                if new_amt > allowed:
+                    return render(request, "receive_payment.html", {
+                        "customers": customers,
+                        "accounts": accounts,
+                        "payment": payment,
+                        "reference_no": payment.reference_no or generate_unique_ref_no(),
+                        "prefill_rows": _payment_prefill_rows(payment),
+                        "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+                        "edit_mode": True,
+                        "form_error": f"Allocation {new_amt} exceeds allowed {allowed} on invoice {invoice_id}.",
+                    })
+
+        invoice_total = sum((amt for _, amt in allocations), Decimal("0.00"))
+
+        current_open_balance = _customer_open_balance_amount(customer)
+        if open_balance_amount > current_open_balance:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "payment": payment,
+                "reference_no": payment.reference_no or generate_unique_ref_no(),
+                "prefill_rows": _payment_prefill_rows(payment),
+                "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+                "edit_mode": True,
+                "form_error": f"Open Balance amount {open_balance_amount} exceeds current Open Balance {current_open_balance}.",
+            })
+
+        total_applied_to_ar = invoice_total + open_balance_amount
+        if total_applied_to_ar <= 0:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "payment": payment,
+                "reference_no": payment.reference_no or generate_unique_ref_no(),
+                "prefill_rows": _payment_prefill_rows(payment),
+                "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+                "edit_mode": True,
+                "form_error": "Enter at least one invoice amount or an Open Balance amount.",
+            })
+
+        if amount_received < total_applied_to_ar:
+            return render(request, "receive_payment.html", {
+                "customers": customers,
+                "accounts": accounts,
+                "payment": payment,
+                "reference_no": payment.reference_no or generate_unique_ref_no(),
+                "prefill_rows": _payment_prefill_rows(payment),
+                "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+                "edit_mode": True,
+                "form_error": "Amount Received is less than total applied (Invoices + Open Balance).",
+            })
+
+        unapplied = amount_received - total_applied_to_ar
+        if unapplied < 0:
+            unapplied = Decimal("0.00")
+
+        # save header
+        payment.customer = customer
+        payment.payment_date = payment_date
+        payment.payment_method = payment_method
+        payment.deposit_to = deposit_account
+        payment.reference_no = reference_no if reference_no else payment.reference_no
+        payment.tags = tags
+        payment.memo = memo
+        payment.amount_received = amount_received
+        payment.unapplied_amount = unapplied
+        apply_audit_fields(payment)
+        payment.save()
+
+        # replace allocations
+        PaymentInvoice.objects.filter(payment=payment).delete()
+        if allocations:
+            PaymentInvoice.objects.bulk_create([
+                PaymentInvoice(payment=payment, invoice_id=inv_id, amount_paid=amt)
+                for inv_id, amt in allocations
+            ])
+
+        _save_payment_open_balance(payment, open_balance_amount)
+
+        _post_payment_to_ledger(payment)
+
+        return redirect('sales:payment-detail', pk=payment.pk)
+
+    context = {
+        "customers": customers,
+        "accounts": accounts,
+        "payment": payment,
+        "reference_no": payment.reference_no or generate_unique_ref_no(),
+        "prefill_rows": _payment_prefill_rows(payment),
+        "open_balance_prefill": getattr(getattr(payment, "open_balance_line", None), "amount_applied", Decimal("0.00")),
+        "edit_mode": True,
+    }
+    return render(request, "receive_payment.html", context)
+
+@require_GET
 def outstanding_invoices_api(request):
-    cid = request.GET.get("customer")
-    if not cid or cid == "add_new":
-        return JsonResponse({"invoices": []})
-    try:
-        cid_int = int(cid)
-    except ValueError:
-        return JsonResponse({"invoices": []})
+    customer_id = request.GET.get("customer")
+    if not customer_id:
+        return JsonResponse({"invoices": [], "open_balance": "0.00"})
 
-    customer = get_object_or_404(Newcustomer, pk=cid_int)
+    customer = Newcustomer.objects.filter(pk=customer_id).first()
+    if not customer:
+        return JsonResponse({"invoices": [], "open_balance": "0.00"})
 
-    qs = (
-        Newinvoice.objects
-        .filter(customer=customer)
-        .annotate(
-            total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
-            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00")))
-        )
-        # working on the balance
-        .annotate(outstanding_balance=F("total_due_dec") - F("total_paid"))
-        .filter(outstanding_balance__gt=0)
-        .order_by("-date_created")
-        # return dicts to avoid setting attributes on model instances
-        .values("id", "date_created", "due_date", "total_due", "outstanding_balance")
+    invoices_payload = []
+
+    # map invoice -> sum applied
+    applied_map = dict(
+        PaymentInvoice.objects
+        .filter(invoice__customer_id=customer_id)
+        .values("invoice_id")
+        .annotate(s=Sum("amount_paid"))
+        .values_list("invoice_id", "s")
     )
 
-    data = []
-    for row in qs:
-        dc = row["date_created"]
-        dd = row["due_date"]
-        data.append({
-            "id": row["id"],
-            "date_created": dc.isoformat() if dc else None,
-            "due_date": dd.isoformat() if dd else None,
-            "total_due": str(row["total_due"]),                 # float -> string for JSON
-            "balance": str(row["outstanding_balance"]),         # keep JSON key as "balance"
+    for inv in Newinvoice.objects.filter(customer_id=customer_id).order_by("-date_created"):
+        total = Decimal(str(inv.total_due or "0"))
+        applied = Decimal(str(applied_map.get(inv.id) or "0"))
+        balance = total - applied
+        if balance <= 0:
+            continue
+
+        invoices_payload.append({
+            "id": inv.id,
+            "date_created": inv.date_created.strftime("%Y-%m-%d") if inv.date_created else None,
+            "due_date": inv.due_date.strftime("%Y-%m-%d") if getattr(inv, "due_date", None) else None,
+            "total_due": str(total),
+            "balance": str(balance),
         })
-    return JsonResponse({"invoices": data})
+
+    open_balance = _customer_open_balance_amount(customer)
+
+    return JsonResponse({
+        "invoices": invoices_payload,
+        "open_balance": str(open_balance),
+    })
 
 # payment lists
 def payments_list(request):
@@ -1290,136 +1970,6 @@ def payment_detail(request, pk: int):
     group = _payment_prefill_rows(payment)
     return render(request, "payment_detail.html", {"group": group, "payment":payment})
 
-# edit view 
-@transaction.atomic
-def payment_edit(request, pk: int):
-    """
-    Edit a payment using the SAME template receive_payment.html,
-    fully prefilled (customer, date, method, deposit_to, reference, tags, memo, and invoice allocations).
-    """
-    payment = get_object_or_404(
-        Payment.objects.select_related("customer", "deposit_to"),
-        pk=pk
-    )
-    customers = Newcustomer.objects.order_by("customer_name")
-    accounts  = deposit_accounts_qs()   # only Bank + Cash & Cash Equivalents
-
-    if request.method == "POST":
-        customer_id   = (request.POST.get("customer") or "").strip()
-        payment_date  = parse_date(request.POST.get("payment_date") or "")
-        payment_method= (request.POST.get("payment_method") or "cash").strip()
-        deposit_to_id = (request.POST.get("deposit_to") or "").strip()
-        reference_no  = (request.POST.get("reference_no") or "").strip()
-        tags          = (request.POST.get("tags") or "").strip()
-        memo          = (request.POST.get("memo") or "").strip()
-
-        # validate & resolve deposit account from restricted queryset
-        if not (customer_id.isdigit() and payment_date and deposit_to_id.isdigit()):
-            return render(request, "receive_payment.html", {
-                "customers": customers,
-                "accounts": accounts,
-                "payment": payment,
-                "reference_no": payment.reference_no or generate_unique_ref_no(),
-                "prefill_rows": _payment_prefill_rows(payment),
-                "edit_mode": True,
-                "form_error": "Please select a customer, a valid Bank/Cash & Cash Equivalents account, and a date.",
-            })
-
-        customer = get_object_or_404(Newcustomer, pk=int(customer_id))
-        deposit_account = get_object_or_404(accounts, pk=int(deposit_to_id))
-
-        # collect incoming allocations
-        allocations = []
-        for key, val in request.POST.items():
-            if not key.startswith("amount_paid_"):
-                continue
-            inv_id_part = key.split("_")[-1]
-            if not inv_id_part.isdigit():
-                continue
-            raw = (val or "").strip()
-            if not raw:
-                continue
-            amt = Decimal(raw)
-            if amt > 0:
-                allocations.append((int(inv_id_part), amt))
-
-        if not allocations:
-            return render(request, "receive_payment.html", {
-                "customers": customers,
-                "accounts": accounts,
-                "payment": payment,
-                "reference_no": payment.reference_no or generate_unique_ref_no(),
-                "prefill_rows": _payment_prefill_rows(payment),
-                "edit_mode": True,
-                "form_error": "Enter at least one positive Amount to Apply.",
-            })
-
-        # VALIDATION against outstanding, but allow reusing this payment’s previous amounts
-        # Build map of this payment's previous allocations
-        prev_alloc_qs = PaymentInvoice.objects.filter(payment=payment).values_list('invoice_id', 'amount_paid')
-        prev_map = {}
-        for iid, amt in prev_alloc_qs:
-            prev_map[iid] = prev_map.get(iid, Decimal("0.00")) + Decimal(amt or 0)
-
-        invoice_ids = [i for i, _ in allocations]
-        balances = (
-            Newinvoice.objects.filter(id__in=invoice_ids)
-            .annotate(
-                total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
-                total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00")))
-            )
-            .annotate(outstanding_balance=F("total_due_dec") - F("total_paid"))
-            .values_list("id", "outstanding_balance")
-        )
-        balance_map = {iid: Decimal(bal) for iid, bal in balances}
-
-        # Allow new_amount <= outstanding + previously_applied_by_this_payment
-        for invoice_id, new_amt in allocations:
-            allowed = balance_map.get(invoice_id, Decimal("0.00")) + prev_map.get(invoice_id, Decimal("0.00"))
-            if new_amt > allowed:
-                return render(request, "receive_payment.html", {
-                    "customers": customers,
-                    "accounts": accounts,
-                    "payment": payment,
-                    "reference_no": payment.reference_no or generate_unique_ref_no(),
-                    "prefill_rows": _payment_prefill_rows(payment),
-                    "edit_mode": True,
-                    "form_error": f"Allocation {new_amt} exceeds allowed {allowed} on invoice {invoice_id}.",
-                })
-
-        # save header
-        payment.customer      = customer
-        payment.payment_date  = payment_date
-        payment.payment_method= payment_method
-        payment.deposit_to    = deposit_account
-        payment.reference_no  = reference_no if reference_no else payment.reference_no
-        payment.tags          = tags
-        payment.memo          = memo
-        apply_audit_fields(payment)
-        payment.save()
-
-        # replace allocations
-        PaymentInvoice.objects.filter(payment=payment).delete()
-        PaymentInvoice.objects.bulk_create([
-            PaymentInvoice(payment=payment, invoice_id=inv_id, amount_paid=amt)
-            for inv_id, amt in allocations
-        ])
-
-        # === Re-post this payment to the ledger (clear & recreate journal) ===
-        _post_payment_to_ledger(payment)
-
-        return redirect('sales:payment-detail', pk=payment.pk)
-
-    # GET → prefill
-    context = {
-        "customers": customers,
-        "accounts": accounts,
-        "payment": payment,
-        "reference_no": payment.reference_no or generate_unique_ref_no(),
-        "prefill_rows": _payment_prefill_rows(payment),
-        "edit_mode": True,
-    }
-    return render(request, "receive_payment.html", context)
 # payment printout  
 def _lines_for_payment(payment: Payment):
     """
@@ -1846,12 +2396,6 @@ def receipt_print(request, pk: int):
 
 
 # working on the statements
-def _dec(x):
-    try:
-        return Decimal(str(x or "0"))
-    except Exception:
-        return Decimal("0.00")
-
 
 def _customer_opening_balance(customer_id, start_date):
     """
@@ -2209,3 +2753,74 @@ def statement_export_pdf(request, pk: int):
     fname = f"Statement_{st.customer_id}_{st.id}.pdf"
     resp["Content-Disposition"] = f'attachment; filename="{fname}"'
     return resp
+
+# @login_required
+def customer_credits_list(request):
+    customers = Newcustomer.objects.order_by("customer_name")
+    rows = []
+    for c in customers:
+        bal = _customer_credit_balance(c)
+        if bal > 0:
+            rows.append({"customer": c, "credit": bal})
+
+    return render(request, "customer_credits_list.html", {"rows": rows})
+
+
+# @login_required
+@require_http_methods(["GET", "POST"])
+@transaction.atomic
+def customer_refund_new(request, customer_id: int):
+    customer = get_object_or_404(Newcustomer, pk=customer_id)
+    accounts = deposit_accounts_qs()
+
+    max_refundable = _customer_credit_balance(customer)
+
+    if request.method == "POST":
+        refund_date = parse_date(request.POST.get("refund_date") or "") or timezone.localdate()
+        paid_from_id = (request.POST.get("paid_from") or "").strip()
+        amount = _dec(request.POST.get("amount") or "0.00")
+        memo = (request.POST.get("memo") or "").strip()
+        reference_no = (request.POST.get("reference_no") or "").strip()
+
+        paid_from = None
+        if paid_from_id.isdigit():
+            paid_from = accounts.filter(id=int(paid_from_id)).first()
+
+        if not paid_from:
+            return render(request, "customer_refund_form.html", {
+                "customer": customer, "accounts": accounts,
+                "max_refundable": max_refundable,
+                "form_error": "Select a valid Bank/Cash account."
+            })
+
+        if amount <= 0:
+            return render(request, "customer_refund_form.html", {
+                "customer": customer, "accounts": accounts,
+                "max_refundable": max_refundable,
+                "form_error": "Refund amount must be > 0."
+            })
+
+        if amount > max_refundable:
+            return render(request, "customer_refund_form.html", {
+                "customer": customer, "accounts": accounts,
+                "max_refundable": max_refundable,
+                "form_error": f"Refund exceeds available customer credit ({max_refundable})."
+            })
+
+        refund = CustomerRefund.objects.create(
+            customer=customer,
+            refund_date=refund_date,
+            paid_from=paid_from,
+            amount=amount,
+            memo=memo,
+            reference_no=reference_no,
+        )
+
+        _post_customer_refund_to_ledger(refund)
+        return redirect("sales:customer-credits-list")
+
+    return render(request, "customer_refund_form.html", {
+        "customer": customer,
+        "accounts": accounts,
+        "max_refundable": max_refundable,
+    })

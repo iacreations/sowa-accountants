@@ -85,6 +85,9 @@ class InvoiceItem(models.Model):
        
 # Payment model
 
+from decimal import Decimal
+from django.db import models
+
 class Payment(models.Model):
     PAYMENT_METHODS = [
         ("cash", "Cash"),
@@ -96,10 +99,21 @@ class Payment(models.Model):
     customer = models.ForeignKey(Newcustomer, on_delete=models.CASCADE, related_name="payments")
     payment_date = models.DateField()
     payment_method = models.CharField(max_length=50, choices=PAYMENT_METHODS)
-    deposit_to = models.ForeignKey(Account, on_delete=models.CASCADE, limit_choices_to={'account_type__in':['Bank','Cash and Cash Equivalents']}, related_name='payment_account')
+    deposit_to = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        limit_choices_to={'account_type__in': ['Bank', 'Cash and Cash Equivalents']},
+        related_name='payment_account'
+    )
     reference_no = models.CharField(max_length=50, blank=True, null=True)
     tags = models.CharField(max_length=255, blank=True, null=True)
     memo = models.TextField(blank=True, null=True)
+
+    # REQUIRED for automatic excess credit
+    amount_received = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    # auto-calculated customer credit (excess)
+    unapplied_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
 
     def __str__(self):
         return f"Payment {self.id} - {self.customer.customer_name}"
@@ -113,6 +127,18 @@ class PaymentInvoice(models.Model):
     def __str__(self):
         return f"Payment {self.payment.id} → Invoice {self.invoice.id} ({self.amount_paid})"
 
+
+class PaymentOpenBalanceLine(models.Model):
+    payment = models.OneToOneField(
+        "Payment",
+        on_delete=models.CASCADE,
+        related_name="open_balance_line",
+    )
+    amount_applied = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"Payment {self.payment_id} Open Balance Applied: {self.amount_applied}"
+    
 # working on the receipt
 class SalesReceipt(models.Model):
     PAYMENT_METHODS = [
@@ -223,3 +249,37 @@ class StatementLine(models.Model):
 
     def __str__(self):
         return f"{self.date} • {self.kind} • {self.amount}"
+
+
+class CustomerRefund(models.Model):
+    customer = models.ForeignKey("sowaf.Newcustomer", on_delete=models.CASCADE, related_name="refunds")
+    refund_date = models.DateField(default=timezone.localdate)
+    paid_from = models.ForeignKey(
+        "accounts.Account",
+        on_delete=models.PROTECT,
+        limit_choices_to={'account_type__in': ['Bank', 'Cash and Cash Equivalents']},
+        related_name="customer_refund_account",
+    )
+    reference_no = models.CharField(max_length=50, blank=True, null=True)
+    memo = models.TextField(blank=True, null=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"CustomerRefund {self.id} - {self.customer} ({self.amount})"
+
+
+class SupplierRefund(models.Model):
+    supplier = models.ForeignKey("sowaf.Newsupplier", on_delete=models.CASCADE, related_name="refunds")
+    refund_date = models.DateField(default=timezone.localdate)
+    received_to = models.ForeignKey(
+        "accounts.Account",
+        on_delete=models.PROTECT,
+        limit_choices_to={'account_type__in': ['Bank', 'Cash and Cash Equivalents']},
+        related_name="supplier_refund_account",
+    )
+    reference_no = models.CharField(max_length=50, blank=True, null=True)
+    memo = models.TextField(blank=True, null=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"SupplierRefund {self.id} - {self.supplier} ({self.amount})"

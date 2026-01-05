@@ -67,6 +67,7 @@
               {% endfor %}
               <option value="add_new">➕ Add New</option>
             </select>
+            <small>If supplier has unpaid bills, they will appear below (Pay Bills).</small>
             <small>Or enter name:</small>
             <input type="text" name="payee_name"
                    value="{% if cheque %}{{ cheque.payee_name }}{% endif %}"
@@ -109,6 +110,73 @@
             <input type="text" name="location"
                    value="{% if cheque %}{{ cheque.location }}{% endif %}">
           </div>
+        </div>
+      </div>
+
+      <!-- ✅ Pay Bills -->
+      <div class="section-wrapper">
+        <button class="collapsible" type="button">Pay Bills (Unpaid Bills for Selected Supplier)</button>
+        <div class="content active">
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Bill No.</th>
+                  <th>Bill Date</th>
+                  <th>Due Date</th>
+                  <th style="text-align:right;">Total</th>
+                  <th style="text-align:right;">Balance</th>
+                  <th style="width:180px;">Amount to Apply</th>
+                </tr>
+              </thead>
+              <tbody id="bill-rows">
+                {% if cheque and bill_prefill %}
+                  {# ✅ Open Balance row (server-side prefill on edit) #}
+                  {% if open_balance_value and open_balance_value > 0 %}
+                    <tr>
+                      <td colspan="4" style="font-weight:600;">Open Balance</td>
+                      <td style="text-align:right;">{{ open_balance_value }}</td>
+                      <td>
+                        <input type="number" step="0.01"
+                               name="open_balance_amount"
+                               value="{{ open_balance_prefill|default:'0.00' }}"
+                               max="{{ open_balance_value }}"
+                               placeholder="0.00">
+                      </td>
+                    </tr>
+                  {% endif %}
+
+                  {% for b in bill_prefill %}
+                    <tr>
+                      <td>{{ b.bill_no }}</td>
+                      <td>{% if b.bill_date %}{{ b.bill_date|date:'Y-m-d' }}{% else %}—{% endif %}</td>
+                      <td>{% if b.due_date %}{{ b.due_date|date:'Y-m-d' }}{% else %}—{% endif %}</td>
+                      <td style="text-align:right;">{{ b.total }}</td>
+                      <td style="text-align:right;">{{ b.balance }}</td>
+                      <td>
+                        <input type="number" step="0.01"
+                               name="amount_paid_{{ b.id }}"
+                               value="{{ b.applied }}"
+                               max="{{ b.balance }}"
+                               placeholder="0.00">
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr>
+                    <td colspan="6" style="text-align:center; color:#888;">
+                      Select a supplier to load unpaid bills…
+                    </td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+
+          <small style="color:#666;">
+            If you enter amounts here, cheque will post as: <b>DR Accounts Payable, CR Bank</b>.
+            If no bills, use Category/Item sections to record direct expenses.
+          </small>
         </div>
       </div>
 
@@ -338,13 +406,12 @@
   </div>
 
   <script>
-  // URLs for "+ Add New" options
   const ADD_SUPPLIER_URL = "{% url 'sowaf:add-supplier' %}";
   const ADD_CUSTOMER_URL = "{% url 'sowaf:add-customer' %}";
   const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
   const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
+  const OUTSTANDING_BILLS_URL = "{% url 'expenses:outstanding_bills_api' %}";
 
-  // CSRF helper (for class ajax create)
   function getCookie(name) {
     let cookieValue = null;
     if (document.cookie && document.cookie !== '') {
@@ -396,13 +463,88 @@
     });
   }
 
-  // supplier dropdown "+ Add New"
+  // supplier dropdown "+ Add New" + load bills + open balance row
   (function(){
     const sel = document.getElementById('supplier-select');
-    if (sel){
-      sel.addEventListener('change', function(){
-        if (this.value === 'add_new'){ openAddSupplier(this); }
-      });
+    const tbody = document.getElementById('bill-rows');
+
+    if (!sel) return;
+
+    sel.addEventListener('change', function(){
+      if (this.value === 'add_new'){ openAddSupplier(this); return; }
+
+      // clear bills if no supplier
+      if (!this.value) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">Select a supplier to load unpaid bills…</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">Loading…</td></tr>`;
+      const url = OUTSTANDING_BILLS_URL + "?supplier=" + encodeURIComponent(this.value);
+
+      fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+        .then(res => { if(!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+        .then(data => {
+          const bills = data.bills || [];
+          const openBal = Number(data.open_balance || 0);
+
+          let rows = "";
+
+          // ✅ Open Balance row (only if > 0)
+          if (openBal > 0) {
+            rows += `
+              <tr>
+                <td colspan="4" style="font-weight:600;">Open Balance</td>
+                <td style="text-align:right;">${fmt(openBal)}</td>
+                <td>
+                  <input type="number" step="0.01"
+                         name="open_balance_amount"
+                         max="${openBal}"
+                         placeholder="0.00">
+                </td>
+              </tr>
+            `;
+          }
+
+          if (!bills.length) {
+            if (!rows) {
+              tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">No unpaid bills for this supplier.</td></tr>`;
+              return;
+            }
+            tbody.innerHTML = rows;
+            return;
+          }
+
+          rows += bills.map(b => `
+            <tr>
+              <td>${escapeHtml(b.bill_no || b.id)}</td>
+              <td>${b.bill_date ?? '—'}</td>
+              <td>${b.due_date ?? '—'}</td>
+              <td style="text-align:right;">${fmt(b.total)}</td>
+              <td style="text-align:right;">${fmt(b.balance)}</td>
+              <td>
+                <input type="number" step="0.01"
+                       name="amount_paid_${b.id}"
+                       max="${b.balance}"
+                       placeholder="0.00">
+              </td>
+            </tr>
+          `).join('');
+
+          tbody.innerHTML = rows;
+        })
+        .catch(() => {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#c00;">Failed to load bills.</td></tr>`;
+        });
+    });
+
+    function fmt(x){
+      const n = Number(x);
+      if (Number.isNaN(n)) return x;
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function escapeHtml(s){
+      return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
     }
   })();
 
@@ -417,10 +559,8 @@
     btn.closest("tr").remove();
     renumber(tb);
   }
-
   function renumber(tbody){
     [...tbody.querySelectorAll("tr")].forEach((tr,i)=> tr.cells[0].textContent = i+1);
-    // keep billable values aligned to row index
     tbody.querySelectorAll('input[type="checkbox"]').forEach((cb, i)=> cb.value = i);
   }
 
@@ -507,7 +647,7 @@
   }
   function clearItemTable(){ document.querySelector("#itemTable tbody").innerHTML=""; }
 
-  // Event delegation so it works for NEW rows too
+  // dynamic "add new"
   document.addEventListener("change", function(e){
     const el = e.target;
     if(!el || el.tagName !== "SELECT") return;
@@ -515,11 +655,9 @@
     const name = el.getAttribute("name") || "";
     const val  = el.value;
 
-    // category: customer + class
     if(name === "cat_customer[]" && val === "add_new"){ openAddCustomer(el); return; }
     if(name === "cat_class[]" && val === "add_new"){ addNewClassInline(el); return; }
 
-    // item: product + customer + class
     if(name === "item_product[]" && val === "add_new"){ openAddProduct(el); return; }
     if(name === "item_customer[]" && val === "add_new"){ openAddCustomer(el); return; }
     if(name === "item_class[]" && val === "add_new"){ addNewClassInline(el); return; }

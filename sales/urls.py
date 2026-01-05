@@ -9,12 +9,15 @@ urlpatterns = [
     path('sales/', views.sales, name='sales'),
     path('sales/add/invoice', views.add_invoice, name='add-invoice'),
     path('sales/invoices/', views.invoice_list, name='invoices'),
+    path("product-details/<int:pk>/", views.get_product_details, name="product-details"),
  # invoice edit and view
     path("invoices/<int:pk>/", views.invoice_detail, name="invoice-detail"),
     path("invoices/<int:pk>/edit/", views.edit_invoice, name="edit-invoice"), 
     # invoice printout
     path("invoices/<int:pk>/print/", views.invoice_print, name="invoice-print"),
-    
+    path("customer-credits/", views.customer_credits_list, name="customer-refunds-list"),
+    path("customer-credits/<int:customer_id>/refund/new/", views.customer_refund_new, name="customer-refund-new"),
+
     # adding receipt urls
     path("add-receipt/", views.sales_receipt_new, name="add-receipt"),       
     path("sales-receipts/<int:pk>/", views.sales_receipt_detail, name="receipt-detail"),
