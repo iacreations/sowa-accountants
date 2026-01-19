@@ -401,6 +401,7 @@ def _get_or_create_ap_control_account() -> "Account":
         is_active=True,
     )
 
+
 def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
     """
     Creates/gets a SUPPLIER subaccount under A/P control.
