@@ -414,7 +414,8 @@
                         <div class="dropdown-menu">
                           {% if coa.is_active %}
                             <a href="{% url 'accounts:deactivate-account' coa.id %}">Make inactive</a>
-                             <a href="{% url 'accounts:deactivate-account' coa.id %}">Quick Report</a>
+                           <a href="{% url 'accounts:general-ledger' %}?account_id={{ coa.id }}&view=detail&include_children=1">Quick Report</a>
+
                           {% else %}
                             <a href="{% url 'accounts:activate-account' coa.id %}">Activate</a>
                           {% endif %}

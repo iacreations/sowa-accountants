@@ -2,11 +2,12 @@
 
 <div>
   <h1>Statement</h1>
+
   <div class="muted">
     {{ customer.customer_name|default:customer.company_name }} •
-    Type: {{ statement.get_statement_type_display }} •
-    Period: {{ statement.start_date }} — {{ statement.end_date }} •
-    Statement date: {{ statement.statement_date }}
+    Type: {{ st.get_statement_type_display }} •
+    Period: {{ st.start_date }} — {{ st.end_date }} •
+    Statement date: {{ st.statement_date }}
   </div>
 
   <table>
@@ -15,40 +16,43 @@
         <th>Date</th>
         <th>Type</th>
         <th>No.</th>
-        <th>Memo</th>
-        <th class="num">Amount</th>
+      
         <th class="num">Running balance</th>
       </tr>
     </thead>
-    <tbody>
-      <tr>
-        <td>{{ statement.start_date }}</td>
-        <td>Opening</td>
-        <td></td>
-        <td>Opening Balance</td>
-        <td class="num">0.00</td>
-        <td class="num">{{ statement.opening_balance|floatformat:2|intcomma }}</td>
-      </tr>
 
+    <tbody>
+ 
+      {# ✅ Statement lines (Type = selected statement type, No = ST-000X, Running = LIVE A/R) #}
       {% for ln in lines %}
         <tr>
-          <td>{{ ln.date }}</td>
-          <td>{{ ln.get_kind_display }}</td>
-          <td>{{ ln.ref_no }}</td>
-          <td>{{ ln.memo }}</td>
-          <td class="num">{{ ln.amount|floatformat:2|intcomma }}</td>
+          <td>{{ ln.date|date:"Y-m-d" }}</td>
+
+          <td>
+            <span class="badge">
+              {{ st.get_statement_type_display }}
+            </span>
+          </td>
+
+          <td>ST-000{{ st.id }}</td>
+
           <td class="num">
-            {% if ln.running_balance is not None %}
-              {{ ln.running_balance|floatformat:2|intcomma }}
-            {% endif %}
+            {{ live_closing|default:0|floatformat:2|intcomma }}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="5" class="muted" style="padding:10px;">
+            No statement lines found for this statement.
           </td>
         </tr>
       {% endfor %}
     </tbody>
+
     <tfoot>
       <tr>
-        <td colspan="5">Closing balance</td>
-        <td class="num">{{ statement.closing_balance|floatformat:2|intcomma }}</td>
+        <td colspan="4">Closing balance </td>
+        <td class="num">{{ live_closing|default:0|floatformat:2|intcomma }}</td>
       </tr>
     </tfoot>
   </table>

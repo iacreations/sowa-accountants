@@ -196,10 +196,9 @@
     </div>
 
     <div class="gl-actions">
-      {# ✅ SAFE LINKS: do NOT output account_id=None/date_from=None/date_to=None #}
-      <a href="?view=summary{% if account_id %}&account_id={{ account_id }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Summary View</a>
+      <a href="?view=summary{% if account_id %}&account_id={{ account_id }}&include_children=1{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Summary View</a>
 
-      <a href="?view=detail{% if account_id %}&account_id={{ account_id }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Detail View</a>
+<a href="?view=detail{% if account_id %}&account_id={{ account_id }}&include_children=1{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Detail View</a>
 
       <a href="#" id="openPrintView">Print / PDF</a>
       <a href="#" id="exportExcelBtn">Export Excel</a>
@@ -240,8 +239,71 @@
     <button class="button btn-sm" type="submit">Apply</button>
   </form>
 
-  {% if mode == "summary" %}
-    <!-- ✅ SUMMARY TABLE -->
+  {# =================================================================== #}
+  {# ✅ QUICK REPORT MODE (single account report from COA)                #}
+  {# =================================================================== #}
+  {% if mode == "quick_report" %}
+    <table class="gl-table" id="glTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Journal Ref</th>
+          <th class="num">Debit</th>
+          <th class="num">Credit</th>
+          <th class="num">Running balance</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {# Opening balance row #}
+        <tr class="gl-acc-row">
+          <td>{% if date_from %}{{ date_from }}{% else %}—{% endif %}</td>
+          <td>Opening Balance</td>
+          <td></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num">{{ opening_balance|default:0|floatformat:2|intcomma }}</td>
+        </tr>
+
+        {% for r in quick_rows %}
+          <tr>
+            <td>
+              {% if r.url and r.url != "#" %}
+                <a href="{{ r.url }}" class="gl-row-link">{{ r.date|date:"d/m/Y" }}</a>
+              {% else %}
+                {{ r.date|date:"d/m/Y" }}
+              {% endif %}
+            </td>
+            <td>
+              {% if r.url and r.url != "#" %}
+                <a href="{{ r.url }}" class="gl-row-link">{{ r.description }}</a>
+              {% else %}
+                {{ r.description }}
+              {% endif %}
+            </td>
+            <td>{{ r.journal_ref }}</td>
+            <td class="num">{{ r.debit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ r.credit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ r.balance|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" style="text-align:center; padding:10px;">No transactions found.</td></tr>
+        {% endfor %}
+      </tbody>
+
+      <tr class="gl-totals">
+        <td colspan="3">TOTAL</td>
+        <td class="num">{{ total_debit|default:0|floatformat:2|intcomma }}</td>
+        <td class="num">{{ total_credit|default:0|floatformat:2|intcomma }}</td>
+        <td class="num">{{ closing_balance|default:0|floatformat:2|intcomma }}</td>
+      </tr>
+    </table>
+
+  {# =================================================================== #}
+  {# ✅ EXISTING SUMMARY MODE (unchanged)                                 #}
+  {# =================================================================== #}
+  {% elif mode == "summary" %}
     <table class="gl-table" id="glTable">
       <thead>
         <tr>
@@ -270,8 +332,10 @@
       </tr>
     </table>
 
+  {# =================================================================== #}
+  {# ✅ EXISTING DETAIL MODE (unchanged)                                  #}
+  {# =================================================================== #}
   {% else %}
-    <!-- ✅ DETAIL TABLE -->
     <table class="gl-table" id="glTable">
       <thead>
         <tr>
@@ -282,7 +346,6 @@
 
           <th>Date</th>
           <th>Description</th>
-          {% comment %} <th>Journal Reference</th> {% endcomment %}
           <th class="num">Debit</th>
           <th class="num">Credit</th>
           <th class="num">Running balance</th>
@@ -297,8 +360,8 @@
                 data-path="{{ r.path }}"
                 data-accid="{{ r.account_id }}">
               <td>
-                {% if r.depth > 0 %}
-                  <span class="gl-indent" style="margin-left:{{ r.depth|add:r.depth|add:r.depth|add:18 }}px;">
+                {% if r.depth_display > 0 %}
+                  <span class="gl-indent" style="margin-left:{{ r.depth_display|add:r.depth_display|add:r.depth_display|add:18 }}px;">
                     {% if r.has_children %}
                       <span class="gl-toggle" data-toggle="{{ r.path }}">▼</span>
                     {% else %}
@@ -321,7 +384,6 @@
 
               <td></td>
               <td></td>
-              <td></td>
               <td class="num"></td>
               <td class="num"></td>
               <td class="num">{{ r.closing_balance|floatformat:2|intcomma }}</td>
@@ -330,8 +392,8 @@
           {% else %}
             <tr data-kind="tx" data-path="{{ r.path }}">
               <td>
-                {% if r.depth > 0 %}
-                  <span class="gl-indent" style="margin-left:{{ r.depth|add:r.depth|add:r.depth|add:18 }}px;">
+                {% if r.depth_display > 0 %}
+                  <span class="gl-indent" style="margin-left:{{ r.depth_display|add:r.depth_display|add:r.depth_display|add:18 }}px;">
                     {{ r.account_name }}
                   </span>
                 {% else %}
@@ -356,19 +418,18 @@
                   {{ r.description }}
                 {% endif %}
               </td>
-              {% comment %} <td>{{ r.reference }}</td> {% endcomment %}
               <td class="num">{{ r.debit|floatformat:2|intcomma }}</td>
               <td class="num">{{ r.credit|floatformat:2|intcomma }}</td>
               <td class="num">{{ r.balance|floatformat:2|intcomma }}</td>
             </tr>
           {% endif %}
         {% empty %}
-          <tr><td colspan="10" style="text-align:center; padding:10px;">No transactions found.</td></tr>
+          <tr><td colspan="9" style="text-align:center; padding:10px;">No transactions found.</td></tr>
         {% endfor %}
       </tbody>
 
       <tr class="gl-totals">
-        <td colspan="7">TOTAL</td>
+        <td colspan="6">TOTAL</td>
         <td class="num">{{ total_debit|floatformat:2|intcomma }}</td>
         <td class="num">{{ total_credit|floatformat:2|intcomma }}</td>
         <td class="num">{{ total_balance|floatformat:2|intcomma }}</td>
@@ -399,13 +460,14 @@ document.addEventListener("DOMContentLoaded", function() {
     e.preventDefault();
     const params = new URLSearchParams(new FormData(filterForm));
 
-    // ✅ prevent exporting with account_id=None / date_from=None / date_to=None
     ["account_id", "date_from", "date_to"].forEach(k => {
       const v = params.get(k);
       if (v === "None" || v === "null" || v === "") params.delete(k);
     });
 
     params.set("export", "excel");
+    params.set("include_children", "1");
+
     window.location = window.location.pathname + "?" + params.toString();
   });
 });
@@ -413,12 +475,11 @@ document.addEventListener("DOMContentLoaded", function() {
 document.addEventListener("DOMContentLoaded", function() {
   const printBtn = document.getElementById("openPrintView");
   const filterForm = document.getElementById("glFilterForm");
-
+  
   printBtn.addEventListener("click", function(e) {
     e.preventDefault();
     const params = new URLSearchParams(new FormData(filterForm));
 
-    // ✅ prevent printing with account_id=None / date_from=None / date_to=None
     ["account_id", "date_from", "date_to"].forEach(k => {
       const v = params.get(k);
       if (v === "None" || v === "null" || v === "") params.delete(k);
@@ -429,7 +490,6 @@ document.addEventListener("DOMContentLoaded", function() {
   });
 });
 
-// searchable account field wiring (unchanged)
 document.addEventListener("DOMContentLoaded", function () {
   const accountInput  = document.getElementById("accountSearch");
   const accountHidden = document.getElementById("accountIdField");
@@ -470,7 +530,6 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
-// ✅ Toggle collapse/expand (unchanged)
 document.addEventListener("DOMContentLoaded", function () {
   function isDescendantPath(childPath, parentPath) {
     return childPath !== parentPath && childPath.startsWith(parentPath + "/");

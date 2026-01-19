@@ -84,10 +84,6 @@ class InvoiceItem(models.Model):
         return f"{label} x {self.qty} (Invoice {self.invoice_id})"
        
 # Payment model
-
-from decimal import Decimal
-from django.db import models
-
 class Payment(models.Model):
     PAYMENT_METHODS = [
         ("cash", "Cash"),

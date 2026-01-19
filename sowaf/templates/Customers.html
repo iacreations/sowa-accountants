@@ -139,7 +139,6 @@
     </thead>
     <tbody>
       {% for customer in customers %}
-      {# change 'sowaf:customer-detail' to your actual detail route name #}
       <tr class="clickable-row {% if not customer.is_active %}inactive{% endif %}"
           data-href="{% url 'sowaf:customer-detail' customer.id %}">
 
@@ -158,8 +157,9 @@
         </td>
 
         <td>{{ customer.company_name }}</td>
-        <td>{{ customer.opening_balance|default:0|floatformat:2|intcomma }}</td>
 
+        <!-- shows opening-balance remaining (GL) + invoice outstanding -->
+        <td>{{ customer.total_unpaid|default:0|floatformat:2|intcomma }}</td>
 
         <td>
           <div class="dd">
@@ -174,11 +174,8 @@
                 <a href="{% url 'sales:add-invoice' %}?customer_id={{ customer.id }}">Create invoice</a>
                 <a href="{% url 'sales:add-receipt' %}?customer_id={{ customer.id }}">Create sales receipt</a>
                 <a href="#">Create charge</a>
-                  <!-- Customer Credits / Advances -->
-  <a href="{% url 'sales:customer-refunds-list' %}">Customer credits / advances</a>
-
-  <!-- Refund this customer (goes to refund form for this customer) -->
-  <a href="{% url 'sales:customer-refund-new' customer.id %}">Refund customer credit</a>
+                <a href="{% url 'sales:customer-refunds-list' %}">Customer credits / advances</a>
+                <a href="{% url 'sales:customer-refund-new' customer.id %}">Refund customer credit</a>
                 <a href="#">Create time activity</a>
                 <a href="{% url 'sowaf:make-inactive' customer.id %}">Make inactive</a>
               </div>
@@ -202,7 +199,6 @@
 </div>
 
 <script>
-/* close dropdowns when clicking outside */
 document.addEventListener('click', function(e){
   document.querySelectorAll('.dd.open').forEach(dd=>{
     if(!dd.contains(e.target)) dd.classList.remove('open');
@@ -211,7 +207,6 @@ document.addEventListener('click', function(e){
   if (toggle){ toggle.closest('.dd').classList.toggle('open'); }
 });
 
-/* make entire row clickable (but ignore clicks on links/buttons inside) */
 document.querySelectorAll('.clickable-row').forEach(tr=>{
   tr.addEventListener('click', function(e){
     const isInteractive = e.target.closest('a,button,.dd,.dd-toggle,.dd-menu');

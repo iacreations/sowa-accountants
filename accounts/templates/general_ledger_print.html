@@ -104,7 +104,6 @@
 </head>
 <body>
 
-  <!-- Optional "Print Now" button for when opened in browser -->
   <div class="no-print" style="text-align:right; margin-bottom:8px;">
     <button onclick="window.print()" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">
       Print / Save as PDF
@@ -136,67 +135,114 @@
     {% endif %}
   </div>
 
-  <table class="gl-print">
-    <thead>
-      <tr>
-        <th style="width:14%;">Date</th>
-        <th>Description</th>
-        <th style="width:10%;">Journal Ref</th>
-        <th style="width:20%;">Account</th>
-        <th style="width:11%;" class="num">Debit</th>
-        <th style="width:11%;" class="num">Credit</th>
-        <th style="width:11%;" class="num">Balance</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in rows %}
+  {# ✅ QUICK REPORT PRINT: single account with opening balance row #}
+  {% if mode == "quick_report" %}
+
+    <table class="gl-print">
+      <thead>
         <tr>
-          <td>{{ row.date|date:"d/m/Y" }}</td>
-          <td>{{ row.description }}</td>
-          <td>{{ row.reference }}</td>
-          <td>{{ row.account }}</td>
-          <td class="num">{{ row.debit|floatformat:2|intcomma }}</td>
-          <td class="num">{{ row.credit|floatformat:2|intcomma }}</td>
-          <td class="num">{{ row.balance|floatformat:2|intcomma }}</td>
+          <th style="width:12%;">Date</th>
+          <th>Description</th>
+          <th style="width:12%;">Journal Ref</th>
+          <th style="width:10%;" class="num">Debit</th>
+          <th style="width:10%;" class="num">Credit</th>
+          <th style="width:14%;" class="num">Running Balance</th>
         </tr>
-      {% empty %}
+      </thead>
+
+      <tbody>
         <tr>
-          <td colspan="7" style="text-align:center; padding:10px; color:#9ca3af;">
-            No transactions found for the selected filters.
-          </td>
+          <td>{% if date_from %}{{ date_from }}{% else %}—{% endif %}</td>
+          <td>Opening Balance</td>
+          <td></td>
+          <td class="num"></td>
+          <td class="num"></td>
+          <td class="num">{{ opening_balance|default:0|floatformat:2|intcomma }}</td>
         </tr>
-      {% endfor %}
-    </tbody>
-    <tfoot>
-      <tr class="totals-row">
-        <td colspan="4" style="text-align:right;"><strong>Total</strong></td>
-        <td class="num">{{ total_debit|floatformat:2|intcomma }}</td>
-        <td class="num">{{ total_credit|floatformat:2|intcomma }}</td>
-        <td class="num">{{ total_balance|floatformat:2|intcomma }}</td>
-      </tr>
-    </tfoot>
-  </table>
+
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.date|date:"d/m/Y" }}</td>
+            <td>{{ row.description }}</td>
+            <td>{{ row.journal_ref }}</td>
+            <td class="num">{{ row.debit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.credit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.running_balance|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" style="text-align:center; padding:10px; color:#9ca3af;">
+              No transactions found for the selected filters.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+
+      <tfoot>
+        <tr class="totals-row">
+          <td colspan="3" style="text-align:right;"><strong>Total</strong></td>
+          <td class="num">{{ total_debit|default:0|floatformat:2|intcomma }}</td>
+          <td class="num">{{ total_credit|default:0|floatformat:2|intcomma }}</td>
+          <td class="num">{{ closing_balance|default:0|floatformat:2|intcomma }}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+  {# ✅ NORMAL DETAIL PRINT: same as your existing print columns #}
+  {% else %}
+
+    <table class="gl-print">
+      <thead>
+        <tr>
+          <th>Account Name</th>
+          <th>Account Number</th>
+          <th>Account Type</th>
+          <th>Account Sub-Class</th>
+          <th style="width:12%;">Date</th>
+          <th>Description</th>
+          <th style="width:10%;" class="num">Debit</th>
+          <th style="width:10%;" class="num">Credit</th>
+          <th style="width:12%;" class="num">Running Balance</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.account_name }}</td>
+            <td>{{ row.account_number }}</td>
+            <td>{{ row.account_type }}</td>
+            <td>{{ row.account_sub_class }}</td>
+            <td>{{ row.date|date:"d/m/Y" }}</td>
+            <td>{{ row.description }}</td>
+            <td class="num">{{ row.debit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.credit|floatformat:2|intcomma }}</td>
+            <td class="num">{{ row.running_balance|floatformat:2|intcomma }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="9" style="text-align:center; padding:10px; color:#9ca3af;">
+              No transactions found for the selected filters.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+
+      <tfoot>
+        <tr class="totals-row">
+          <td colspan="6" style="text-align:right;"><strong>Total</strong></td>
+          <td class="num">{{ total_debit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ total_credit|floatformat:2|intcomma }}</td>
+          <td class="num">{{ total_balance|floatformat:2|intcomma }}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+  {% endif %}
 
   <div class="footer-note">
-    Generated on {{ now|default:None }}
+    Generated on {{ generated_on|date:"d/m/Y H:i" }}
   </div>
-
-  <script>
-    document.addEventListener("DOMContentLoaded", function() {
-  const printBtn = document.getElementById("openPrintView");
-  const filterForm = document.getElementById("glFilterForm");
-
-  printBtn.addEventListener("click", function(e) {
-    e.preventDefault();
-    const params = new URLSearchParams(new FormData(filterForm));
-    const url = "{% url 'accounts:general-ledger-print' %}" + "?" + params.toString();
-    window.open(url, "_blank");
-  });
-
-  // ... keep your existing JS below (Excel export, column toggle, etc.)
-});
-
-  </script>
 
 </body>
 </html>

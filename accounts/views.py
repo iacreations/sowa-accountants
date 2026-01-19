@@ -4,11 +4,12 @@ from collections import OrderedDict
 from django.core.paginator import Paginator
 from decimal import Decimal
 import json
-from datetime import datetime
+import io
+from datetime import datetime,date
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
-from django.db.models import Sum, Value, DecimalField
-from django.db.models.functions import Coalesce
+from django.db.models import Sum, Value, DecimalField, F
+from django.db.models.functions import Coalesce, Cast
 from django.urls import reverse
 from django.http import HttpResponse,Http404
 from django.contrib.auth.decorators import login_required
@@ -16,6 +17,10 @@ from django.http import JsonResponse
 from django.db import transaction
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
+from sales.models import Newinvoice,Payment
+from django.db.models import ExpressionWrapper
+from sowaf.models import Newcustomer
+from .utils import income_accounts_qs, expense_accounts_qs
 from .models import (Account, ColumnPreference, JournalEntry, JournalLine, AuditTrail)
 
 
@@ -29,6 +34,18 @@ DEFAULT_ACCOUNTS_COL_PREFS = {
     "description": True,
     "actions": True,
 }
+# accounts/views.py
+def accounts_dropdown_data(request):
+    """
+    Returns latest income & expense accounts for Product form dropdowns.
+    """
+    income = income_accounts_qs().values("id", "account_name")
+    expense = expense_accounts_qs().values("id", "account_name")
+
+    return JsonResponse({
+        "income_accounts": list(income),
+        "expense_accounts": list(expense),
+    })
 
 # fixed 5 Level-1 sections
 LEVEL1_ORDER = [
@@ -593,6 +610,9 @@ def general_ledger(request):
     supplier_id = request.GET.get("supplier_id")
     customer_id = request.GET.get("customer_id")
 
+    include_children = request.GET.get("include_children")
+    include_children = True if str(include_children).lower() in ("1", "true", "yes", "on") else False
+
     # SANITIZE
     if not account_id or account_id in ("None", "null", ""):
         account_id = None
@@ -630,15 +650,59 @@ def general_ledger(request):
         return running + (credit - debit)
 
     # =====================================================================
+    # BUILD ACCOUNT TREE (needed to include children transactions)
+    # =====================================================================
+    all_active_accounts = list(Account.objects.filter(is_active=True).select_related("parent"))
+    acc_by_id = {a.id: a for a in all_active_accounts}
+
+    children_by_parent = defaultdict(list)
+    for a in all_active_accounts:
+        if a.parent_id:
+            children_by_parent[a.parent_id].append(a)
+
+    def sort_key(a: Account):
+        return (a.account_number or "", a.account_name or "")
+
+    for pid in list(children_by_parent.keys()):
+        children_by_parent[pid].sort(key=sort_key)
+
+    def collect_subtree_ids(root_id: int):
+        out = []
+        stack = [root_id]
+        while stack:
+            nid = stack.pop()
+            out.append(nid)
+            for ch in children_by_parent.get(nid, []):
+                stack.append(ch.id)
+        return out
+
+    # Decide which account ids should be included in the report
+    selected_account_ids = None
+    if selected_account:
+        selected_account_ids = [selected_account.id]
+
+        # If user requested include_children OR if this is AR/AP parent header -> auto include subtree
+        ARAP_PARENT_DETAIL_TYPES = {"Accounts Receivable (A/R)", "Accounts Payable (A/P)"}
+        dt = (selected_account.detail_type or "").strip()
+        nm = (selected_account.account_name or "").strip().lower()
+        is_arap_parent = (dt in ARAP_PARENT_DETAIL_TYPES) or ("accounts receivable" in nm) or ("accounts payable" in nm)
+
+        if include_children or is_arap_parent:
+            selected_account_ids = collect_subtree_ids(selected_account.id)
+
+    # =====================================================================
     # BASE QUERYSETS
     # =====================================================================
     base_qs = JournalLine.objects.select_related("entry", "account").order_by("entry__date", "id")
 
-    # apply sub-ledger filters
     if supplier_id:
         base_qs = base_qs.filter(supplier_id=supplier_id)
     if customer_id:
         base_qs = base_qs.filter(customer_id=customer_id)
+
+    # filter by selected account OR subtree
+    if selected_account_ids:
+        base_qs = base_qs.filter(account_id__in=selected_account_ids)
 
     # balance_qs: for computing balances (ignores query)
     balance_qs = base_qs
@@ -661,25 +725,11 @@ def general_ledger(request):
     all_lines = list(display_qs)
 
     # ---------------------------------------------------------------------
-    # Build DISPLAY maps
+    # Build DISPLAY maps (based on the filtered result set)
     # ---------------------------------------------------------------------
     lines_by_account = defaultdict(list)
     for ln in all_lines:
         lines_by_account[ln.account_id].append(ln)
-
-    all_active_accounts = list(Account.objects.filter(is_active=True).select_related("parent"))
-    acc_by_id = {a.id: a for a in all_active_accounts}
-
-    children_by_parent = defaultdict(list)
-    for a in all_active_accounts:
-        if a.parent_id:
-            children_by_parent[a.parent_id].append(a)
-
-    def sort_key(a: Account):
-        return (a.account_number or "", a.account_name or "")
-
-    for pid in list(children_by_parent.keys()):
-        children_by_parent[pid].sort(key=sort_key)
 
     def get_root(acc: Account):
         cur = acc
@@ -707,19 +757,8 @@ def general_ledger(request):
     if selected_root_id:
         roots = [r for r in roots if r.id == selected_root_id]
 
-    def collect_subtree_ids(root_id: int):
-        out = []
-        stack = [root_id]
-        while stack:
-            nid = stack.pop()
-            out.append(nid)
-            for ch in children_by_parent.get(nid, []):
-                if ch.id in visible_ids:
-                    stack.append(ch.id)
-        return out
-
     # ---------------------------------------------------------------------
-    # TRUE closing balances (as-of date_to) - journal based
+    # TRUE closing balances (as-of date_to)
     # ---------------------------------------------------------------------
     closing_by_account_id = defaultdict(lambda: Decimal("0.00"))
 
@@ -790,6 +829,7 @@ def general_ledger(request):
             "query": query,
             "supplier_id": supplier_id,
             "customer_id": customer_id,
+            "include_children": include_children,   # keep in template links if you want
             "page_obj": page_obj,
             "summary_rows": page_obj.object_list,
             "total_balance": grand_total,
@@ -815,12 +855,44 @@ def general_ledger(request):
     def build_path(parent_path: str, node_id: int):
         return f"{parent_path}/{node_id}" if parent_path else str(node_id)
 
-    def add_account_header(acc: Account, depth: int, path: str, has_children: bool):
+    ARAP_PARENT_DETAIL_TYPES = {
+        "Accounts Receivable (A/R)",
+        "Accounts Payable (A/P)",
+    }
+
+    def is_arap_parent(acc: Account) -> bool:
+        if not acc:
+            return False
+        dt = (acc.detail_type or "").strip()
+        nm = (acc.account_name or "").strip().lower()
+        if dt in ARAP_PARENT_DETAIL_TYPES:
+            return True
+        if "accounts receivable" in nm or "(a/r)" in nm:
+            return True
+        if "accounts payable" in nm or "(a/p)" in nm:
+            return True
+        return False
+
+    def is_under_arap(acc: Account) -> bool:
+        if not acc or not acc.parent:
+            return False
+        parent_dt = (acc.parent.detail_type or "").strip()
+        parent_nm = (acc.parent.account_name or "").strip().lower()
+        if parent_dt in ARAP_PARENT_DETAIL_TYPES:
+            return True
+        if "accounts receivable" in parent_nm or "(a/r)" in parent_nm:
+            return True
+        if "accounts payable" in parent_nm or "(a/p)" in parent_nm:
+            return True
+        return False
+
+    def add_account_header(acc: Account, depth: int, depth_display: int, path: str, has_children: bool):
         closing = rolled_up_closing(acc)
 
         detail_rows.append({
             "kind": "account",
             "depth": depth,
+            "depth_display": depth_display,
             "path": path,
             "account_id": acc.id,
             "has_children": has_children,
@@ -843,14 +915,13 @@ def general_ledger(request):
             running0 = apply_movement(acc, running0, d0, c0)
         return running0
 
-    def add_leaf_transactions(acc: Account, depth: int, path: str):
+    def add_leaf_transactions(acc: Account, depth: int, depth_display: int, path: str):
         nonlocal total_debit, total_credit
 
         lines = lines_by_account.get(acc.id, [])
         if not lines:
             return
 
-        # NORMAL running balance for ALL accounts (including OBE)
         running = starting_balance_for_account(acc)
 
         for ln in lines:
@@ -862,6 +933,7 @@ def general_ledger(request):
             detail_rows.append({
                 "kind": "tx",
                 "depth": depth,
+                "depth_display": depth_display,
                 "path": path,
                 "account_name": acc.account_name,
                 "account_number": acc.account_number or "",
@@ -885,16 +957,26 @@ def general_ledger(request):
         if node.id not in visible_ids:
             return
 
-        path = build_path(parent_path, node.id)
-
         kids = [c for c in children_by_parent.get(node.id, []) if c.id in visible_ids]
         has_children = len(kids) > 0
+
+        if is_arap_parent(node):
+            for ch in kids:
+                walk_tree(ch, depth, parent_path)
+            return
+
+        path = build_path(parent_path, node.id)
+
+        flatten = is_under_arap(node)
+        depth_display = 0 if flatten else depth
+        force_header = flatten
+
         is_root = (depth == 0)
 
-        if is_root or has_children:
-            add_account_header(node, depth, path, has_children)
+        if is_root or has_children or force_header:
+            add_account_header(node, depth, depth_display, path, has_children)
 
-        add_leaf_transactions(node, depth, path)
+        add_leaf_transactions(node, depth, depth_display, path)
 
         for ch in kids:
             walk_tree(ch, depth + 1, path)
@@ -914,7 +996,7 @@ def general_ledger(request):
         ])
 
         for r in detail_rows:
-            level = r.get("depth", 0)
+            level = r.get("depth_display", 0)
             if r.get("kind") == "account":
                 writer.writerow([
                     level,
@@ -953,12 +1035,139 @@ def general_ledger(request):
         "query": query,
         "supplier_id": supplier_id,
         "customer_id": customer_id,
+        "include_children": include_children,   # keep
         "page_obj": page_obj,
         "detail_rows": detail_rows,
         "total_debit": total_debit,
         "total_credit": total_credit,
         "total_balance": total_balance,
     })
+
+
+# general ledger print view
+
+def general_ledger_print(request):
+    """
+    Clean print-friendly General Ledger view.
+    No pagination, no export, no UI – just the report.
+    """
+
+    account_id = request.GET.get("account_id")
+    query      = request.GET.get("search", "")
+    date_from  = request.GET.get("date_from")
+    date_to    = request.GET.get("date_to")
+
+    include_children = request.GET.get("include_children")
+    include_children = True if str(include_children).lower() in ("1", "true", "yes", "on") else False
+
+    # clean "None"/"null"/"" values
+    if account_id in ["None", "null", ""]:
+        account_id = None
+    if date_from in ["None", "null", ""]:
+        date_from = None
+    if date_to in ["None", "null", ""]:
+        date_to = None
+
+    selected_account = None
+    account_ids = None
+
+    # build account subtree when needed
+    if account_id:
+        selected_account = Account.objects.filter(pk=account_id).select_related("parent").first()
+        if selected_account:
+            all_active_accounts = list(Account.objects.filter(is_active=True).select_related("parent"))
+            children_by_parent = {}
+            for a in all_active_accounts:
+                if a.parent_id:
+                    children_by_parent.setdefault(a.parent_id, []).append(a.id)
+
+            def collect_subtree_ids(root_id: int):
+                out = []
+                stack = [root_id]
+                while stack:
+                    nid = stack.pop()
+                    out.append(nid)
+                    for cid in children_by_parent.get(nid, []):
+                        stack.append(cid)
+                return out
+
+            ARAP_PARENT_DETAIL_TYPES = {"Accounts Receivable (A/R)", "Accounts Payable (A/P)"}
+            dt = (selected_account.detail_type or "").strip()
+            nm = (selected_account.account_name or "").strip().lower()
+            is_arap_parent = (dt in ARAP_PARENT_DETAIL_TYPES) or ("accounts receivable" in nm) or ("accounts payable" in nm)
+
+            if include_children or is_arap_parent:
+                account_ids = collect_subtree_ids(selected_account.id)
+            else:
+                account_ids = [selected_account.id]
+
+    lines_qs = JournalLine.objects.select_related("entry", "account").order_by("entry__date", "id")
+
+    if account_ids:
+        lines_qs = lines_qs.filter(account_id__in=account_ids)
+
+    if date_from:
+        lines_qs = lines_qs.filter(entry__date__gte=date_from)
+    if date_to:
+        lines_qs = lines_qs.filter(entry__date__lte=date_to)
+
+    if query:
+        lines_qs = lines_qs.filter(
+            Q(entry__description__icontains=query) |
+            Q(account__account_name__icontains=query)
+        )
+
+    lines = list(lines_qs)
+
+    running_rows = []
+    balance = Decimal("0")
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+
+    def normal_side(acc: Account):
+        if acc.level1_group in ["Assets", "Expenses"]:
+            return "debit"
+        return "credit"
+
+    for ln in lines:
+        side = normal_side(ln.account)
+
+        debit = Decimal(str(ln.debit or "0"))
+        credit = Decimal(str(ln.credit or "0"))
+
+        if side == "debit":
+            balance += (debit - credit)
+        else:
+            balance += (credit - debit)
+
+        total_debit += debit
+        total_credit += credit
+
+        acc = ln.account
+        running_rows.append({
+            "account_name": acc.account_name,
+            "account_number": getattr(acc, "account_number", ""),
+            "account_type": getattr(acc, "level1_group", ""),
+            "account_sub_class": getattr(acc, "detail_type", ""),
+            "date": ln.entry.date,
+            "description": ln.entry.description,
+            "debit": debit,
+            "credit": credit,
+            "running_balance": balance,
+        })
+
+    context = {
+        "rows": running_rows,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "total_balance": balance,
+        "selected_account": selected_account,
+        "date_from": date_from,
+        "date_to": date_to,
+        "query": query,
+        "generated_on": timezone.now(),
+    }
+    return render(request, "general_ledger_print.html", context)
 
 
 # journel entry lists
@@ -1009,89 +1218,6 @@ def journal_entry_detail(request, pk):
         "grand_credit": totals.get("grand_credit") or Decimal("0"),
     }
     return render(request, "journal_entries.html", context)
-# print view 
-
-
-# @login_required
-def general_ledger_print(request):
-    """
-    Clean print-friendly General Ledger view.
-    No pagination, no export, no UI – just the report.
-    """
-
-    # same filters as normal GL
-    account_id = request.GET.get("account_id")
-    query      = request.GET.get("search", "")
-    date_from  = request.GET.get("date_from")
-    date_to    = request.GET.get("date_to")
-
-    selected_account = None
-    if account_id:
-        selected_account = Account.objects.filter(pk=account_id).first()
-
-    lines_qs = JournalLine.objects.select_related("entry", "account").order_by(
-        "entry__date",
-        "id"
-    )
-
-    if account_id:
-        lines_qs = lines_qs.filter(account_id=account_id)
-
-    if date_from:
-        lines_qs = lines_qs.filter(entry__date__gte=date_from)
-    if date_to:
-        lines_qs = lines_qs.filter(entry__date__lte=date_to)
-
-    if query:
-        lines_qs = lines_qs.filter(
-            Q(entry__description__icontains=query) |
-            Q(account__account_name__icontains=query)
-        )
-
-    lines = list(lines_qs)
-
-    # compute running balance + totals (no pagination here)
-    running_rows = []
-    balance = Decimal("0")
-    total_debit = Decimal("0")
-    total_credit = Decimal("0")
-
-    def normal_side(acc: Account):
-        if acc.level1_group in ["Assets", "Expenses"]:
-            return "debit"
-        return "credit"
-
-    for ln in lines:
-        side = normal_side(ln.account)
-        if side == "debit":
-            balance += ln.debit - ln.credit
-        else:
-            balance += ln.credit - ln.debit
-
-        total_debit += ln.debit
-        total_credit += ln.credit
-
-        running_rows.append({
-            "date": ln.entry.date,
-            "description": ln.entry.description,
-            "account": ln.account.account_name,
-            "reference": ln.entry.id,
-            "debit": ln.debit,
-            "credit": ln.credit,
-            "balance": balance,
-        })
-
-    context = {
-        "rows": running_rows,
-        "total_debit": total_debit,
-        "total_credit": total_credit,
-        "total_balance": total_debit - total_credit,
-        "selected_account": selected_account,
-        "date_from": date_from,
-        "date_to": date_to,
-        "query": query,
-    }
-    return render(request, "general_ledger_print.html", context)
 
 # working on the reports 
 
@@ -1556,13 +1682,6 @@ def report_pnl(request):
     return render(request, "pnl.html", context)
 
 # balance sheet
-from collections import defaultdict
-from decimal import Decimal
-from datetime import datetime, date
-
-from django.db.models import Q, Sum
-from django.shortcuts import render
-from django.utils import timezone
 
 def report_balance_sheet(request):
     """
@@ -2063,3 +2182,904 @@ def report_cashflow(request):
     }
 
     return render(request, "cashflow.html", context)
+
+# reports view 
+def reports(request):
+    
+    return render(request, "Reports.html", {})
+
+
+# -----------------------------
+# Helpers 
+# -----------------------------
+
+def _dec(x) -> Decimal:
+    try:
+        return Decimal(str(x or "0"))
+    except Exception:
+        return Decimal("0")
+
+
+def _as_date(dt):
+    if not dt:
+        return None
+    try:
+        return dt.date()
+    except Exception:
+        return dt
+
+
+def _bucket(due_date, today):
+    """
+    Safe keys for templates:
+      current, b1_30, b31_60, b61_90, b90_plus
+    """
+    if not due_date:
+        return "current"
+    days = (today - due_date).days
+    if days <= 0:
+        return "current"
+    if 1 <= days <= 30:
+        return "b1_30"
+    if 31 <= days <= 60:
+        return "b31_60"
+    if 61 <= days <= 90:
+        return "b61_90"
+    return "b90_plus"
+def _bucket_label(key: str) -> str:
+    return {
+        "current": "Current",
+        "b1_30": "1–30",
+        "b31_60": "31–60",
+        "b61_90": "61–90",
+        "b90_plus": "90+",
+    }.get(key, key)
+
+def aging_report(request):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    invoices = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(outstanding_db=F("total_due_dec") - F("total_paid"))
+        .only("id", "customer_id", "due_date", "date_created", "total_due")
+    )
+
+    if customer_id.isdigit():
+        invoices = invoices.filter(customer_id=int(customer_id))
+
+    rows_map = {}
+    grand = {
+        "current": Decimal("0.00"),
+        "b1_30": Decimal("0.00"),
+        "b31_60": Decimal("0.00"),
+        "b61_90": Decimal("0.00"),
+        "b90_plus": Decimal("0.00"),
+        "total": Decimal("0.00"),
+    }
+
+    for inv in invoices:
+        bal = _dec(inv.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(inv.due_date) or _as_date(inv.date_created)
+        key = _bucket(due, today)
+
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        cust = inv.customer
+        cid = cust.id
+
+        if cid not in rows_map:
+            rows_map[cid] = {
+                "customer": cust,
+                "current": Decimal("0.00"),
+                "b1_30": Decimal("0.00"),
+                "b31_60": Decimal("0.00"),
+                "b61_90": Decimal("0.00"),
+                "b90_plus": Decimal("0.00"),
+                "total": Decimal("0.00"),
+            }
+
+        rows_map[cid][key] += bal
+        rows_map[cid]["total"] += bal
+
+        grand[key] += bal
+        grand["total"] += bal
+
+    rows = list(rows_map.values())
+    rows.sort(key=lambda r: (r["customer"].customer_name or "").lower())
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        headers = ["Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
+        data_rows = []
+        for r in rows:
+            data_rows.append([
+                r["customer"].customer_name,
+                r["current"], r["b1_30"], r["b31_60"], r["b61_90"], r["b90_plus"], r["total"]
+            ])
+        # grand total row
+        data_rows.append([
+            "GRAND TOTAL",
+            grand["current"], grand["b1_30"], grand["b31_60"], grand["b61_90"], grand["b90_plus"], grand["total"]
+        ])
+
+        subtitle = f"As of {today}"
+        if exp == "excel":
+            return export_excel_simple(_export_filename("ar_aging_summary", "xlsx"), headers, data_rows, sheet_name="AR Aging Summary")
+        return export_pdf_table(_export_filename("ar_aging_summary", "pdf"), "Accounts Receivable Aging Summary", subtitle, headers, data_rows)
+
+    customers = Newcustomer.objects.order_by("customer_name")
+
+    return render(request, "ar_aging_report.html", {
+        "today": today,
+        "rows": rows,
+        "grand": grand,
+        "customers": customers,
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+    })
+
+def aging_report_detail(request):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(
+            outstanding_db=ExpressionWrapper(
+                F("total_due_dec") - F("total_paid"),
+                output_field=dec_out
+            )
+        )
+        .only("id", "customer_id", "date_created", "due_date", "total_due")
+        .order_by("customer__customer_name", "due_date", "date_created", "id")
+    )
+
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+
+    rows = []
+    for inv in qs:
+        bal = _dec(inv.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(inv.due_date) or _as_date(inv.date_created)
+        key = _bucket(due, today)
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        days_overdue = (today - due).days if due else 0
+
+        rows.append({
+            "customer": inv.customer,
+            "invoice_id": inv.id,
+            "invoice_date": _as_date(inv.date_created),
+            "due_date": due,
+            "days_overdue": days_overdue,
+            "total_due": _dec(inv.total_due),
+            "amount_paid": _dec(inv.total_paid),
+            "balance": bal,
+            "bucket": key,
+            "bucket_label": _bucket_label(key),
+        })
+
+    totals = {"total": Decimal("0.00")}
+    for r in rows:
+        totals["total"] += r["balance"]
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        headers = ["Customer", "Invoice #", "Invoice Date", "Due Date", "Bucket", "Days", "Total", "Paid", "Balance"]
+        data_rows = []
+        for r in rows:
+            data_rows.append([
+                r["customer"].customer_name,
+                f"{r['invoice_id']:03d}",
+                r["invoice_date"],
+                r["due_date"],
+                r["bucket_label"],
+                max(r["days_overdue"], 0),
+                r["total_due"],
+                r["amount_paid"],
+                r["balance"],
+            ])
+        data_rows.append(["TOTAL OUTSTANDING", "", "", "", "", "", "", "", totals["total"]])
+
+        subtitle = f"As of {today}"
+        if exp == "excel":
+            return export_excel_simple(_export_filename("ar_aging_detail", "xlsx"), headers, data_rows, sheet_name="AR Aging Detail")
+        return export_pdf_table(_export_filename("ar_aging_detail", "pdf"), "Accounts Receivable Aging Detail", subtitle, headers, data_rows)
+
+    customers = Newcustomer.objects.order_by("customer_name")
+
+    return render(request, "ar_aging_detail_report.html", {
+        "today": today,
+        "rows": rows,
+        "totals": {"total": totals["total"]},
+        "customers": customers,
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+    })
+
+
+def _customer_model():
+    return Newinvoice._meta.get_field("customer").remote_field.model
+
+
+def _customers_qs():
+    Customer = _customer_model()
+    # assumes customer_name exists (in your models it does)
+    try:
+        return Customer.objects.order_by("customer_name")
+    except Exception:
+        return Customer.objects.all()
+
+def _customer_model():
+    # gets the customer model attached to Newinvoice.customer FK (safe even if customer lives in another app)
+    return Newinvoice._meta.get_field("customer").remote_field.model
+
+def aging_report_customer(request, customer_id: int):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    Customer = _customer_model()
+    customer = get_object_or_404(Customer, pk=customer_id)
+
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .filter(customer_id=customer_id)
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(
+            outstanding_db=ExpressionWrapper(
+                F("total_due_dec") - F("total_paid"),
+                output_field=dec_out
+            )
+        )
+        .only("id", "customer_id", "date_created", "due_date", "total_due")
+        .order_by("due_date", "date_created", "id")
+    )
+
+    summary = {
+        "current": Decimal("0.00"),
+        "b1_30": Decimal("0.00"),
+        "b31_60": Decimal("0.00"),
+        "b61_90": Decimal("0.00"),
+        "b90_plus": Decimal("0.00"),
+        "total": Decimal("0.00"),
+    }
+
+    rows = []
+    for inv in qs:
+        bal = _dec(inv.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(inv.due_date) or _as_date(inv.date_created)
+        key = _bucket(due, today)
+
+        summary[key] += bal
+        summary["total"] += bal
+
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        days_overdue = (today - due).days if due else 0
+
+        rows.append({
+            "invoice_id": inv.id,
+            "invoice_date": _as_date(inv.date_created),
+            "due_date": due,
+            "bucket": key,
+            "bucket_label": _bucket_label(key),
+            "days_overdue": days_overdue,
+            "total_due": _dec(inv.total_due),
+            "amount_paid": _dec(inv.total_paid),
+            "balance": bal,
+        })
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        # 1) Summary block
+        sum_headers = ["Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
+        sum_rows = [[
+            getattr(customer, "customer_name", str(customer)),
+            summary["current"], summary["b1_30"], summary["b31_60"], summary["b61_90"], summary["b90_plus"], summary["total"]
+        ]]
+
+        # 2) Detail block (invoice rows)
+        det_headers = ["Invoice #", "Invoice Date", "Due Date", "Bucket", "Days", "Total", "Paid", "Balance"]
+        det_rows = []
+        for r in rows:
+            det_rows.append([
+                f"{r['invoice_id']:03d}",
+                r["invoice_date"],
+                r["due_date"],
+                r["bucket_label"],
+                max(r["days_overdue"], 0),
+                r["total_due"],
+                r["amount_paid"],
+                r["balance"],
+            ])
+
+        # Combine into one export table: Summary row, blank row, then details
+        headers = sum_headers
+        data_rows = sum_rows + [["", "", "", "", "", "", ""]]  # spacer row for excel
+        data_rows += [det_headers]  # put detail header as a row
+        data_rows += det_rows
+
+        subtitle = f"As of {today}"
+        if bucket_filter:
+            subtitle += f" | Bucket: {_bucket_label(bucket_filter)}"
+
+        if exp == "excel":
+            return export_excel_simple(_export_filename("ar_aging_customer", "xlsx"), headers, data_rows, sheet_name="AR Aging Customer")
+        return export_pdf_table(_export_filename("ar_aging_customer", "pdf"), f"A/R Aging — {getattr(customer,'customer_name','Customer')}", subtitle, headers, data_rows)
+
+    return render(request, "ar_aging_customer_report.html", {
+        "today": today,
+        "customer": customer,
+        "summary": summary,
+        "rows": rows,
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+    })
+
+# ---------------------------------------------------------
+# 1) OPEN INVOICES REPORT
+# ---------------------------------------------------------
+def open_invoices_report(request):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(
+            outstanding_db=ExpressionWrapper(
+                F("total_due_dec") - F("total_paid"),
+                output_field=dec_out
+            )
+        )
+        .only("id", "customer_id", "date_created", "due_date", "total_due")
+        .order_by("customer__customer_name", "due_date", "date_created", "id")
+    )
+
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+
+    rows = []
+    totals = {"total": Decimal("0.00")}
+
+    for inv in qs:
+        bal = _dec(inv.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(inv.due_date) or _as_date(inv.date_created)
+        key = _bucket(due, today)
+
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        days_overdue = (today - due).days if due else 0
+
+        rows.append({
+            "customer": inv.customer,
+            "invoice_id": inv.id,
+            "invoice_date": _as_date(inv.date_created),
+            "due_date": due,
+            "bucket": key,
+            "bucket_label": _bucket_label(key),
+            "days_overdue": days_overdue,
+            "total_due": _dec(inv.total_due),
+            "amount_paid": _dec(inv.total_paid),
+            "balance": bal,
+        })
+        totals["total"] += bal
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        headers = ["Customer", "Invoice #", "Invoice Date", "Due Date", "Bucket", "Days", "Total", "Paid", "Balance"]
+        data_rows = []
+        for r in rows:
+            data_rows.append([
+                r["customer"].customer_name,
+                f"{r['invoice_id']:03d}",
+                r["invoice_date"],
+                r["due_date"],
+                r["bucket_label"],
+                max(r["days_overdue"], 0),
+                r["total_due"],
+                r["amount_paid"],
+                r["balance"],
+            ])
+        data_rows.append(["TOTAL OUTSTANDING", "", "", "", "", "", "", "", totals["total"]])
+
+        subtitle = f"As of {today}"
+        if exp == "excel":
+            return export_excel_simple(_export_filename("open_invoices", "xlsx"), headers, data_rows, sheet_name="Open Invoices")
+        return export_pdf_table(_export_filename("open_invoices", "pdf"), "Open Invoices", subtitle, headers, data_rows)
+
+    return render(request, "open_invoices_report.html", {
+        "today": today,
+        "rows": rows,
+        "totals": totals,
+        "customers": _customers_qs(),
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+    })
+
+
+# ---------------------------------------------------------
+# 2) CUSTOMER BALANCES REPORT
+# ---------------------------------------------------------
+def customer_balances_report(request):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(
+            outstanding_db=ExpressionWrapper(
+                F("total_due_dec") - F("total_paid"),
+                output_field=dec_out
+            )
+        )
+        .only("id", "customer_id", "date_created", "due_date", "total_due")
+    )
+
+    cust_map = {}
+    grand = {"current": Decimal("0.00"), "overdue": Decimal("0.00"), "total": Decimal("0.00")}
+
+    for inv in qs:
+        bal = _dec(inv.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(inv.due_date) or _as_date(inv.date_created)
+        overdue = bool(due and due < today)
+
+        cid = inv.customer.id
+        if cid not in cust_map:
+            cust_map[cid] = {
+                "customer": inv.customer,
+                "current": Decimal("0.00"),
+                "overdue": Decimal("0.00"),
+                "total": Decimal("0.00"),
+            }
+
+        if overdue:
+            cust_map[cid]["overdue"] += bal
+            grand["overdue"] += bal
+        else:
+            cust_map[cid]["current"] += bal
+            grand["current"] += bal
+
+        cust_map[cid]["total"] += bal
+        grand["total"] += bal
+
+    rows = list(cust_map.values())
+    rows.sort(key=lambda r: (getattr(r["customer"], "customer_name", "") or "").lower())
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        headers = ["Customer", "Current", "Overdue", "Total"]
+        data_rows = []
+        for r in rows:
+            data_rows.append([
+                r["customer"].customer_name,
+                r["current"],
+                r["overdue"],
+                r["total"],
+            ])
+        data_rows.append(["GRAND TOTAL", grand["current"], grand["overdue"], grand["total"]])
+
+        subtitle = f"As of {today}"
+        if exp == "excel":
+            return export_excel_simple(_export_filename("customer_balances", "xlsx"), headers, data_rows, sheet_name="Customer Balances")
+        return export_pdf_table(_export_filename("customer_balances", "pdf"), "Customer Balances", subtitle, headers, data_rows)
+
+    return render(request, "customer_balances_report.html", {
+        "today": today,
+        "rows": rows,
+        "grand": grand,
+    })
+
+
+# ---------------------------------------------------------
+# 3) INVOICE LIST REPORT (all invoices)
+# ---------------------------------------------------------
+def invoice_list_report(request):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    status = (request.GET.get("status") or "").strip()  # all|paid|unpaid|overdue
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(
+            outstanding_db=ExpressionWrapper(
+                F("total_due_dec") - F("total_paid"),
+                output_field=dec_out
+            )
+        )
+        .only("id", "customer_id", "date_created", "due_date", "total_due")
+        .order_by("-date_created", "-id")
+    )
+
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+
+    rows = []
+    for inv in qs:
+        bal = _dec(inv.outstanding_db)
+        due = _as_date(inv.due_date) or _as_date(inv.date_created)
+
+        is_paid = bal <= Decimal("0.00001")
+        is_overdue = bool((not is_paid) and due and due < today)
+
+        if status == "paid" and not is_paid:
+            continue
+        if status == "unpaid" and is_paid:
+            continue
+        if status == "overdue" and not is_overdue:
+            continue
+
+        rows.append({
+            "customer": inv.customer,
+            "invoice_id": inv.id,
+            "invoice_date": _as_date(inv.date_created),
+            "due_date": due,
+            "total_due": _dec(inv.total_due),
+            "amount_paid": _dec(inv.total_paid),
+            "balance": bal if bal > 0 else Decimal("0.00"),
+            "status": "PAID" if is_paid else ("OVERDUE" if is_overdue else "OPEN"),
+        })
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        headers = ["Customer", "Invoice #", "Invoice Date", "Due Date", "Status", "Total", "Paid", "Balance"]
+        data_rows = []
+        total_balance = Decimal("0.00")
+        for r in rows:
+            data_rows.append([
+                r["customer"].customer_name,
+                f"{r['invoice_id']:03d}",
+                r["invoice_date"],
+                r["due_date"],
+                r["status"],
+                r["total_due"],
+                r["amount_paid"],
+                r["balance"],
+            ])
+            total_balance += _dec(r["balance"])
+        data_rows.append(["TOTAL OUTSTANDING", "", "", "", "", "", "", total_balance])
+
+        subtitle = f"As of {today}"
+        if status:
+            subtitle += f" | Status: {status}"
+        if exp == "excel":
+            return export_excel_simple(_export_filename("invoice_list", "xlsx"), headers, data_rows, sheet_name="Invoice List")
+        return export_pdf_table(_export_filename("invoice_list", "pdf"), "Invoice List", subtitle, headers, data_rows)
+
+    return render(request, "invoice_list_report.html", {
+        "today": today,
+        "rows": rows,
+        "customers": _customers_qs(),
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "selected_status": status,
+        "status_choices": [
+            ("", "All"),
+            ("paid", "Paid"),
+            ("unpaid", "Unpaid"),
+            ("overdue", "Overdue"),
+        ],
+    })
+
+
+# ---------------------------------------------------------
+# 4) COLLECTIONS REPORT (payments + applied + unapplied)
+# ---------------------------------------------------------
+def collections_report(request):
+    today = timezone.localdate()
+
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    # default current month
+    if not date_from and not date_to:
+        first = today.replace(day=1)
+        date_from = str(first)
+        date_to = str(today)
+
+    qs = Payment.objects.select_related("customer").all().order_by("-payment_date", "-id")
+
+    if date_from:
+        qs = qs.filter(payment_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(payment_date__lte=date_to)
+
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+    qs = qs.annotate(
+        total_applied=Coalesce(
+            Sum("applied_invoices__amount_paid", output_field=dec_out),
+            Value(Decimal("0.00"), output_field=dec_out),
+            output_field=dec_out
+        )
+    )
+
+    rows = []
+    totals = {"received": Decimal("0.00"), "applied": Decimal("0.00"), "unapplied": Decimal("0.00")}
+
+    for p in qs:
+        received = _dec(p.amount_received)
+        applied = _dec(p.total_applied)
+        unapplied = _dec(getattr(p, "unapplied_amount", Decimal("0.00")))
+
+        rows.append({
+            "customer": p.customer,
+            "date": p.payment_date,
+            "ref": p.reference_no,
+            "method": p.payment_method,
+            "received": received,
+            "applied": applied,
+            "unapplied": unapplied,
+        })
+
+        totals["received"] += received
+        totals["applied"] += applied
+        totals["unapplied"] += unapplied
+
+    # ✅ EXPORT
+    exp = _export_wants(request)
+    if exp in ("excel", "pdf"):
+        headers = ["Customer", "Payment Date", "Reference", "Method", "Received", "Applied", "Unapplied"]
+        data_rows = []
+        for r in rows:
+            data_rows.append([
+                r["customer"].customer_name,
+                r["date"],
+                r["ref"],
+                r["method"],
+                r["received"],
+                r["applied"],
+                r["unapplied"],
+            ])
+        data_rows.append(["TOTALS", "", "", "", totals["received"], totals["applied"], totals["unapplied"]])
+
+        subtitle = f"From {date_from} to {date_to}"
+        if exp == "excel":
+            return export_excel_simple(_export_filename("collections_report", "xlsx"), headers, data_rows, sheet_name="Collections")
+        return export_pdf_table(_export_filename("collections_report", "pdf"), "Collections Report", subtitle, headers, data_rows)
+
+    return render(request, "collections_report.html", {
+        "today": today,
+        "rows": rows,
+        "totals": totals,
+        "date_from": date_from,
+        "date_to": date_to,
+    })
+def _export_wants(request) -> str:
+    """
+    Returns 'excel', 'pdf', or '' (no export).
+    """
+    return (request.GET.get("export") or "").strip().lower()
+
+
+def _export_filename(prefix: str, ext: str) -> str:
+    return f"{prefix}.{ext}"
+
+
+def export_excel_simple(filename: str, headers: list[str], rows: list[list], sheet_name="Report") -> HttpResponse:
+    """
+    Excel export using openpyxl.
+    pip install openpyxl
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+
+    # header row
+    ws.append(headers)
+    for col in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+
+    # data rows
+    for r in rows:
+        ws.append([_safe_excel_value(v) for v in r])
+
+    # autosize columns (simple)
+    for col in range(1, len(headers) + 1):
+        max_len = 10
+        for row in range(1, ws.max_row + 1):
+            v = ws.cell(row=row, column=col).value
+            if v is None:
+                continue
+            max_len = max(max_len, len(str(v)))
+        ws.column_dimensions[get_column_letter(col)].width = min(max_len + 2, 45)
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    resp = HttpResponse(
+        bio.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+def _safe_excel_value(v):
+    # openpyxl doesn't like Decimal sometimes; convert safely
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
+
+
+def export_pdf_table(filename: str, title: str, subtitle: str, headers: list[str], rows: list[list]) -> HttpResponse:
+    """
+    PDF export using reportlab.
+    pip install reportlab
+    """
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+
+    bio = io.BytesIO()
+    doc = SimpleDocTemplate(bio, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+
+    styles = getSampleStyleSheet()
+    elems = []
+    elems.append(Paragraph(title, styles["Title"]))
+    if subtitle:
+        elems.append(Paragraph(subtitle, styles["Normal"]))
+    elems.append(Spacer(1, 12))
+
+    data = [headers] + [[_safe_pdf_value(x) for x in r] for r in rows]
+    table = Table(data, repeatRows=1)
+
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8fbef")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]))
+
+    elems.append(table)
+    doc.build(elems)
+
+    pdf = bio.getvalue()
+    bio.close()
+
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+def _safe_pdf_value(v):
+    if v is None:
+        return ""
+    if isinstance(v, Decimal):
+        # show clean numbers in pdf
+        return f"{v:.2f}"
+    return str(v)

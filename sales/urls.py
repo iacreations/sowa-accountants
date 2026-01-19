@@ -1,6 +1,14 @@
 from django.urls import path
 from . import views
-
+from accounts.views import (
+    aging_report,
+    aging_report_detail,
+    open_invoices_report,
+    customer_balances_report,
+    invoice_list_report,
+    collections_report,
+    aging_report_customer,
+)
 
 app_name='sales'
 # my urls
@@ -40,4 +48,14 @@ urlpatterns = [
     path("statements/<int:pk>/", views.statement_detail, name="statement-detail"),
     path("statements/<int:pk>/export.xlsx", views.statement_export_excel, name="statement-export-excel"),
     path("statements/<int:pk>/export.pdf",   views.statement_export_pdf,   name="statement-export-pdf"),
+    # aging reports
+    path("reports/ar-aging/", aging_report, name="aging-report"),
+    
+    path("reports/ar-aging/detail/", aging_report_detail, name="aging-report-detail"),
+    path("reports/open-invoices/", open_invoices_report, name="open-invoices-report"),
+    path("reports/ar-aging/customer/<int:customer_id>/", aging_report_customer, name="aging-report-customer"),
+
+    path("reports/customer-balances/", customer_balances_report, name="customer-balances-report"),
+    path("reports/invoice-list/", invoice_list_report, name="invoice-list-report"),
+    path("reports/collections/", collections_report, name="collections-report"),
 ]

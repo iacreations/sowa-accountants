@@ -108,7 +108,6 @@
   .row-actions{display:inline-flex;align-items:center;gap:10px}
   .edit-link{color:#39B54B;font-weight:800;text-decoration:none}
   .menu-wrap{position:relative;display:inline-block}
-  /* .kebab{background:#f0fdf4;border:1px solid #cceedd;border-radius:8px;padding:4px 8px;cursor:pointer} */
   .flyout{display:none;position:absolute;right:0;top:110%;background:#fff;border:1px solid #e6e6e6;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.08);min-width:150px;overflow:hidden;z-index:5}
   .menu-wrap:focus-within .flyout,.menu-wrap:hover .flyout{display:block}
   .flyout a{display:block;padding:8px 12px;text-decoration:none;color:#111}
@@ -144,7 +143,8 @@
         <div class="pills">
           <span class="pill">
             <span class="dot dot-open"></span> Open balance
-            <span class="val">{{ customer.opening_balance|floatformat:2|intcomma }}</span>
+            {# ✅ FIX: show computed open_balance not stored opening_balance #}
+            <span class="val">{{ open_balance|default:0|floatformat:2|intcomma }}</span>
           </span>
           <span class="pill">
             <span class="dot dot-overdue"></span> Overdue
@@ -176,7 +176,8 @@
         <h4>Financial summary</h4>
         <div class="sum-row">
           <span>Open balance</span>
-          <span class="val">{{ customer.opening_balance|floatformat:2|intcomma }}</span>
+          {# ✅ FIX: show computed open_balance not stored opening_balance #}
+          <span class="val">{{ open_balance|default:0|floatformat:2|intcomma }}</span>
         </div>
         <div class="sum-row">
           <span>Overdue payment</span>
@@ -282,11 +283,9 @@
                         <a role="menuitem" href="{{ r.view_url }}">Open</a>
                         <a role="menuitem" href="{{ r.print_url }}">Print</a>
                         <a role="menuitem" href="{{ r.send_url }}">Send</a>
-                        
-  <a role="menuitem" href="{% url 'sales:statement-export-excel' r.id %}">Export Excel</a>
-  <a role="menuitem" href="{% url 'sales:statement-export-pdf' r.id %}">Export PDF</a>
 
-
+                        <a role="menuitem" href="{% url 'sales:statement-export-excel' r.id %}">Export Excel</a>
+                        <a role="menuitem" href="{% url 'sales:statement-export-pdf' r.id %}">Export PDF</a>
                       </div>
                     </div>
                   </div>
@@ -298,27 +297,28 @@
         {% else %}
           <div style="color:#6b7280;">No statements yet.</div>
         {% endif %}
-{% elif tab == 'details' %}
-  <table class="content-table">
-    <tbody>
-      <tr>
-        <th>Company</th>
-        <td>{{ customer.company_name|default:"—" }}</td>
-      </tr>
-      ...
-    </tbody>
-  </table>
 
-{% elif tab == 'tasks' %}
-  <table class="content-table">
-    <tbody>
-      <tr>
-        <th>Tasks</th>
-        <td class="muted">Task list for this customer.</td>
-      </tr>
-    </tbody>
-  </table>
-{% endif %}
+      {% elif tab == 'details' %}
+        <table class="content-table">
+          <tbody>
+            <tr>
+              <th>Company</th>
+              <td>{{ customer.company_name|default:"—" }}</td>
+            </tr>
+            ...
+          </tbody>
+        </table>
+
+      {% elif tab == 'tasks' %}
+        <table class="content-table">
+          <tbody>
+            <tr>
+              <th>Tasks</th>
+              <td class="muted">Task list for this customer.</td>
+            </tr>
+          </tbody>
+        </table>
+      {% endif %}
 
     </div>
   </section>

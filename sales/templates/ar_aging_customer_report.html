@@ -1,0 +1,177 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .rep-wrap{ width: 80%; margin-top: 7%; margin-left: 20%; padding:5px;}
+  .rep-title{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  .rep-title h2{ margin:0; color:#39B54B; font-weight:800; }
+  .rep-sub{ color:#6b7280; font-size:13px; }
+
+  .rep-card{
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:14px 16px;
+    margin-top: 12px;
+  }
+
+  .filters{
+    display:flex; gap:10px; flex-wrap:wrap;
+    align-items:center; justify-content:flex-end;
+  }
+  .filters select{
+    border:1px solid #e5e7eb;
+    border-radius:10px;
+    padding:6px 10px;
+    font-size:13px;
+    background:#fff;
+  }
+
+  table{ width:100%; border-collapse:collapse; }
+  th, td{ padding:10px 8px; border-bottom:1px solid #f1f5f9; text-align:right; }
+  th:first-child, td:first-child{ text-align:left; }
+  th{ font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:#111827; }
+  tfoot th{ font-weight:900; color:#0b1324; }
+
+  .chip{
+    display:inline-block;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:12px;
+    font-weight:700;
+    border:1px solid #c7f1d6;
+    background:#e8fbef;
+    color:#1a9d46;
+  }
+  .chip.overdue{
+    border-color:#fed7aa;
+    background:#fff7ed;
+    color:#b45309;
+  }
+
+  .top-actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:flex-start;
+    margin-top:6px;
+  }
+  .btn-link{
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:10px;
+    border:1px solid #e5e7eb;
+    background:#fff;
+    color:#39B54B;
+    text-decoration:none;
+    font-weight:700;
+    font-size:13px;
+  }
+  .btn-link:hover{ text-decoration:underline; }
+</style>
+
+<div class="rep-wrap">
+  <div class="rep-title">
+    <div>
+      <h2>A/R Ageing — {{ customer.customer_name }}</h2>
+      <div class="rep-sub">As of {{ today }}</div>
+
+      <div class="top-actions">
+        <a class="btn-link" href="{% url 'sales:aging-report' %}">Back to Aging Summary</a>
+        <a class="btn-link" href="{% url 'sales:aging-report-detail' %}?customer={{ customer.id }}">View in Detail Report</a>
+
+        <!-- ✅ EXPORTS (NEW) -->
+        <a class="btn-link" href="?{% if request.GET.bucket %}bucket={{ request.GET.bucket }}&{% endif %}export=excel">Export Excel</a>
+        <a class="btn-link" href="?{% if request.GET.bucket %}bucket={{ request.GET.bucket }}&{% endif %}export=pdf">Export PDF</a>
+      </div>
+    </div>
+
+    <form class="filters" method="get">
+      <select name="bucket" onchange="this.form.submit()">
+        {% for k, label in bucket_choices %}
+          <option value="{{ k }}" {% if selected_bucket == k %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  <!-- SUMMARY TOTALS -->
+  <div class="rep-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Current</th>
+          <th>1–30</th>
+          <th>31–60</th>
+          <th>61–90</th>
+          <th>90+</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>{{ customer.customer_name }}</b></td>
+          <td>{{ summary.current|floatformat:0|intcomma }}</td>
+          <td>{{ summary.b1_30|floatformat:0|intcomma }}</td>
+          <td>{{ summary.b31_60|floatformat:0|intcomma }}</td>
+          <td>{{ summary.b61_90|floatformat:0|intcomma }}</td>
+          <td>{{ summary.b90_plus|floatformat:0|intcomma }}</td>
+          <td><b>{{ summary.total|floatformat:0|intcomma }}</b></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- DETAIL LIST -->
+  <div class="rep-card">
+    <h3 style="margin:0 0 10px; color:#0b1324;">Invoice Details</h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Invoice #</th>
+          <th>Invoice Date</th>
+          <th>Due Date</th>
+          <th>Status</th>
+          <th>Days</th>
+          <th>Total</th>
+          <th>Paid</th>
+          <th>Balance</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.invoice_id|stringformat:"03d" }}</td>
+          <td>{{ r.invoice_date }}</td>
+          <td>{{ r.due_date }}</td>
+          <td>
+            {% if r.bucket == "current" %}
+              <span class="chip">{{ r.bucket_label }}</span>
+            {% else %}
+              <span class="chip overdue">{{ r.bucket_label }}</span>
+            {% endif %}
+          </td>
+          <td>{% if r.days_overdue > 0 %}{{ r.days_overdue }}{% else %}0{% endif %}</td>
+          <td>{{ r.total_due|floatformat:0|intcomma }}</td>
+          <td>{{ r.amount_paid|floatformat:0|intcomma }}</td>
+          <td><b>{{ r.balance|floatformat:0|intcomma }}</b></td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" style="text-align:center; color:#6b7280;">
+            No outstanding invoices for this customer (or filter).
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

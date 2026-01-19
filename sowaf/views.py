@@ -9,6 +9,7 @@ from django.urls import reverse, NoReverseMatch
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 import openpyxl
+from django.utils.timezone import now
 import csv
 import io
 import os
@@ -37,7 +38,7 @@ from expenses.models import Bill,Expense,Cheque
 from . models import Newcustomer, Newsupplier,Newclient,Newemployee,Newasset
 from accounts.utils import deposit_accounts_qs, expense_accounts_qs
 from accounts.date_ranges import resolve_date_range, RANGE_LABELS, RANGE_OPTIONS
-
+from .utils import _supplier_ap_balances_bulk
 # Constants / helpers
 from datetime import datetime
 
@@ -222,7 +223,7 @@ def _get_or_create_customer_ar_subaccount(customer: Newcustomer) -> Account:
     acc = Account.objects.create(
         account_name=sub_name,
         account_type=ar_control.account_type,  # CURRENT_ASSET
-        detail_type="Customer Subledger (A/R)",
+        detail_type="Customer ledger (A/R)",
         is_active=True,
         is_subaccount=True,
         parent=ar_control,
@@ -252,7 +253,7 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
     acc = Account.objects.create(
         account_name=sub_name,
         account_type=ap_control.account_type,  # CURRENT_LIABILITY
-        detail_type="Supplier Subledger (A/P)",
+        detail_type="Supplier ledger (A/P)",
         is_active=True,
         is_subaccount=True,
         parent=ap_control,
@@ -582,7 +583,7 @@ def home(request):
     bs_url = "accounts:report-balance-sheet"
 
     # =========================================================
-    # 4) INVOICES TILE (✅ FIXED: no __date, SQLite-safe range)
+    # 4) INVOICES TILE  FIXED: no __date, SQLite-safe range)
     # =========================================================
     tz = timezone.get_current_timezone()
 
@@ -640,7 +641,7 @@ def home(request):
     }
 
     # =========================================================
-    # 5) SALES TILE (✅ FIXED: no __date, same logic)
+    # 5) SALES TILE  FIXED: no __date, same logic)
     # =========================================================
     sales_from_dt = timezone.make_aware(datetime.combine(sales_from, time.min), tz)
     sales_to_dt   = timezone.make_aware(datetime.combine(sales_to + timedelta(days=1), time.min), tz)  # exclusive end
@@ -986,8 +987,9 @@ def import_assets(request):
 def customers(request):
     q = (request.GET.get("q") or "").strip()
 
-    # ---------- Correlated subqueries ----------
-    # total paid per invoice (scalar subquery)
+    # ------------------------------
+    # 1) INVOICE OUTSTANDING (your existing logic)
+    # ------------------------------
     paid_per_invoice_sq = (
         PaymentInvoice.objects
         .filter(invoice_id=OuterRef("pk"))
@@ -996,17 +998,20 @@ def customers(request):
         .values("total")[:1]
     )
 
-    # invoices annotated with due (Decimal), paid (Subquery), outstanding (ExpressionWrapper)
     inv_all = (
         Newinvoice.objects
         .annotate(
             total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
-            paid=Coalesce(Subquery(paid_per_invoice_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
-                          Value(Decimal("0.00")))
+            paid=Coalesce(
+                Subquery(paid_per_invoice_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
+                Value(Decimal("0.00"))
+            )
         )
         .annotate(
-            raw_outstanding=ExpressionWrapper(F("total_due_dec") - F("paid"),
-                                              output_field=DecimalField(max_digits=18, decimal_places=2)),
+            raw_outstanding=ExpressionWrapper(
+                F("total_due_dec") - F("paid"),
+                output_field=DecimalField(max_digits=18, decimal_places=2)
+            ),
             outstanding=Case(
                 When(raw_outstanding__gt=0, then=F("raw_outstanding")),
                 default=Value(Decimal("0.00")),
@@ -1015,50 +1020,113 @@ def customers(request):
         )
     )
 
-    # per-customer open balance (sum of outstanding for that customer) as Subquery
-    per_customer_open_sq = (
+    per_customer_invoice_open_sq = (
         inv_all.filter(customer_id=OuterRef("pk"))
         .values("customer_id")
         .annotate(sum_outstanding=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))))
         .values("sum_outstanding")[:1]
     )
 
-    # ---------- Base customers queryset with open_balance annotation ----------
+    # ------------------------------
+    # 2) OPENING BALANCE REMAINING (GL-based)
+    #    Balance = SUM(debit) - SUM(credit) because A/R is an ASSET (normal debit)
+    #    We match the customer subledger account by account_name == customer.customer_name
+    # ------------------------------
+    customer_ar_balance_sq = (
+        JournalLine.objects
+        .filter(
+            account__detail_type="Customer Subledger (A/R)",
+            account__account_name=OuterRef("customer_name"),
+        )
+        .values("account__account_name")
+        .annotate(
+            deb=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            cred=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+        .annotate(
+            bal=ExpressionWrapper(
+                F("deb") - F("cred"),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            )
+        )
+        .values("bal")[:1]
+    )
+
+    # ------------------------------
+    # 3) CUSTOMERS QUERYSET (combine both)
+    # ------------------------------
     customers_qs = (
         Newcustomer.objects
         .annotate(
-            open_balance=Coalesce(
-                Subquery(per_customer_open_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
+            invoice_remaining=Coalesce(
+                Subquery(per_customer_invoice_open_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
                 Value(Decimal("0.00"))
+            ),
+            opening_remaining=Coalesce(
+                Subquery(customer_ar_balance_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
+                Value(Decimal("0.00"))
+            ),
+        )
+        .annotate(
+            total_unpaid=ExpressionWrapper(
+                F("opening_remaining") + F("invoice_remaining"),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
             )
         )
     )
+
     if q:
         customers_qs = customers_qs.filter(
             Q(customer_name__icontains=q) | Q(company_name__icontains=q)
         )
 
-    # ---------- Dashboard analytics (all computed from inv_all; no nested aggregates) ----------
+    # ------------------------------
+    # 4) DASHBOARD ANALYTICS
+    # ------------------------------
     today = timezone.now().date()
     cutoff = today - timedelta(days=30)
 
-    # open = sum of outstanding where > 0
+    # UNBILLED = opening balances remaining (GL)
+    # sum all customer subledger balances
+    ar_totals = (
+        JournalLine.objects
+        .filter(account__detail_type="Customer Subledger (A/R)")
+        .aggregate(
+            deb=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            cred=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+    )
+    unbilled_amount = (ar_totals["deb"] or Decimal("0")) - (ar_totals["cred"] or Decimal("0"))
+
+    # count customers who still have positive AR balance (optional)
+    # (this counts accounts, not customers table rows; but usually 1:1)
+    ar_accounts = (
+        Account.objects
+        .filter(detail_type="Customer Subledger (A/R)")
+        .annotate(
+            deb=Coalesce(Sum("journalline__debit"), Value(Decimal("0.00"))),
+            cred=Coalesce(Sum("journalline__credit"), Value(Decimal("0.00"))),
+        )
+        .annotate(
+            bal=ExpressionWrapper(
+                F("deb") - F("cred"),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            )
+        )
+    )
+    unbilled_count = ar_accounts.filter(bal__gt=0).count()
+
+    # invoices-based KPIs stay as you had them
     open_agg = inv_all.filter(outstanding__gt=0).aggregate(
         amount=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))),
         count=Count("id")
     )
 
-    # overdue = outstanding where due_date < today
     overdue_agg = inv_all.filter(outstanding__gt=0, due_date__lt=today).aggregate(
         amount=Coalesce(Sum("outstanding"), Value(Decimal("0.00"))),
         count=Count("id")
     )
 
-    # unbilled (if you don’t track estimates/drafts, keep zeros)
-    unbilled_amount = Decimal("0.00")
-    unbilled_count = 0
-
-    # recent payments = (applied payments in last 30d) + (cash sales receipts paid in last 30d)
     recent_paid_from_payments = (
         PaymentInvoice.objects
         .filter(payment__payment_date__gte=cutoff)
@@ -1095,6 +1163,7 @@ def customers(request):
         "amount_overdue": overdue_agg["amount"] or Decimal("0"),
         "count_overdue": int(overdue_agg["count"] or 0),
 
+        # "Remaining balance" still means invoice remaining (you can rename later if you want)
         "amount_open": open_agg["amount"] or Decimal("0"),
         "count_open": int(open_agg["count"] or 0),
 
@@ -1120,6 +1189,61 @@ def _safe_url(pattern_name, *args):
         return reverse(pattern_name, args=args)
     except NoReverseMatch:
         return "#"
+    
+
+def _to_date(d):
+    
+    if d is None:
+        return None
+    if isinstance(d, str):
+        try:
+            from django.utils import timezone
+            return timezone.datetime.fromisoformat(d).date()
+        except Exception:
+            return None
+    try:
+        return d.date()
+    except Exception:
+        return d
+    
+    
+def _customer_ar_balance_as_of(customer_id: int, as_of_date=None) -> Decimal:
+    """
+    LIVE A/R balance for a customer from GL Customer Subledger (A/R),
+    optionally as-of a date (inclusive).
+
+    A/R is an Asset => debit - credit
+    We match the customer subledger account by account_name == customer.customer_name
+    """
+
+    customer = Newcustomer.objects.only("id", "customer_name").get(id=customer_id)
+
+    qs = JournalLine.objects.filter(
+        account__detail_type="Customer Subledger (A/R)",
+        account__account_name=customer.customer_name,
+    )
+
+    # as_of_date can be a date, datetime, or string
+    if as_of_date:
+        try:
+            if isinstance(as_of_date, str):
+                as_of_date = timezone.datetime.fromisoformat(as_of_date).date()
+            elif hasattr(as_of_date, "date"):
+                as_of_date = as_of_date.date()
+        except Exception:
+            # if parsing fails, skip date filter
+            as_of_date = None
+
+    if as_of_date:
+        qs = qs.filter(entry__date__lte=as_of_date)
+
+    totals = qs.aggregate(
+        deb=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+        cred=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+    )
+
+    return (totals["deb"] or Decimal("0.00")) - (totals["cred"] or Decimal("0.00"))
+
 
 def customer_detail(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)
@@ -1134,20 +1258,30 @@ def customer_detail(request, pk):
         )
     )
 
-    # Open/Overdue balances (as you had)
-    from django.utils.timezone import now
     today = now().date()
-    open_balance = sum(
-        (row.total_due_dec or Decimal("0.00")) - (row.total_paid or Decimal("0.00"))
-        for row in inv_qs_base
+
+    # OPEN BALANCE = GL Customer Subledger (A/R)
+    gl_totals = (
+        JournalLine.objects
+        .filter(
+            account__detail_type="Customer Subledger (A/R)",
+            account__account_name=customer.customer_name,
+        )
+        .aggregate(
+            deb=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            cred=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
     )
+    open_balance = (gl_totals["deb"] or Decimal("0.00")) - (gl_totals["cred"] or Decimal("0.00"))
+
+    # OVERDUE (invoice-based)
     overdue_balance = sum(
         (row.total_due_dec or Decimal("0.00")) - (row.total_paid or Decimal("0.00"))
         for row in inv_qs_base.filter(due_date__lt=today)
     )
     count_invoices = inv_qs_base.count()
 
-    # ---------- transactions (existing code, unchanged) ----------
+    # ---------- transactions ----------
     transactions_rows = []
     inv_qs = inv_qs_base.select_related("customer").order_by("-date_created", "-id")
 
@@ -1202,6 +1336,12 @@ def customer_detail(request, pk):
             "print_url": reverse("sales:payment-print", args=[p.id]),
         })
 
+    def _safe_url(name, obj_id):
+        try:
+            return reverse(name, args=[obj_id])
+        except Exception:
+            return "#"
+
     try:
         sr_qs = SalesReceipt.objects.filter(customer=customer).order_by("-receipt_date", "-id")
         for r in sr_qs:
@@ -1219,20 +1359,23 @@ def customer_detail(request, pk):
                 "view_url":  _safe_url("sales:receipt-detail", r.id),
                 "print_url": _safe_url("sales:receipt-print", r.id),
             })
-    except NameError:
+    except Exception:
         pass
 
     transactions_rows.sort(key=lambda r: (r["date"] or today, r["type"], r["id"]), reverse=True)
 
-    # ---------- NEW: statements for this customer ----------
+    # ---------- statements ----------
     statements_rows = []
     try:
-        from sales.models import Statement  # if not already imported
+        from sales.models import Statement
         st_qs = Statement.objects.filter(customer=customer).order_by("-statement_date", "-id")
+
         for st in st_qs:
-            # use get_*_display when choices exist
             st_type = getattr(st, "get_statement_type_display", None)
-            st_type = st_type() if callable(st_type) else st.statement_type
+            st_type = st_type() if callable(st_type) else getattr(st, "statement_type", "")
+
+            # LIVE A/R balance as-of statement end date
+            ar_live_balance = _customer_ar_balance_as_of(customer.id, st.end_date)
 
             statements_rows.append({
                 "id": st.id,
@@ -1241,25 +1384,24 @@ def customer_detail(request, pk):
                 "type": st_type,
                 "start": st.start_date,
                 "end":   st.end_date,
-                "balance": st.closing_balance or Decimal("0.00"),
+                "balance": ar_live_balance,  # LIVE
                 "view_url":  _safe_url("sales:statement-detail", st.id),
                 "print_url": _safe_url("sales:statement-print", st.id),
                 "send_url":  _safe_url("sales:statement-send", st.id),
             })
     except Exception:
-        # If the Statement model or urls aren’t present yet, just keep the tab empty
         statements_rows = []
 
-    context = {
+    return render(request, "customer_detail.html", {
         "customer": customer,
         "tab": tab,
         "open_balance": open_balance,
         "overdue_balance": overdue_balance,
         "count_invoices": count_invoices,
         "transactions_rows": transactions_rows,
-        "statements_rows": statements_rows,   # <-- pass to template
-    }
-    return render(request, "customer_detail.html", context)
+        "statements_rows": statements_rows,
+    })
+
 # making a customer active and inactive
 def make_inactive_customer(request, pk):
     customer = get_object_or_404(Newcustomer, pk=pk)
@@ -1302,7 +1444,7 @@ def add_customer(request):
             website=request.POST.get("website"),
             tin_number=request.POST.get("tin"),
             opening_balance=opening_balance,
-            registration_date=registration_date,  # ✅ FIXED
+            registration_date=registration_date,  # FIXED
             street_one=request.POST.get("street1"),
             street_two=request.POST.get("street2"),
             city=request.POST.get("city"),
@@ -1381,7 +1523,7 @@ def edit_customer(request, pk):
 
         customer.save()
 
-        # ✅ Update opening balance JE (to CUSTOMER subaccount)
+        # Update opening balance JE (to CUSTOMER subaccount)
         opening_equity = _get_or_create_opening_equity()
         customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
         amt = abs(new_opening_balance)
@@ -2113,24 +2255,6 @@ def import_employees(request):
 
 
 # supplier view
-def supplier(request):
-    suppliers = Newsupplier.objects.all()
-     
-    return render(request, 'Supplier.html', {'suppliers':suppliers})
-# making the row active or inactive
-def make_inactive_supplier(request, pk):
-    supplier = get_object_or_404(Newsupplier, pk=pk)
-    supplier.is_active = False
-    supplier.save()
-    return redirect('sowaf:suppliers')
-# reactivating
-def make_active_supplier(request, pk):
-    supplier = get_object_or_404(Newsupplier, pk=pk)
-    supplier.is_active = True
-    supplier.save()
-    return redirect('sowaf:suppliers')
-
-
 #add new supplier form view
 
 @transaction.atomic
@@ -2199,7 +2323,7 @@ def add_supplier(request):
         )
         new_supplier.save()
 
-        # ✅ Post supplier opening balance to SUPPLIER subaccount under A/P
+        # Post supplier opening balance to SUPPLIER subaccount under A/P
         if open_balance != 0:
             opening_equity = _get_or_create_opening_equity()
             supplier_ap_sub = _get_or_create_supplier_ap_subaccount(new_supplier)
@@ -2271,7 +2395,7 @@ def edit_supplier(request, pk):
 
         supplier.save()
 
-        # ✅ Update supplier opening balance JE (to SUPPLIER subaccount)
+        # Update supplier opening balance JE (to SUPPLIER subaccount)
         opening_equity = _get_or_create_opening_equity()
         supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
         amt = abs(new_open_balance)
@@ -2291,24 +2415,132 @@ def edit_supplier(request, pk):
     return render(request, "suppliers_entry_form.html", {"supplier": supplier})
 
 
-# supplier detail page 
+#LIVE SUPPLIER A/P OPEN BALANCE HELPER (GL-BASED)
+# =========================================================
+def _supplier_ap_balance_live(supplier_id: int, as_of_date=None) -> Decimal:
+    """
+    LIVE supplier open balance from GL (Supplier Subledger A/P).
+
+    A/P is a LIABILITY -> normal CREDIT.
+    So balance = credits - debits.
+
+    Uses supplier.ap_account (OneToOne to Account).
+    Optionally filter as-of date (<= as_of_date).
+    """
+    supplier = (
+        Newsupplier.objects
+        .select_related("ap_account")
+        .filter(pk=supplier_id)
+        .first()
+    )
+    if not supplier or not supplier.ap_account_id:
+        return Decimal("0.00")
+
+    qs = JournalLine.objects.filter(account_id=supplier.ap_account_id).select_related("entry")
+
+    if as_of_date:
+        qs = qs.filter(entry__date__lte=as_of_date)
+
+    agg = qs.aggregate(
+        deb=Coalesce(Sum("debit"), Value(Decimal("0.00")), output_field=DEC),
+        cred=Coalesce(Sum("credit"), Value(Decimal("0.00")), output_field=DEC),
+    )
+
+    deb = Decimal(str(agg["deb"] or "0.00"))
+    cred = Decimal(str(agg["cred"] or "0.00"))
+    return (cred - deb)
+
+
+# =========================================================
+# SUPPLIER LIST VIEW (LIVE BALANCES + KPIs)
+# =========================================================
+def supplier(request):
+    suppliers = list(Newsupplier.objects.all())
+
+    # Bulk live balances
+    balances = _supplier_ap_balances_bulk([s.id for s in suppliers])
+
+    # Attach balance to each supplier instance (no DB changes)
+    for s in suppliers:
+        s.open_balance = balances.get(s.id, Decimal("0.00"))
+
+    # ---------------------------------------------------------
+    # KPIs (so your banners don't break)
+    # Using JournalLine to compute simple meaningful totals:
+    # - open bills = total open A/P (sum of positive balances)
+    # - unpaid = same as open bills (you can later split overdue if you want)
+    # - paid last 30 days = payments (debits to supplier AP) in last 30 days
+    # - unbilled = keep 0 for now (PO logic not provided)
+    # ---------------------------------------------------------
+    open_total = Decimal("0.00")
+    open_count = 0
+    for s in suppliers:
+        bal = s.open_balance or Decimal("0.00")
+        if bal > 0:
+            open_total += bal
+            open_count += 1
+
+    # payments in last 30 days: debit posted to supplier A/P accounts
+    # we compute by reading JournalLine debits for suppliers in last 30 days
+    from django.utils import timezone
+    from datetime import timedelta
+    from django.db.models import Q
+
+    d30 = timezone.localdate() - timedelta(days=30)
+
+    # NOTE: this assumes your JournalLine entry has date in entry__date
+    paid_30_rows = (
+        JournalLine.objects
+        .filter(
+            supplier_id__in=[s.id for s in suppliers],
+            entry__date__gte=d30
+        )
+        .aggregate(
+            paid_amount=Coalesce(Sum("debit"), Value(Decimal("0.00")))
+        )
+    )
+    paid_30_amount = paid_30_rows["paid_amount"] or Decimal("0.00")
+
+    supp_kpis = {
+        "unbilled_amount": Decimal("0.00"),
+        "unbilled_count": 0,
+
+        "unpaid_amount": open_total,
+        "unpaid_count": open_count,
+
+        "open_bills_amount": open_total,
+        "open_bills_count": open_count,
+
+        "paid_30_amount": paid_30_amount,
+        "paid_30_count": 0,  # if you want count of payments, we can compute later
+    }
+
+    return render(request, "Supplier.html", {"suppliers": suppliers, "supp_kpis": supp_kpis})
+
+
+# =========================================================
+# SUPPLIER DETAIL VIEW (UPDATED TO USE HELPER)
+# =========================================================
 def supplier_detail(request, pk):
     supplier = get_object_or_404(Newsupplier, pk=pk)
     tab = request.GET.get("tab", "transactions")
 
-    # ---- Aggregates for banners/summary ----
     today = timezone.now().date()
 
+    # LIVE GL A/P BALANCE
+    live_bal = _supplier_ap_balance_live(supplier.id)
+
+    # ---- Aggregates for banners/summary (your existing logic unchanged) ----
     bills_qs = Bill.objects.filter(supplier=supplier).annotate(
-        total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2))
+        total_amount_dec=Cast("total_amount", DEC)
     )
 
     expenses_qs = Expense.objects.filter(payee_supplier=supplier).annotate(
-        total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2))
+        total_amount_dec=Cast("total_amount", DEC)
     )
 
     cheques_qs = Cheque.objects.filter(payee_supplier=supplier).annotate(
-        total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2))
+        total_amount_dec=Cast("total_amount", DEC)
     )
 
     bills_total = bills_qs.aggregate(
@@ -2320,10 +2552,9 @@ def supplier_detail(request, pk):
         + (cheques_qs.aggregate(t=Coalesce(Sum("total_amount_dec"), Value(Decimal("0.00"))))["t"] or Decimal("0.00"))
     )
 
-    # open balance ≈ total bills - payments/cheques (floor at 0)
-    open_balance = bills_total - paid_total
-    if open_balance < 0:
-        open_balance = Decimal("0.00")
+    old_open_balance = bills_total - paid_total
+    if old_open_balance < 0:
+        old_open_balance = Decimal("0.00")
 
     overdue_bills_total = bills_qs.filter(due_date__lt=today).aggregate(
         t=Coalesce(Sum("total_amount_dec"), Value(Decimal("0.00")))
@@ -2345,7 +2576,7 @@ def supplier_detail(request, pk):
             "amount": b.total_amount_dec or Decimal("0.00"),
             "status": getattr(b, "status", "Open") or "Open",
             "edit_url":  reverse("expenses:bill-edit", args=[b.id]),
-            "view_url":  reverse("expenses:bill-edit", args=[b.id]),   # change if you have a detail route
+            "view_url":  reverse("expenses:bill-edit", args=[b.id]),
             "print_url": "#",
         })
 
@@ -2379,18 +2610,36 @@ def supplier_detail(request, pk):
             "print_url": "#",
         })
 
-    # sort combined rows desc by date, then by type/id
     rows.sort(key=lambda r: (r["date"] or today, r["type"], r["id"]), reverse=True)
 
     context = {
         "supplier": supplier,
         "tab": tab,
-        "open_balance": open_balance,
+
+        # show live GL-based open balance
+        "open_balance": live_bal,
+
+        # keep old logic for comparison/debug
+        "old_open_balance": old_open_balance,
+
         "overdue_balance": overdue_bills_total,
         "count_bills": count_bills,
         "transactions_rows": rows,
     }
     return render(request, "supplier_detail.html", context)
+
+# making the row active or inactive
+def make_inactive_supplier(request, pk):
+    supplier = get_object_or_404(Newsupplier, pk=pk)
+    supplier.is_active = False
+    supplier.save()
+    return redirect('sowaf:suppliers')
+# reactivating
+def make_active_supplier(request, pk):
+    supplier = get_object_or_404(Newsupplier, pk=pk)
+    supplier.is_active = True
+    supplier.save()
+    return redirect('sowaf:suppliers')
 
 # importing suppliers
 def download_suppliers_template(request):
@@ -2534,7 +2783,4 @@ def taxes(request):
 def miscellaneous(request):
 
     return render(request, 'Miscellaneous.html', {})
-# reports view 
-def reports(request):
 
-    return render(request, 'Reports.html', {})

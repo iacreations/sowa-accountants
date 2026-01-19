@@ -140,7 +140,7 @@
         <td>{{ supplier.company_name }}</td>
         <td>{{ supplier.contact }}</td>
         <td>{{ supplier.email }}</td>
-        <td>{{ supplier.open_balance }}</td>
+        <td>{{ supplier.open_balance|default:0|floatformat:2|intcomma }}</td>
 
         {% comment %} <td>
           <div class="dd" onclick="event.stopPropagation()">
@@ -169,7 +169,7 @@
           </div>
         </td> {% endcomment %}
 
-<td>
+        <td>
           <div class="dd">
             <button type="button" class="dd-toggle">
               <a href="{% url 'sowaf:edit-supplier' supplier.id %}" style="color:#39B54B;">Edit</a>

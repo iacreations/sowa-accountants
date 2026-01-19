@@ -1,0 +1,302 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+
+<style>
+/* Laptops & small desktops */
+@media only screen and (min-width: 1024px) and (max-width: 1600px) {
+  #main{
+    margin-top: 13%;
+  }
+  html, body {
+    overflow: hidden;  /* no scrollbars at all */
+  }
+}
+
+/* ================================
+   STANDARD TAB: Card grid (NEW)
+   Scoped so it won't affect other tabs/pages
+================================== */
+.standard-reports-wrap{
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.standard-reports-grid{
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  max-width: 1200px;
+  margin: 18px auto;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+/* card container similar to Home page create-actions */
+.standard-report-box{
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 6px 22px rgba(16, 142, 61, 0.08);
+  transition: transform .22s ease, box-shadow .22s ease;
+  border-left: 6px solid #39B54B;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  min-height: 220px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.standard-report-box:hover{
+  transform: translateY(-6px);
+  box-shadow: 0 14px 30px rgba(16,142,61,0.12);
+}
+
+.standard-report-head{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.standard-report-icon{
+  font-size: 42px;
+  color: #39B54B;
+  flex: 0 0 auto;
+}
+
+.standard-report-title{
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #0e0e0e;
+}
+
+/* two-column links inside each card */
+.standard-report-links{
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px 18px;
+  flex: 1 1 auto;
+}
+
+.standard-report-links li{
+  margin: 0;
+  padding: 0;
+}
+
+.standard-report-links a{
+  color: #39B54B;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+  display: inline-block;
+}
+.standard-report-links a:hover{
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 1200px){
+  .standard-reports-grid{
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 820px){
+  .standard-reports-grid{
+    grid-template-columns: 1fr;
+  }
+  .standard-report-links{
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
+{% include 'includes/sidebar.html' %}
+
+<div class="action">
+  <h1>REPORTS</h1>
+  <div class="search_bar">
+    <input type="text" placeholder="Search Reports" />
+  </div>
+  <button class="button">
+    <span class="button_text">CUSTOMIZE</span>
+    <span class="button_icon">
+      <i class='bx bxs-customize' ></i>
+    </span>
+  </button>
+</div>
+
+<div class="main_body" id="main">
+
+  <div class="tabs">
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab1" checked>
+    <label for="tab1" class="tabs_label">STANDARD</label>
+
+    <div class="tab-content">
+
+      <div class="standard-reports-wrap">
+        <div class="standard-reports-grid">
+
+          <!-- Business Overview -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Business Overview Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-line-chart'></i></div>
+              <h3 class="standard-report-title">Business Overview</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">Profit and Loss</a></li>
+              <li><a href="#">Balance Sheet</a></li>
+              <li><a href="#">Cash Flow</a></li>
+              <li><a href="#">Trial Balance</a></li>
+              <li><a href="#">General Ledger</a></li>
+              <li><a href="#">Account Balances</a></li>
+            </ul>
+          </div>
+
+          <!-- Accounts Receivable -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Accounts Receivable Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-money'></i></div>
+              <h3 class="standard-report-title">Accounts Receivable</h3>
+            </div><ul class="standard-report-links">
+  <li><a href="{% url 'sales:aging-report' %}">A/R Ageing Summary</a></li>
+  <li><a href="{% url 'sales:aging-report-detail' %}">A/R Ageing Detail</a></li>
+
+  <li><a href="{% url 'sales:open-invoices-report' %}">Open Invoices</a></li>
+  
+  <li><a href="{% url 'sales:customer-balances-report' %}">Customer Balances</a></li>
+  <li><a href="{% url 'sales:invoice-list-report' %}">Invoice List</a></li>
+  <li><a href="{% url 'sales:collections-report' %}">Collections Report</a></li>
+</ul>
+          </div>
+
+          <!-- Sales and Customers -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Sales and Customers Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-cart'></i></div>
+              <h3 class="standard-report-title">Sales and Customers</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">Sales by Customer</a></li>
+              <li><a href="#">Sales by Product/Service</a></li>
+              <li><a href="#">Sales Summary</a></li>
+              <li><a href="#">Invoice &amp; Payments</a></li>
+              <li><a href="#">Customer Statements</a></li>
+              <li><a href="#">Sales Receipt List</a></li>
+            </ul>
+          </div>
+
+          <!-- Accounts Payable -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Accounts Payable Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-receipt'></i></div>
+              <h3 class="standard-report-title">Accounts Payable</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">A/P Aging Summary</a></li>
+              <li><a href="#">A/P Aging Detail</a></li>
+              <li><a href="#">Unpaid Bills</a></li>
+              <li><a href="#">Vendor Balances</a></li>
+              <li><a href="#">Bills List</a></li>
+              <li><a href="#">Payments to Vendors</a></li>
+            </ul>
+          </div>
+
+          <!-- Expenses and Suppliers -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Expenses and Suppliers Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-store-alt'></i></div>
+              <h3 class="standard-report-title">Expenses and Suppliers</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">Expenses by Supplier</a></li>
+              <li><a href="#">Expenses by Category</a></li>
+              <li><a href="#">Expense Summary</a></li>
+              <li><a href="#">Purchases by Item</a></li>
+              <li><a href="#">Supplier Credit Report</a></li>
+              <li><a href="#">Cheque List</a></li>
+            </ul>
+          </div>
+
+          <!-- Employees -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Employees Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-group'></i></div>
+              <h3 class="standard-report-title">Employees</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">Employee List</a></li>
+              <li><a href="#">Employee Expenses</a></li>
+              <li><a href="#">Employee Activity</a></li>
+              <li><a href="#">Employee Summary</a></li>
+            </ul>
+          </div>
+
+          <!-- For my account -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="For my account Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-user-circle'></i></div>
+              <h3 class="standard-report-title">For my account</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">Audit Log</a></li>
+              <li><a href="#">User Activity</a></li>
+              <li><a href="#">Saved Reports</a></li>
+              <li><a href="#">System Summary</a></li>
+            </ul>
+          </div>
+
+          <!-- Payroll -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Payroll Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-id-card'></i></div>
+              <h3 class="standard-report-title">Pay roll</h3>
+            </div>
+            <ul class="standard-report-links">
+              <li><a href="#">Payroll Summary</a></li>
+              <li><a href="#">Payroll Details</a></li>
+              <li><a href="#">Deductions</a></li>
+              <li><a href="#">Payroll Taxes</a></li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+
+    <!-- CUSTOM REPORTS (unchanged) -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab2">
+    <label for="tab2" class="tabs_label">CUSTOM REPORTS</label>
+    <div class="tab-content">
+      <div id="Overview">
+        <div id="Account-balance"></div>
+        <div id="Sales-overview"></div>
+        <div id="Expenses-overview"></div>
+        <div id="Invoices"></div>
+        <div id="Outstanding-bills"></div>
+        <div id="Profit-loss"></div>
+      </div>
+    </div>
+
+    <!-- MANAGEMENT REPORTS (unchanged) -->
+    <input type="radio" class="tabs_radio" name="tabs-example" id="tab3">
+    <label for="tab3" class="tabs_label">MANAGEMENT REPORTS</label>
+    <div class="tab-content">
+      <div id="Overview">
+        <div id="Account-balance"></div>
+        <div id="Sales-overview"></div>
+        <div id="Expenses-overview"></div>
+        <div id="Invoices"></div>
+        <div id="Outstanding-bills"></div>
+        <div id="Profit-loss"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

@@ -1,8 +1,8 @@
 {% load static %}
 {% load humanize %}
 
-  {% include 'includes/navbar.html' %}
-  {% include 'includes/sidebar.html' %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -107,7 +107,7 @@
           <div class="form-group">
             <label>Category</label>
             <div class="d-flex">
-              <select name="category" id="categorySelect" class="form-control" required>
+              <select name="category" id="categorySelect" class="form-control">
                 <option value="">-- Select Category --</option>
                 {% for category in categories %}
                   <option value="{{ category.id }}" {% if edit_mode and product.category_id == category.id %}selected{% endif %}>{{ category.category_type }}</option>
@@ -121,7 +121,7 @@
           <div class="form-group">
             <label>Class</label>
             <div class="d-flex">
-              <select name="class_field" id="classSelect" class="form-control" required>
+              <select name="class_field" id="classSelect" class="form-control">
                 <option value="">-- Select Class --</option>
                 {% for class in classes %}
                   <option value="{{ class.id }}" {% if edit_mode and product.class_field_id == class.id %}selected{% endif %}>{{ class.class_name }}</option>
@@ -130,7 +130,7 @@
               <button type="button" class="btn btn-sm button ms-2" onclick="showAddClass()">+ Add</button>
             </div>
           </div>
-<!-- Add Category Box -->
+
 <div id="addCategoryBox" style="display:none; margin-top: 15px;">
   <div class="form-group">
     <label>New Category Name</label>
@@ -142,7 +142,6 @@
   </div>
 </div>
 
-<!-- Add Class Box -->
 <div id="addClassBox" style="display:none; margin-top: 15px;">
   <div class="form-group">
     <label>New Class Name</label>
@@ -172,19 +171,28 @@
           <div id="sellFields" style="display:none;">
             <div class="form-grid">
               <div></div><div></div>
+
               <div class="form-group">
                 <label>Income Account</label>
-                <select name="income_account">
-                  <option value="">-- Select --</option>
-                  {% for acc in income_accounts %}
-                    <option value="{{ acc.id }}" {% if edit_mode and product.income_account_id == acc.id %}selected{% endif %}>{{ acc.account_name }}</option>
-                  {% endfor %}
-                </select>
+                <div class="d-flex">
+                  <select name="income_account" id="incomeAccountSelect" class="form-control">
+                    <option value="">-- Select --</option>
+                    {% for acc in income_accounts %}
+                      <option value="{{ acc.id }}" {% if edit_mode and product.income_account_id == acc.id %}selected{% endif %}>{{ acc.account_name }}</option>
+                    {% endfor %}
+                  </select>
+
+                  <a href="{% url 'accounts:add-account' %}" target="_blank"
+                     class="btn btn-sm button ms-2"
+                     id="addIncomeAccountLink">+ Add</a>
+                </div>
               </div>
+
               <div class="form-group">
                 <label>Description</label>
                 <textarea name="sales_description" rows="2">{% if edit_mode %}{{ product.sales_description }}{% endif %}</textarea>
               </div>
+
               <div class="form-group">
                 <label>Sales Price</label>
                 <input name="sales_price" type="number" step="0.01" value="{% if edit_mode %}{{ product.sales_price }}{% endif %}">
@@ -206,7 +214,7 @@
 
               <div class="form-group">
                 <label>Supplier</label>
-                <select class="form-control" name="supplier" required>
+                <select class="form-control" name="supplier">
                   <option value="">-- Select Supplier --</option>
                   {% for supplier in suppliers %}
                     <option value="{{ supplier.id }}" {% if edit_mode and product.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.company_name }}</option>
@@ -237,12 +245,18 @@
 
               <div class="form-group">
                 <label>Expense Account</label>
-                <select name="expense_account">
-                  <option value="">-- Select --</option>
-                  {% for account in expense_accounts %}
-                    <option value="{{ account.id }}" {% if edit_mode and product.expense_account_id == account.id %}selected{% endif %}>{{ account.account_name }}</option>
-                  {% endfor %}
-                </select>
+                <div class="d-flex">
+                  <select name="expense_account" id="expenseAccountSelect" class="form-control">
+                    <option value="">-- Select --</option>
+                    {% for account in expense_accounts %}
+                      <option value="{{ account.id }}" {% if edit_mode and product.expense_account_id == account.id %}selected{% endif %}>{{ account.account_name }}</option>
+                    {% endfor %}
+                  </select>
+
+                  <a href="{% url 'accounts:add-account' %}" target="_blank"
+                     class="btn btn-sm button ms-2"
+                     id="addExpenseAccountLink">+ Add</a>
+                </div>
               </div>
             </div>
           </div>
@@ -308,16 +322,14 @@
           </div>
         </div>
 
-        <!-- Footer -->
       <div class="footer">
         <a href="{% url 'expenses:expenses' %}" class="btn button" style="text-decoration: none;">Cancel</a>
         <div class="dropdown">
           <button type="button" class="btn btn-green">Save ▼</button>
           <div class="dropdown-menu">
             <button type="submit" name="save_action" value="save">Save</button>
-              <button type="submit" name="save_action" value="save&new">Save & New</button>
-              <button type="submit" name="save_action" value="save&close">Save & Close</button>
-        
+            <button type="submit" name="save_action" value="save&new">Save & New</button>
+            <button type="submit" name="save_action" value="save&close">Save & Close</button>
           </div>
         </div>
       </div>
@@ -332,13 +344,11 @@
       content.classList.toggle("active");
     }
 
-    // Show bundle section when type = Bundle
     function handleTypeChange() {
       const type = document.getElementById("typeSelect").value;
       document.getElementById("bundleExtras").style.display = (type === "Bundle") ? "block" : "none";
     }
 
-    // Add a bundle row with Product dropdown + qty
     function addBundleRow() {
       const table = document.querySelector("#bundle-table tbody");
       const row = document.createElement("tr");
@@ -361,13 +371,12 @@
       table.appendChild(row);
     }
 
-    // Delete row (leave at least one)
     function deleteRow(button) {
       const table = document.querySelector("#bundle-table tbody");
       if (table.rows.length > 1) {
         button.closest("tr").remove();
       } else {
-        alert("At least one bundle item is required!");
+        alert("At least one bundle item is!");
       }
     }
 
@@ -381,11 +390,66 @@
       document.getElementById("purchaseFields").style.display = purchaseChecked ? "block" : "none";
     }
 
+    // ✅ Refresh Income/Expense dropdowns without reloading the page
+    async function refreshAccountDropdowns() {
+      const incomeSelect = document.getElementById("incomeAccountSelect");
+      const expenseSelect = document.getElementById("expenseAccountSelect");
+      if (!incomeSelect || !expenseSelect) return;
+
+      const prevIncome = incomeSelect.value;
+      const prevExpense = expenseSelect.value;
+
+      try {
+        const res = await fetch("{% url 'accounts:accounts-dropdown-data' %}", {
+          headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+
+        // rebuild Income options
+        incomeSelect.innerHTML = `<option value="">-- Select --</option>`;
+        (data.income_accounts || []).forEach(acc => {
+          const opt = document.createElement("option");
+          opt.value = acc.id;
+          opt.textContent = acc.account_name;
+          incomeSelect.appendChild(opt);
+        });
+
+        // rebuild Expense options
+        expenseSelect.innerHTML = `<option value="">-- Select --</option>`;
+        (data.expense_accounts || []).forEach(acc => {
+          const opt = document.createElement("option");
+          opt.value = acc.id;
+          opt.textContent = acc.account_name;
+          expenseSelect.appendChild(opt);
+        });
+
+        // restore previous selection if still exists
+        if (prevIncome) incomeSelect.value = prevIncome;
+        if (prevExpense) expenseSelect.value = prevExpense;
+
+      } catch (err) {
+        console.log("Could not refresh accounts dropdowns:", err);
+      }
+    }
+
+    // ✅ When user comes back from the COA tab, refresh dropdowns automatically
+    let lastFocusTime = Date.now();
+    window.addEventListener("focus", function() {
+      const now = Date.now();
+      if (now - lastFocusTime > 800) {
+        refreshAccountDropdowns();
+      }
+      lastFocusTime = now;
+    });
+
     // initial
     window.onload = function() {
       toggleSellFields();
       togglePurchaseFields();
-      handleTypeChange(); // shows bundle section on load if editing a Bundle
+      handleTypeChange();
+      refreshAccountDropdowns(); // optional initial refresh
     };
 
     function showAddCategory() {

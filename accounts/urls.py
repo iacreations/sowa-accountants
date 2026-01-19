@@ -8,6 +8,7 @@ urlpatterns = [
     path('accounts/', views.accounts, name='accounts'),
     path('accounts/add/account', views.add_account, name='add-account'),
     path("accounts/<int:pk>/edit/", views.edit_account, name="edit-account"),
+    path('accounts/dropdown-data/', views.accounts_dropdown_data, name='accounts-dropdown-data'),
     path("accounts/<int:pk>/deactivate/", views.deactivate_account, name="deactivate-account"),
     path("accounts/<int:pk>/activate/", views.activate_account, name="activate-account"),
     # general ledger
@@ -17,6 +18,9 @@ urlpatterns = [
     path("journal-entries/<int:pk>/", views.journal_entry_detail, name="journal-entry-detail"),
     path("general-ledger/print/", views.general_ledger_print, name="general-ledger-print"),
     # reports
+        # -------------
+    path('reports/', views.reports, name='reports'),
+
     path(
         "reports/trial-balance/",views.report_trial_balance,      name="report-trial-balance",
     ),

@@ -1,0 +1,94 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .rep-wrap{ width: 80%; margin-top: 7%; margin-left: 20%; padding:5px;}
+  .rep-title h2{ margin:0; color:#39B54B; font-weight:800; }
+  .rep-sub{ color:#6b7280; font-size:13px; }
+
+  .rep-card{
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:14px 16px;
+    margin-top: 12px;
+  }
+
+  table{ width:100%; border-collapse:collapse; }
+  th, td{ padding:10px 8px; border-bottom:1px solid #f1f5f9; text-align:right; }
+  th:first-child, td:first-child{ text-align:left; }
+  th{ font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:#111827; }
+  tfoot th{ font-weight:900; color:#0b1324; }
+
+  .cust-link{
+    color:#39B54B;
+    text-decoration:none;
+    font-weight:800;
+  }
+  .cust-link:hover{ text-decoration:underline; }
+
+  .top-actions{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-start; margin-top:6px; }
+  .btn-link{
+    display:inline-block; padding:6px 10px; border-radius:10px; border:1px solid #e5e7eb;
+    background:#fff; color:#39B54B; text-decoration:none; font-weight:700; font-size:13px;
+  }
+  .btn-link:hover{ text-decoration:underline; }
+</style>
+
+<div class="rep-wrap">
+  <div>
+    <h2>Customer Balances</h2>
+    <div class="rep-sub">As of {{ today }}</div>
+
+    <!-- ✅ EXPORTS (NEW) -->
+    <div class="top-actions">
+      <a class="btn-link" href="?export=excel">Export Excel</a>
+      <a class="btn-link" href="?export=pdf">Export PDF</a>
+    </div>
+  </div>
+
+  <div class="rep-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Current</th>
+          <th>Overdue</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            <a class="cust-link" href="{% url 'sales:aging-report-customer' r.customer.id %}">
+              {{ r.customer.customer_name }}
+            </a>
+          </td>
+          <td>{{ r.current|floatformat:0|intcomma }}</td>
+          <td>{{ r.overdue|floatformat:0|intcomma }}</td>
+          <td><b>{{ r.total|floatformat:0|intcomma }}</b></td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="4" style="text-align:center; color:#6b7280;">No outstanding balances.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+
+      <tfoot>
+        <tr>
+          <th>Grand Total</th>
+          <th>{{ grand.current|floatformat:0|intcomma }}</th>
+          <th>{{ grand.overdue|floatformat:0|intcomma }}</th>
+          <th>{{ grand.total|floatformat:0|intcomma }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

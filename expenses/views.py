@@ -406,6 +406,7 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
     """
     Creates/gets a SUPPLIER subaccount under A/P control.
     This is your supplier subledger.
+    Also links it to supplier.ap_account (IMPORTANT for live balance).
     """
     ap_control = _get_or_create_ap_control_account()
 
@@ -417,18 +418,23 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
         account_name__iexact=sub_name,
         is_active=True,
     ).first()
-    if acc:
-        return acc
 
-    acc = Account.objects.create(
-        account_name=sub_name,
-        account_type=ap_control.account_type,   # still current liability
-        detail_type="Supplier Subledger (A/P)",
-        is_active=True,
-        is_subaccount=True,
-        parent=ap_control,
-        opening_balance=Decimal("0.00"),
-    )
+    if not acc:
+        acc = Account.objects.create(
+            account_name=sub_name,
+            account_type=ap_control.account_type,   # current liability
+            detail_type="Supplier Subledger (A/P)",
+            is_active=True,
+            is_subaccount=True,
+            parent=ap_control,
+            opening_balance=Decimal("0.00"),
+        )
+
+    # ✅ LINK THIS ACCOUNT TO THE SUPPLIER (missing before)
+    if getattr(supplier, "ap_account_id", None) != acc.id:
+        supplier.ap_account = acc
+        supplier.save(update_fields=["ap_account"])
+
     return acc
 
 def _safe_name(s: str) -> str:
@@ -554,7 +560,6 @@ def _post_bill_to_ledger(bill: "Bill"):
 
 # posting cheque to ledger 
 # ============================
-
 def _post_cheque_to_ledger(cheq: "Cheque"):
     """
     CHEQUE posting (supports):
@@ -661,6 +666,9 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
     # Replace JE lines (edit-safe)
     JournalLine.objects.filter(entry=entry).delete()
 
+    # Supplier reference (used on all lines for reporting/filtering)
+    supplier_ref = cheq.payee_supplier if cheq.payee_supplier_id else None
+
     # -------- DR: expenses (direct) --------
     for acc, amt in expense_by_account.items():
         if amt > 0:
@@ -669,6 +677,7 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
                 account=acc,
                 debit=amt,
                 credit=Decimal("0.00"),
+                supplier=supplier_ref,  # ✅ tag supplier so supplier reports/lists can see it
             )
 
     # -------- DR: Supplier A/P (bills + open balance) --------
@@ -678,6 +687,7 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
             account=supplier_acc,
             debit=supplier_ap_debit,
             credit=Decimal("0.00"),
+            supplier=supplier_ref,  # ✅ CRITICAL
         )
 
     # -------- CR: Bank (total cheque) --------
@@ -686,9 +696,10 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
         account=bank_acc,
         debit=Decimal("0.00"),
         credit=total_bank_credit,
+        supplier=supplier_ref,  
     )
 
-
+  
 # posting supplier credit to ledger
 
 # def _post_supplier_credit_to_ledger(credit: SupplierCredit):
@@ -2186,6 +2197,7 @@ def add_cheque(request):
         "open_balance_prefill": None,   # for edit only (kept)
     }
     return render(request, "cheque_form.html", context)
+
 
 
 # ----------------------------

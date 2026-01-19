@@ -10,7 +10,7 @@ from decimal import Decimal
 from django.urls import reverse
 from django.db import transaction
 from django.templatetags.static import static
-from django.db.models import DecimalField, Q
+from django.db.models import DecimalField, Q, ExpressionWrapper
 import openpyxl
 import csv
 import io
@@ -35,7 +35,15 @@ from accounts.utils import deposit_accounts_qs
 from collections import defaultdict
 from accounts.middleware import get_current_user, get_current_ip
 from datetime import datetime, date
+
 from decimal import Decimal, InvalidOperation
+from accounts.utils import (
+    VAT_RATE,
+    _get_inventory_asset_account,
+    _get_cogs_account,
+    _get_vat_payable_account,
+)
+from inventory.models import InventoryMovement, Product
 
 def _as_date(d):
     if isinstance(d, datetime):
@@ -617,11 +625,6 @@ def _post_payment_to_ledger(payment: Payment):
             customer=payment.customer,
             supplier=None,
         )
-from decimal import Decimal
-from collections import defaultdict
-from django.db.models import Sum, Value
-from django.db.models.functions import Coalesce
-from django.utils import timezone
 
 def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
     """
@@ -1514,7 +1517,6 @@ def invoice_print(request, pk: int):
 # ------------------------------------------------------------
 # RECEIVE PAYMENT (CREATE)
 # ------------------------------------------------------------
-
 @transaction.atomic
 def receive_payment_view(request):
     customers = Newcustomer.objects.order_by("customer_name")
@@ -1579,17 +1581,36 @@ def receive_payment_view(request):
         if open_balance_manual < 0:
             open_balance_manual = Decimal("0.00")
 
-        # validate invoice allocations not exceeding their balances
+        # =====================================================================
+        # ✅ FIX: validate invoice allocations not exceeding their balances
+        #    (force Decimal arithmetic in annotations)
+        # =====================================================================
         if allocations:
+            dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+            invoice_ids = [i for i, _ in allocations]
+
             balances = (
-                Newinvoice.objects.filter(id__in=[i for i, _ in allocations])
+                Newinvoice.objects
+                .filter(id__in=invoice_ids)
                 .annotate(
-                    total_due_dec=F("total_due"),
-                    total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+                    # If total_due is FloatField in DB, cast it to Decimal for safe math
+                    total_due_dec=Cast(F("total_due"), output_field=dec_out),
+                    total_paid=Coalesce(
+                        Sum("payments_applied__amount_paid", output_field=dec_out),
+                        Value(Decimal("0.00"), output_field=dec_out),
+                        output_field=dec_out,
+                    ),
                 )
-                .annotate(outstanding_balance=F("total_due_dec") - F("total_paid"))
+                .annotate(
+                    outstanding_balance=ExpressionWrapper(
+                        F("total_due_dec") - F("total_paid"),
+                        output_field=dec_out,
+                    )
+                )
                 .values_list("id", "outstanding_balance")
             )
+
             balance_map = {iid: Decimal(str(bal or "0")) for iid, bal in balances}
 
             for invoice_id, amount in allocations:
@@ -2075,6 +2096,9 @@ def payment_print(request, pk: int):
 # end
 
 # working on the receipt
+VAT_RATE = Decimal("0.18")
+
+
 @transaction.atomic
 def sales_receipt_new(request):
     customers = Newcustomer.objects.order_by("customer_name")
@@ -2082,7 +2106,6 @@ def sales_receipt_new(request):
     products  = Product.objects.all()
 
     if request.method == "POST":
-        # --- header fields ---
         customer_id    = (request.POST.get("customer") or "").strip()
         receipt_date   = parse_date(request.POST.get("receipt_date") or "")
         payment_method = (request.POST.get("payment_method") or "cash").strip()
@@ -2100,23 +2123,26 @@ def sales_receipt_new(request):
 
         customer   = get_object_or_404(Newcustomer, pk=int(customer_id))
         deposit_to = get_object_or_404(accounts, pk=int(deposit_to_id))
-        subtotal        = _coerce_decimal(request.POST.get("subtotal"))          # ok
-        discount_amount = _coerce_decimal(request.POST.get("discount_amount"))   
-        shipping_fee    = _coerce_decimal(request.POST.get("shipping_fee"))      
-        total_amount    = _coerce_decimal(request.POST.get("total_amount"))      
-        amount_paid     = _coerce_decimal(request.POST.get("amount_paid"))       # ok
-        balance         = total_amount - amount_paid
+
+        subtotal        = _coerce_decimal(request.POST.get("subtotal"))
+        discount_amount = _coerce_decimal(request.POST.get("discount_amount"))
+        shipping_fee    = _coerce_decimal(request.POST.get("shipping_fee"))
+        total_amount    = _coerce_decimal(request.POST.get("total_amount"))
+        amount_paid     = _coerce_decimal(request.POST.get("amount_paid"))
+
+        # ✅ balance: allow overpayment (balance becomes 0; excess handled in posting)
+        balance = total_amount - amount_paid
         if balance < 0:
             balance = Decimal("0.00")
+
         # ensure 8-digit numeric ref
         if not (len(reference_no) == 8 and reference_no.isdigit()):
             reference_no = generate_unique_ref_no()
-        # ultra-rare collision guard across payments/receipts if you like:
+
         if Payment.objects.filter(reference_no=reference_no).exists() or \
            SalesReceipt.objects.filter(reference_no=reference_no).exists():
             reference_no = generate_unique_ref_no()
 
-        # --- create header ---
         receipt = SalesReceipt.objects.create(
             customer=customer,
             receipt_date=receipt_date,
@@ -2127,22 +2153,24 @@ def sales_receipt_new(request):
             memo=memo,
             subtotal=subtotal,
             total_discount=discount_amount,
-            total_vat=Decimal("0.00"),
+            total_vat=Decimal("0.00"),   # set after lines
             shipping_fee=shipping_fee,
             total_amount=total_amount,
-            amount_paid=amount_paid,   # <-- save it
+            amount_paid=amount_paid,
             balance=balance,
         )
         apply_audit_fields(receipt)
         receipt.save()
-        # --- lines (use your posted names) ---
+
         products_ids = request.POST.getlist("product[]")
         descriptions = request.POST.getlist("description[]")
         qtys         = request.POST.getlist("qty[]")
         unit_prices  = request.POST.getlist("unit_price[]")
-        line_totals  = request.POST.getlist("line_total[]")  # NOTE: from your form
+        line_totals  = request.POST.getlist("line_total[]")
 
         bulk = []
+        total_vat = Decimal("0.00")
+
         row_count = max(len(descriptions), len(qtys), len(unit_prices), len(line_totals), len(products_ids))
         for i in range(row_count):
             prod_id = products_ids[i] if i < len(products_ids) else None
@@ -2153,9 +2181,15 @@ def sales_receipt_new(request):
             rate = _coerce_decimal(unit_prices[i] if i < len(unit_prices) else "0")
             amt  = _coerce_decimal(line_totals[i] if i < len(line_totals) else "0")
 
-            # skip completely empty lines
             if not (product or desc or (qty > 0) or (rate > 0) or (amt > 0)):
                 continue
+
+            # ✅ VAT per line (18% if taxable)
+            line_vat = Decimal("0.00")
+            if product and getattr(product, "taxable", False) and amt > 0:
+                line_vat = (amt * VAT_RATE).quantize(Decimal("0.01"))
+
+            total_vat += line_vat
 
             bulk.append(SalesReceiptLine(
                 receipt=receipt,
@@ -2166,15 +2200,19 @@ def sales_receipt_new(request):
                 amount=amt,
                 discount_pct=Decimal("0.00"),
                 discount_amt=Decimal("0.00"),
-                vat_amt=Decimal("0.00"),
+                vat_amt=line_vat,
             ))
+
         if bulk:
             SalesReceiptLine.objects.bulk_create(bulk)
 
-        # === Post this sales receipt into the General Ledger ===
+        # ✅ sync header VAT
+        receipt.total_vat = total_vat
+        receipt.save(update_fields=["total_vat"])
+
+        # ✅ Post to GL (includes overpayment + inventory)
         _post_sales_receipt_to_ledger(receipt)
 
-        # --- redirects ---
         action = request.POST.get("save_action")
         if action == "save":
             return redirect("sales:sales-receipt-list")
@@ -2184,7 +2222,6 @@ def sales_receipt_new(request):
             return redirect("sales:sales-receipt-list")
         return redirect("sales:receipt-detail", pk=receipt.pk)
 
-    # GET: prefill a reference number like your payment page
     reference_no = generate_unique_ref_no()
     return render(request, "receipt_form.html", {
         "customers": customers,
@@ -2192,7 +2229,9 @@ def sales_receipt_new(request):
         "products": products,
         "reference_no": reference_no,
     })
-# editing the sales receipt
+# Edit view
+
+VAT_RATE = Decimal("0.18")
 
 @transaction.atomic
 def sales_receipt_edit(request, pk: int):
@@ -2217,6 +2256,7 @@ def sales_receipt_edit(request, pk: int):
             errors.append("date")
         if not (deposit_to_id.isdigit()):
             errors.append("deposit account")
+
         if errors:
             return render(request, "receipt_form.html", {
                 "customers": customers, "accounts": accounts, "products": products,
@@ -2233,16 +2273,18 @@ def sales_receipt_edit(request, pk: int):
         receipt.tags           = tags
         receipt.memo           = memo
 
-        # totals (map from form)
         receipt.amount_paid    = _coerce_decimal(request.POST.get("amount_paid"))
         receipt.subtotal       = _coerce_decimal(request.POST.get("subtotal"))
         receipt.total_discount = _coerce_decimal(request.POST.get("discount_amount"))
-        receipt.total_vat      = Decimal("0.00")
         receipt.shipping_fee   = _coerce_decimal(request.POST.get("shipping_fee"))
         receipt.total_amount   = _coerce_decimal(request.POST.get("total_amount"))
-        receipt.balance        = receipt.total_amount - receipt.amount_paid
+
+        # allow overpayment; balance cannot be negative
+        receipt.balance = receipt.total_amount - receipt.amount_paid
         if receipt.balance < 0:
             receipt.balance = Decimal("0.00")
+
+        receipt.total_vat = Decimal("0.00")  # set after lines
         apply_audit_fields(receipt)
         receipt.save()
 
@@ -2256,6 +2298,8 @@ def sales_receipt_edit(request, pk: int):
         line_totals  = request.POST.getlist("line_total[]")
 
         bulk = []
+        total_vat = Decimal("0.00")
+
         n = max(len(descriptions), len(products_ids), len(qtys), len(unit_prices), len(line_totals))
         for i in range(n):
             prod_id = products_ids[i] if i < len(products_ids) else None
@@ -2269,6 +2313,12 @@ def sales_receipt_edit(request, pk: int):
             if not product and not desc and qty == 0 and price == 0 and amt == 0:
                 continue
 
+            line_vat = Decimal("0.00")
+            if product and getattr(product, "taxable", False) and amt > 0:
+                line_vat = (amt * VAT_RATE).quantize(Decimal("0.01"))
+
+            total_vat += line_vat
+
             bulk.append(SalesReceiptLine(
                 receipt=receipt,
                 product=product,
@@ -2278,17 +2328,20 @@ def sales_receipt_edit(request, pk: int):
                 amount=amt,
                 discount_pct=Decimal("0.00"),
                 discount_amt=Decimal("0.00"),
-                vat_amt=Decimal("0.00"),
+                vat_amt=line_vat,
             ))
+
         if bulk:
             SalesReceiptLine.objects.bulk_create(bulk)
 
-        # === Re-post this receipt to the ledger ===
+        receipt.total_vat = total_vat
+        receipt.save(update_fields=["total_vat"])
+
+        # repost GL (and reflect stock movement again)
         _post_sales_receipt_to_ledger(receipt)
 
         return redirect("sales:receipt-detail", pk=receipt.pk)
 
-    # GET
     return render(request, "receipt_form.html", {
         "customers": customers,
         "accounts": accounts,
@@ -2298,6 +2351,7 @@ def sales_receipt_edit(request, pk: int):
         "items": receipt.lines.all(),
         "reference_no": receipt.reference_no or generate_unique_ref_no(),
     })
+
 
 # sales receipt detail page
 def sales_receipt_detail(request, pk: int):
@@ -2515,6 +2569,61 @@ def _filter_by_type(rows, statement_type, customer_id, start_date):
 
     return rows
 
+
+def _to_date(d):
+    """Safely convert string/date/datetime into date."""
+    if d is None:
+        return None
+    if hasattr(d, "date") and not isinstance(d, str):
+        # datetime -> date OR date stays date
+        try:
+            return d.date()
+        except Exception:
+            return d
+    if isinstance(d, str):
+        try:
+            return timezone.datetime.fromisoformat(d).date()
+        except Exception:
+            return None
+    return d
+
+
+def _customer_ar_balance_as_of(customer_id: int, as_of_date):
+    """
+    LIVE A/R balance (Customer Subledger A/R) up to and including as_of_date.
+    A/R is Asset => debit - credit
+    """
+    as_of_date = _to_date(as_of_date)
+    cust = Newcustomer.objects.only("customer_name").get(pk=customer_id)
+
+    qs = JournalLine.objects.filter(
+        account__detail_type="Customer Subledger (A/R)",
+        account__account_name=cust.customer_name,
+    )
+
+    # If your JournalEntry date field is "date" (as in your COA code: entry__date)
+    if as_of_date:
+        qs = qs.filter(entry__date__lte=as_of_date)
+
+    totals = qs.aggregate(
+        deb=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+        cred=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+    )
+
+    return (totals["deb"] or Decimal("0.00")) - (totals["cred"] or Decimal("0.00"))
+
+
+def _customer_opening_balance_live(customer_id: int, statement_start_date):
+    """
+    LIVE opening = A/R balance as of day BEFORE statement_start_date.
+    """
+    sd = _to_date(statement_start_date)
+    if not sd:
+        return Decimal("0.00")
+    day_before = sd - timezone.timedelta(days=1)
+    return _customer_ar_balance_as_of(customer_id, day_before)
+
+
 @require_http_methods(["GET", "POST"])
 def statement_new(request):
     customer_id = request.GET.get("customer_id") or request.POST.get("customer_id")
@@ -2524,28 +2633,33 @@ def statement_new(request):
     default_start = today - timedelta(days=30)
     default_end = today
 
-    # Form fields (GET defaults)
-    statement_type = (request.GET.get("type") or request.POST.get("statement_type") or Statement.StatementType.TRANSACTION)
+    statement_type = (
+        request.GET.get("type")
+        or request.POST.get("statement_type")
+        or Statement.StatementType.TRANSACTION
+    )
     statement_date = request.POST.get("statement_date") or today.isoformat()
     start_date = request.POST.get("start_date") or default_start.isoformat()
     end_date = request.POST.get("end_date") or default_end.isoformat()
     email_to = request.POST.get("email_to") or (customer.email if customer else "")
 
-    # Build preview data
     rows = []
     opening_balance = Decimal("0.00")
+
     if customer:
         sd = timezone.datetime.fromisoformat(start_date).date()
         ed = timezone.datetime.fromisoformat(end_date).date()
-        opening_balance = _customer_opening_balance(customer.id, sd)
+
+        opening_balance = _customer_opening_balance_live(customer.id, sd)
+
         rows = _period_rows(customer.id, sd, ed)
         rows = _filter_by_type(rows, statement_type, customer.id, sd)
 
-    # Compute running + (optional) Balance Forward line
     preview_lines = []
     run = opening_balance
+
+    # ✅ Transaction + Balance Forward behave as you had
     if statement_type in (Statement.StatementType.TRANSACTION, Statement.StatementType.BAL_FWD):
-        # Opening or Balance Forward header
         preview_lines.append({
             "date": start_date,
             "kind": "opening_balance" if statement_type == Statement.StatementType.TRANSACTION else "balance_forward",
@@ -2556,22 +2670,32 @@ def statement_new(request):
         if statement_type == Statement.StatementType.BAL_FWD:
             run += opening_balance
 
+    # ✅ FIX: OPEN ITEM should not produce an empty statement when opening balance exists
     elif statement_type == Statement.StatementType.OPEN_ITEM:
-        # No opening line for Open Item format
-        pass
+        # Add Balance Forward line for context (QuickBooks-like)
+        preview_lines.append({
+            "date": start_date,
+            "kind": "balance_forward",
+            "ref": "",
+            "memo": "Balance Forward",
+            "amount": opening_balance,
+            "running_balance": opening_balance,
+            "source_type": "",
+            "source_id": None,
+        })
+        run = opening_balance
 
     # Add period lines
     for r in rows:
-        # For Transaction statement we show opening balance but do not change it (QB style)
         amt = r["amount"]
         if statement_type != Statement.StatementType.TRANSACTION:
             run += amt
-        preview_lines.append({
-            **r,
-            "running_balance": run,
-        })
+        preview_lines.append({**r, "running_balance": run})
 
-    closing_balance = run if statement_type != Statement.StatementType.TRANSACTION else opening_balance + sum((r["amount"] for r in rows), Decimal("0"))
+    closing_balance = (
+        run if statement_type != Statement.StatementType.TRANSACTION
+        else opening_balance + sum((r["amount"] for r in rows), Decimal("0"))
+    )
 
     if request.method == "POST":
         if not customer:
@@ -2589,36 +2713,44 @@ def statement_new(request):
             memo=(request.POST.get("memo") or "").strip(),
         )
 
-        # Persist snapshot lines
-        run_save = opening_balance if statement_type != Statement.StatementType.TRANSACTION else opening_balance
-        if statement_type in (Statement.StatementType.TRANSACTION, Statement.StatementType.BAL_FWD):
+        # ✅ Persist from preview_lines (so OPEN_ITEM gets a line too)
+        run_save = opening_balance
+
+        for pl in preview_lines:
+            kind_map = {
+                "opening_balance": StatementLine.LineKind.OPENING,
+                "balance_forward": StatementLine.LineKind.BAL_FWD,
+                "invoice": StatementLine.LineKind.INVOICE,
+                "payment": StatementLine.LineKind.PAYMENT,
+                "sales_receipt": StatementLine.LineKind.SALES_RECEIPT,
+            }
+
+            k = pl.get("kind")
+            kind_val = kind_map.get(k, StatementLine.LineKind.OPENING)
+
+            # For transaction statements you originally saved None running_balance for detail lines
+            # Keep that behavior:
+            if statement_type == Statement.StatementType.TRANSACTION and k in ("invoice", "payment", "sales_receipt"):
+                rb = None
+            else:
+                rb = pl.get("running_balance", run_save)
+
             StatementLine.objects.create(
                 statement=st,
-                date=start_date,
-                kind=StatementLine.LineKind.OPENING if statement_type == Statement.StatementType.TRANSACTION else StatementLine.LineKind.BAL_FWD,
-                ref_no="",
-                memo="Opening Balance" if statement_type == Statement.StatementType.TRANSACTION else "Balance Forward",
-                amount=Decimal("0.00") if statement_type == Statement.StatementType.TRANSACTION else opening_balance,
-                running_balance=run_save if statement_type == Statement.StatementType.BAL_FWD else opening_balance,
+                date=pl["date"],
+                kind=kind_val,
+                ref_no=pl.get("ref", "") or "",
+                memo=pl.get("memo", "") or "",
+                amount=pl.get("amount", Decimal("0.00")) or Decimal("0.00"),
+                running_balance=rb,
+                source_type=pl.get("source_type", "") or "",
+                source_id=pl.get("source_id", None),
             )
-        for r in rows:
+
+            # keep run_save aligned for non-transaction formats
             if statement_type != Statement.StatementType.TRANSACTION:
-                run_save += r["amount"]
-            StatementLine.objects.create(
-                statement=st,
-                date=r["date"],
-                kind={
-                    "invoice": StatementLine.LineKind.INVOICE,
-                    "payment": StatementLine.LineKind.PAYMENT,
-                    "sales_receipt": StatementLine.LineKind.SALES_RECEIPT,
-                }[r["kind"]],
-                ref_no=r["ref"],
-                memo=r["memo"],
-                amount=r["amount"],
-                running_balance=run_save if statement_type != Statement.StatementType.TRANSACTION else None,
-                source_type=r["source_type"],
-                source_id=r["source_id"],
-            )
+                run_save = rb if rb is not None else run_save
+
         return redirect("sales:statement-detail", pk=st.pk)
 
     return render(request, "statement_form.html", {
@@ -2633,103 +2765,145 @@ def statement_new(request):
         "preview_lines": preview_lines,
     })
 
+def _build_statement_rows(st):
+    st_no = f"ST-000{st.id}"
+    st_type = st.get_statement_type_display()
 
+    sd = _to_date(st.start_date)
+    ed = _to_date(st.end_date)
+
+    live_opening = _customer_opening_balance_live(st.customer_id, sd)
+    live_closing = _customer_ar_balance_as_of(st.customer_id, ed)
+
+    rows = []
+    for ln in st.lines.all().order_by("date", "id"):
+        rows.append({
+            "date": ln.date,
+            "type": st_type,     
+            "no": st_no,            
+            "memo": ln.memo or "",
+            "running": live_closing 
+        })
+
+    return rows, live_opening, live_closing
 
 
 def statement_detail(request, pk):
-    st = get_object_or_404(Statement.objects.select_related("customer").prefetch_related("lines"), pk=pk)
-    return render(request, "statement_detail.html", {"st": st})
+    st = get_object_or_404(
+        Statement.objects.select_related("customer").prefetch_related("lines"),
+        pk=pk
+    )
+
+    sd = st.start_date
+    ed = st.end_date
+
+    # LIVE balances
+    live_opening = _customer_opening_balance_live(st.customer_id, sd)
+    live_closing = _customer_ar_balance_as_of(st.customer_id, ed)
+
+    # Build rows with LIVE running (starting from opening)
+    running = live_opening
+    lines_live = []
+
+    for ln in st.lines.all().order_by("date", "id"):
+        # add/subtract based on your stored statement line amounts
+        # (Invoice positive, Payment/Sales receipt negative if you saved them that way)
+        running += (ln.amount or Decimal("0.00"))
+
+        lines_live.append({
+            "date": ln.date,
+            "memo": ln.memo,
+            "running": running,
+        })
+
+    return render(request, "statement_detail.html", {
+        "st": st,
+        "lines": lines_live,       # ✅ template will use this
+        "live_opening": live_opening,
+        "live_closing": live_closing,
+    })
 
 # ----- Excel export (openpyxl) -----
-def statement_export_excel(request, pk: int):
-    try:
-        from openpyxl import Workbook
-        from openpyxl.utils import get_column_letter
-    except Exception as e:
-        raise Http404("openpyxl is required for Excel export. pip install openpyxl") from e
+def statement_export_excel(request, pk):
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
 
-    st = get_object_or_404(Statement, pk=pk)
-    lines = (
-        StatementLine.objects
-        .filter(statement=st)
-        .order_by("date", "id")
-    )
+    st = get_object_or_404(Statement.objects.select_related("customer"), pk=pk)
+
+    rows, live_opening, live_closing = _build_statement_rows(st)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Statement"
 
-    # Header block
     ws["A1"] = "Customer"
-    ws["B1"] = getattr(st.customer, "customer_name", "") or getattr(st.customer, "company_name", "")
+    ws["B1"] = st.customer.customer_name
     ws["A2"] = "Statement Date"
     ws["B2"] = str(st.statement_date)
     ws["A3"] = "Period"
     ws["B3"] = f"{st.start_date} — {st.end_date}"
     ws["A4"] = "Type"
     ws["B4"] = st.get_statement_type_display()
-    ws["A5"] = "Opening Balance"
-    ws["B5"] = float(st.opening_balance or Decimal("0"))
-    ws["A6"] = "Closing Balance"
-    ws["B6"] = float(st.closing_balance or Decimal("0"))
+    ws["A5"] = "Opening Balance (LIVE)"
+    ws["B5"] = float(live_opening)
+    ws["A6"] = "Closing Balance (LIVE)"
+    ws["B6"] = float(live_closing)
 
-    start_row = 8
-    headers = ["Date", "Type", "No.", "Memo", "Amount", "Running Balance"]
-    for c, h in enumerate(headers, 1):
-        ws.cell(row=start_row, column=c, value=h)
+    start = 8
+    headers = ["Date", "Type", "No.", "Memo", "Running Balance"]
+    for i, h in enumerate(headers, 1):
+        ws.cell(row=start, column=i, value=h)
 
-    # Rows
-    r = start_row + 1
-    def kind_label(line: StatementLine):
-        return line.get_kind_display()
-
-    for ln in lines:
-        ws.cell(row=r, column=1, value=str(ln.date) if ln.date else "")
-        ws.cell(row=r, column=2, value=kind_label(ln))
-        ws.cell(row=r, column=3, value=ln.ref_no or "")
-        ws.cell(row=r, column=4, value=ln.memo or "")
-        ws.cell(row=r, column=5, value=float(ln.amount or Decimal("0")))
-        # For TRANSACTION format you may have NULL running_balance; write blank instead of error
-        ws.cell(row=r, column=6, value=float(ln.running_balance) if ln.running_balance is not None else "")
+    r = start + 1
+    for ln in rows:
+        ws.cell(row=r, column=1, value=str(ln["date"]))
+        ws.cell(row=r, column=2, value=ln["type"])
+        ws.cell(row=r, column=3, value=ln["no"])
+        ws.cell(row=r, column=4, value=ln["memo"])
+        ws.cell(row=r, column=5, value=float(ln["running"]))
         r += 1
 
-    # Nice column widths
-    widths = [14, 18, 12, 46, 16, 18]
-    for idx, w in enumerate(widths, 1):
-        ws.column_dimensions[get_column_letter(idx)].width = w
+    widths = [14, 22, 12, 44, 22]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
 
-    # Response
-    fname = f"Statement_{st.customer_id}_{st.id}.xlsx"
     resp = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp["Content-Disposition"] = f'attachment; filename="Statement_{st.id}.xlsx"'
     wb.save(resp)
     return resp
 
-
 # ----- PDF export (WeasyPrint) -----
-
 def statement_export_pdf(request, pk: int):
     st = get_object_or_404(Statement, pk=pk)
+
     lines = (
         StatementLine.objects
         .filter(statement=st)
         .order_by("date", "id")
     )
+
+    sd = st.start_date if not isinstance(st.start_date, str) else timezone.datetime.fromisoformat(st.start_date).date()
+    ed = st.end_date if not isinstance(st.end_date, str) else timezone.datetime.fromisoformat(st.end_date).date()
+
+    live_opening = _customer_opening_balance_live(st.customer_id, sd)
+    live_closing = _customer_ar_balance_as_of(st.customer_id, ed)
+
     context = {
         "statement": st,
         "customer": getattr(st, "customer", None),
         "lines": lines,
         "generated_at": timezone.now(),
         "BASE_URL": request.build_absolute_uri("/"),
+        "live_opening": live_opening,
+        "live_closing": live_closing,
     }
 
     html = render_to_string("statement_pdf.html", context)
 
-    # Try WeasyPrint (if installed with GTK/Pango on Windows), else fallback to xhtml2pdf
     try:
-        from weasyprint import HTML, CSS  # lazy import
+        from weasyprint import HTML, CSS
         pdf_bytes = HTML(
             string=html, base_url=request.build_absolute_uri("/")
         ).write_pdf(stylesheets=[CSS(string="""
@@ -2745,8 +2919,7 @@ def statement_export_pdf(request, pk: int):
         """)])
         resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     except Exception:
-        # Pure-Python fallback (works on Windows without native deps)
-        from xhtml2pdf import pisa   # pip install xhtml2pdf
+        from xhtml2pdf import pisa
         resp = HttpResponse(content_type="application/pdf")
         pisa.CreatePDF(html, dest=resp, link_callback=lambda uri, rel: uri)
 

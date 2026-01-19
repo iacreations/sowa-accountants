@@ -1,27 +1,139 @@
 {% load humanize %}
 {% include 'includes/navbar.html' %}
 {% include 'includes/sidebar.html' %}
-<div class="wrap" style="max-width:1000px;margin-left: 20%; margin-top: 7%;">
-  <h2 style="color:#39B54B">Statement #{{ st.id }} — {{ st.customer.customer_name }}</h2>
-  <div class="muted">Type: {{ st.get_statement_type_display }} • Period: {{ st.start_date }} → {{ st.end_date }} • Dated: {{ st.statement_date }}</div>
-  <hr>
-  <table class="content-table" style="width:100%">
-    <thead>
-      <tr><th>Date</th><th>Type</th><th>No.</th><th>Memo</th><th style="text-align:right">Amount</th><th style="text-align:right">Running</th></tr>
-    </thead>
-    <tbody>
-      {% for ln in st.lines.all %}
-        <tr>
-          <td>{{ ln.date|date:"Y-m-d" }}</td>
-          <td>{{ ln.get_kind_display }}</td>
-          <td>{{ ln.ref_no }}</td>
-          <td>{{ ln.memo }}</td>
-          <td style="text-align:right">{{ ln.amount|floatformat:2|intcomma }}</td>
-          <td style="text-align:right">{{ ln.running_balance|floatformat:2|intcomma }}</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p><strong>Closing balance:</strong> Ush{{ st.closing_balance|floatformat:2|intcomma }}</p>
+
+<style>
+  /* (KEEP ALL YOUR STYLES EXACTLY AS YOU POSTED) */
+  :root{
+    --brand:#39B54B;
+    --brand-600:#2ea242;
+    --ink:#0f172a;
+    --muted:#64748b;
+    --card:#ffffff;
+    --stroke:#e6e9ee;
+    --soft:#f6fbf7;
+    --shadow:0 12px 28px rgba(16,24,40,.06);
+  }
+  .wrap{max-width:1100px;margin-left: 20%;margin-top: 7%;padding: 0 14px 30px;}
+  .hero{border-radius:18px;background: radial-gradient(1200px 320px at -10% -20%, #bff5c9 0%, transparent 60%),
+                linear-gradient(135deg, #f0fff4 0%, #e8fff0 45%, #e6fff6 100%);
+    border:1px solid var(--stroke);box-shadow:var(--shadow);padding:18px 18px 14px;}
+  .hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;}
+  .title{font-size:28px;font-weight:900;color:var(--brand);margin:0;line-height:1.1;}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;}
+  .btn{background:var(--brand);color:#fff;border:0;border-radius:12px;padding:10px 14px;font-weight:900;cursor:pointer;
+    text-decoration:none;display:inline-flex;align-items:center;gap:8px;box-shadow:0 6px 14px rgba(57,181,75,.25);
+    transition:transform .06s ease, background .12s ease;}
+  .btn:hover{transform:translateY(-1px); background:var(--brand-600);}
+  .btn.outline{background:#fff;color:var(--brand);border:1px solid #c8efd3;box-shadow:none;}
+  .cards{margin-top:14px;display:grid;grid-template-columns:repeat(4, minmax(190px, 1fr));gap:12px;}
+  @media(max-width:1100px){ .cards{grid-template-columns:repeat(2, minmax(190px, 1fr));} }
+  @media(max-width:700px){ .cards{grid-template-columns:1fr;} }
+  .card{background:var(--card);border:1px solid var(--stroke);border-radius:16px;box-shadow:var(--shadow);padding:14px 14px;}
+  .card .label{color:var(--muted);font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:.4px;}
+  .card .value{margin-top:6px;font-size:18px;font-weight:900;color:var(--ink);}
+  .card .mini{margin-top:4px;color:var(--muted);font-weight:700;font-size:12px;}
+  .table-wrap{margin-top:16px;background:#fff;border:1px solid var(--stroke);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;}
+  .table-head{padding:12px 14px;border-bottom:1px solid var(--stroke);display:flex;justify-content:space-between;align-items:center;
+    gap:10px;flex-wrap:wrap;background:#f8fdfa;}
+  .table-head h3{margin:0;font-size:16px;font-weight:900;color:#0b1727;}
+  .content-table{width:100%;border-collapse:collapse;}
+  .content-table thead th{background: #0a9a56;color:#fff;text-align:left;padding:12px 12px;font-weight:900;font-size:13px;}
+  .content-table tbody td{border-bottom:1px solid #eef2f7;padding:12px 12px;font-weight:700;color:#0f172a;}
+  .content-table tbody tr:hover{background:#f9fffb;}
+  .num{text-align:right;}
+  .badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:900;
+    border:1px solid #e2e8f0;background:#f1f5f9;color:#475569;}
+  .b-inv{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}
+  .b-pay{background:#ecfeff;border-color:#a5f3fc;color:#0e7490;}
+  .b-rec{background:#f5f3ff;border-color:#ddd6fe;color:#6d28d9;}
+  .empty{padding:18px 14px;color:var(--muted);font-weight:800;}
+</style>
+
+<div class="wrap">
+
+  <section class="hero">
+    <div class="hero-top">
+      <div>
+        <h2 class="title">Statement (ST-000{{ st.id }}) — {{ st.customer.customer_name }}</h2>
+      </div>
+
+      <div class="btns">
+        <a class="btn outline" href="{% url 'sales:statement-export-excel' st.id %}">Export Excel</a>
+        <a class="btn outline" href="{% url 'sales:statement-export-pdf' st.id %}">Export PDF</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="cards">
+    <div class="card">
+      <div class="label">Customer</div>
+      <div class="value">{{ st.customer.customer_name }}</div>
+      <div class="mini">{{ st.customer.company_name|default:"" }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Statement date</div>
+      <div class="value">{{ st.statement_date }}</div>
+      <div class="mini">Generated for period selected</div>
+    </div>
+    <div class="card">
+      <div class="label">Opening balance</div>
+      <div class="value">{{ live_closing|default:0|floatformat:2|intcomma }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Closing balance</div>
+      <div class="value">{{ live_closing|default:0|floatformat:2|intcomma }}</div>
+    </div>
+  </section>
+
+  <section class="table-wrap">
+    <div class="table-head">
+      <h3>Statement lines</h3>
+    </div>
+
+    <table class="content-table">
+      <thead>
+  <tr>
+    <th>Date</th>
+    <th>Type</th>
+    <th>No.</th>
+    <th>Memo</th>
+    <th class="num">Running Balance</th>
+  </tr>
+</thead>
+
+   <tbody>
+  {% for ln in lines %}
+    <tr>
+      <td>{{ ln.date|date:"Y-m-d" }}</td>
+
+      <td>
+        <span class="badge">
+          {{ st.get_statement_type_display }}
+        </span>
+      </td>
+
+      <td>ST-000{{ st.id }}</td>
+
+      <td>{{ ln.memo }}</td>
+
+      <td class="num">
+        {{live_closing|floatformat:2|intcomma }}
+      </td>
+    </tr>
+  {% empty %}
+    <tr>
+      <td colspan="5" class="empty">
+        No statement lines found for this statement.
+      </td>
+    </tr>
+  {% endfor %}
+</tbody>
+
+
+    </table>
+  </section>
+
 </div>
+
 {% include 'includes/footer.html' %}

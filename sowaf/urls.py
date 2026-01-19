@@ -59,8 +59,7 @@ urlpatterns = [
 
     # -------------------
     path('miscellaneous/', views.miscellaneous, name='miscellaneous'),
-    # -------------
-    path('reports/', views.reports, name='reports'),
+
     # -----------------
     
 ]
