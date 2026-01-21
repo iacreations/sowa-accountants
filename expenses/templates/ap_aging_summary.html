@@ -1,0 +1,135 @@
+{% load humanize %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .rep-wrap{ width: 80%; margin-top: 7%; margin-left: 20%; padding:5px;}
+  .rep-title{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  .rep-title h2{ margin:0; color:#39B54B; font-weight:800; }
+  .rep-sub{ color:#6b7280; font-size:13px; }
+
+  .rep-card{
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:14px 16px;
+    margin-top: 12px;
+  }
+
+  .filters{
+    display:flex; gap:10px; flex-wrap:wrap;
+    align-items:center; justify-content:flex-end;
+  }
+  .filters select{
+    border:1px solid #e5e7eb;
+    border-radius:10px;
+    padding:6px 10px;
+    font-size:13px;
+    background:#fff;
+  }
+
+  table{ width:100%; border-collapse:collapse; }
+  th, td{ padding:10px 8px; border-bottom:1px solid #f1f5f9; text-align:right; }
+  th:first-child, td:first-child{ text-align:left; }
+  th{ font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:#111827; }
+  tfoot th{ font-weight:900; color:#0b1324; }
+
+  .top-actions{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-start; margin-top:6px; }
+  .btn-link{
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:10px;
+    border:1px solid #e5e7eb;
+    background:#fff;
+    color:#39B54B;
+    text-decoration:none;
+    font-weight:700;
+    font-size:13px;
+  }
+  .btn-link:hover{ text-decoration:underline; }
+
+  .vend-link{ color:#39B54B; text-decoration:none; font-weight:800; }
+  .vend-link:hover{ text-decoration:underline; }
+</style>
+
+<div class="rep-wrap">
+  <div class="rep-title">
+    <div>
+      <h2>A/P Ageing Summary</h2>
+      <div class="rep-sub">As of {{ today }}</div>
+
+      <div class="top-actions">
+        <a class="btn-link" href="{{ export_excel_url }}">Export Excel</a>
+        <a class="btn-link" href="{{ export_pdf_url }}">Export PDF</a>
+      </div>
+    </div>
+
+    <form class="filters" method="get">
+      <select name="vendor" onchange="this.form.submit()">
+        <option value="">All Vendors</option>
+        {% for v in vendors %}
+          <option value="{{ v.id }}" {% if selected_vendor == v.id %}selected{% endif %}>
+            {{ v.company_name }}
+          </option>
+        {% endfor %}
+      </select>
+
+      <select name="bucket" onchange="this.form.submit()">
+        {% for k, label in bucket_choices %}
+          <option value="{{ k }}" {% if selected_bucket == k %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  <div class="rep-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Vendor</th>
+          <th>Current</th>
+          <th>1–30</th>
+          <th>31–60</th>
+          <th>61–90</th>
+          <th>90+</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            <a class="vend-link" href="{% url 'expenses:ap-aging-vendor' r.vendor.id %}">
+              {{ r.vendor.company_name }}
+            </a>
+          </td>
+          <td>{{ r.current|floatformat:0|intcomma }}</td>
+          <td>{{ r.b1_30|floatformat:0|intcomma }}</td>
+          <td>{{ r.b31_60|floatformat:0|intcomma }}</td>
+          <td>{{ r.b61_90|floatformat:0|intcomma }}</td>
+          <td>{{ r.b90_plus|floatformat:0|intcomma }}</td>
+          <td><b>{{ r.total|floatformat:0|intcomma }}</b></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" style="text-align:center; color:#6b7280;">No outstanding bills found.</td></tr>
+        {% endfor %}
+      </tbody>
+
+      <tfoot>
+        <tr>
+          <th>Grand Total</th>
+          <th>{{ grand.current|floatformat:0|intcomma }}</th>
+          <th>{{ grand.b1_30|floatformat:0|intcomma }}</th>
+          <th>{{ grand.b31_60|floatformat:0|intcomma }}</th>
+          <th>{{ grand.b61_90|floatformat:0|intcomma }}</th>
+          <th>{{ grand.b90_plus|floatformat:0|intcomma }}</th>
+          <th>{{ grand.total|floatformat:0|intcomma }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

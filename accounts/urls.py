@@ -21,6 +21,8 @@ urlpatterns = [
         # -------------
     path('reports/', views.reports, name='reports'),
 
+    path("reports/export/<str:fmt>/", views.reports_export_hub,name="reports-export-hub"),
+
     path(
         "reports/trial-balance/",views.report_trial_balance,      name="report-trial-balance",
     ),

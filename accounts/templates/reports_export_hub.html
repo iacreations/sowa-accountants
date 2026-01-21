@@ -1,0 +1,100 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .hub-wrap{ width: 80%; margin-top: 7%; margin-left: 20%; padding:5px;}
+  .hub-title{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  .hub-title h2{ margin:0; color:#39B54B; font-weight:800; }
+  .hub-sub{ color:#6b7280; font-size:13px; }
+
+  .hub-card{
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:14px 16px;
+    margin-top: 12px;
+  }
+
+  .grp-title{
+    margin: 0 0 10px;
+    font-weight: 900;
+    color:#0b1324;
+  }
+
+  .hub-list{
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    gap:10px 18px;
+  }
+
+  .hub-list a{
+    color:#39B54B;
+    text-decoration:none;
+    font-weight:800;
+    font-size:14px;
+    display:inline-block;
+    padding:8px 10px;
+    border:1px solid #e5e7eb;
+    border-radius:10px;
+    background:#fff;
+  }
+  .hub-list a:hover{ text-decoration:underline; }
+
+  .top-actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:flex-start;
+    margin-top:6px;
+  }
+  .btn-link{
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:10px;
+    border:1px solid #e5e7eb;
+    background:#fff;
+    color:#39B54B;
+    text-decoration:none;
+    font-weight:700;
+    font-size:13px;
+  }
+  .btn-link:hover{ text-decoration:underline; }
+
+  @media (max-width: 820px){
+    .hub-list{ grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="hub-wrap">
+  <div class="hub-title">
+    <div>
+      <h2>Select Report to Export ({{ fmt|upper }})</h2>
+      <div class="hub-sub">
+        Choose the report. You will then use the report’s own Export {{ fmt|upper }} button.
+      </div>
+
+      <div class="top-actions">
+        <a class="btn-link" href="{% url 'accounts:reports' %}">Back to Reports</a>
+      </div>
+    </div>
+  </div>
+
+  {% for g in report_groups %}
+    <div class="hub-card">
+      <h3 class="grp-title">{{ g.title }}</h3>
+      <ul class="hub-list">
+        {% for it in g.items %}
+          <li><a href="{{ it.url }}">{{ it.label }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endfor %}
+</div>
+
+{% include 'includes/footer.html' %}

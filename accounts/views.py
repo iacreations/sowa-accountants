@@ -5,6 +5,9 @@ from django.core.paginator import Paginator
 from decimal import Decimal
 import json
 import io
+import csv
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from datetime import datetime,date
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
@@ -22,6 +25,10 @@ from django.db.models import ExpressionWrapper
 from sowaf.models import Newcustomer
 from .utils import income_accounts_qs, expense_accounts_qs
 from .models import (Account, ColumnPreference, JournalEntry, JournalLine, AuditTrail)
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
 
 # default visible columns (match the checkboxes in the template)
@@ -1219,6 +1226,49 @@ def journal_entry_detail(request, pk):
     }
     return render(request, "journal_entries.html", context)
 
+# working on the reports
+def reports(request):
+    return render(request, "Reports.html", {})
+
+
+def reports_export_hub(request, fmt):
+    """
+    fmt: 'excel' or 'pdf'
+    Shows a list of report links. User clicks the report and uses that report's export buttons.
+    """
+    fmt = (fmt or "").lower()
+    if fmt not in ("excel", "pdf"):
+        fmt = "excel"
+
+    report_groups = [
+        {
+            "title": "Accounts Receivable",
+            "items": [
+                {"label": "A/R Ageing Summary", "url": reverse("sales:aging-report")},
+                {"label": "A/R Ageing Detail", "url": reverse("sales:aging-report-detail")},
+                {"label": "Open Invoices", "url": reverse("sales:open-invoices-report")},
+                {"label": "Customer Balances", "url": reverse("sales:customer-balances-report")},
+                {"label": "Invoice List", "url": reverse("sales:invoice-list-report")},
+                {"label": "Collections Report", "url": reverse("sales:collections-report")},
+            ],
+        },
+        {
+            "title": "Accounts Payable",
+            "items": [
+                {"label": "A/P Ageing Summary", "url": reverse("expenses:ap-aging-summary")},
+                {"label": "A/P Ageing Detail", "url": reverse("expenses:ap-aging-detail")},
+                {"label": "Unpaid Bills", "url": reverse("expenses:unpaid-bills-report")},
+                {"label": "Vendor Balances", "url": reverse("expenses:vendor-balances-report")},
+                {"label": "Bills List", "url": reverse("expenses:bills-list-report")},
+                {"label": "Payments to Vendors", "url": reverse("expenses:payments-to-vendors-report")},
+            ],
+        },
+    ]
+
+    return render(request, "reports_export_hub.html", {
+        "fmt": fmt,
+        "report_groups": report_groups,
+    })
 # working on the reports 
 
 def _parse_range(request):
@@ -2183,12 +2233,6 @@ def report_cashflow(request):
 
     return render(request, "cashflow.html", context)
 
-# reports view 
-def reports(request):
-    
-    return render(request, "Reports.html", {})
-
-
 # -----------------------------
 # Helpers 
 # -----------------------------
@@ -3034,11 +3078,6 @@ def export_pdf_table(filename: str, title: str, subtitle: str, headers: list[str
     PDF export using reportlab.
     pip install reportlab
     """
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib import colors
-
     bio = io.BytesIO()
     doc = SimpleDocTemplate(bio, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
 

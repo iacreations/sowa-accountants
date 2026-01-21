@@ -1,98 +1,337 @@
 {% load static %}
+{% load humanize %}
 {% include 'includes/navbar.html' %}
 {% include 'includes/sidebar.html' %}
- <style>
-  .badge {
-    display:inline-block; padding:4px 10px; border-radius:999px;
-    font-weight:700; font-size:12px; white-space:nowrap;
+
+<style>
+  :root{
+    --yo-green:#39B54B;
+    --yo-dark:#0b3518;
+    --yo-bg:#f4f6f8;
+    --card:#ffffff;
+    --muted:#6b7280;
+    --border:#e6e6e6;
+    --shadow:0 10px 26px rgba(0,0,0,.08);
+    --shadow2:0 14px 34px rgba(0,0,0,.10);
   }
-  .badge-paid     { background:#e8f5e9; color:#2e7d32; }      /* green */
-  .badge-partial  { background:#fff8e1; color:#a05a00; }      /* amber */
-  .badge-overdue  { background:#ffebee; color:#b71c1c; }      /* red */
-  .badge-warning  { background:#fff8e1; color:#a05a00; }      /* amber */
-  .badge-neutral  { background:#f2f2f2; color:#444; }         /* gray */
-  .action-link { color:#39B54B; text-decoration:none; font-weight:900; }
-  .action-link:hover { text-decoration:underline; }
+
+  body{ background:var(--yo-bg); }
+
+  /* page layout (match your sidebar spacing) */
+  .inv-wrap{
+    width:80%;
+    margin-left:20%;
+    margin-top:7%;
+    padding: 0 18px 26px;
+  }
+  @media (max-width: 1024px){
+    .inv-wrap{
+      width:95%;
+      margin-left:0;
+      margin-top:20px;
+      padding: 0 12px 22px;
+    }
+  }
+
+  /* header card */
+  .inv-hero{
+    background:linear-gradient(135deg, rgba(57,181,75,.12) 0%, rgba(255,255,255,1) 45%, rgba(57,181,75,.08) 100%);
+    border:1px solid rgba(57,181,75,.18);
+    border-radius:16px;
+    box-shadow:var(--shadow);
+    padding:16px 16px;
+  }
+  .inv-hero-top{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:14px;
+    flex-wrap:wrap;
+  }
+  .inv-title{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+  }
+  .inv-title h1{
+    margin:0;
+    color:var(--yo-dark);
+    font-weight:900;
+    letter-spacing:.2px;
+  }
+  .inv-title p{
+    margin:0;
+    color:var(--muted);
+    font-weight:600;
+    font-size:13px;
+  }
+
+  /* actions */
+  .inv-actions{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  .yo-btn{
+    display:inline-flex;
+    align-items:center;
+    gap:10px;
+    border:none;
+    border-radius:12px;
+    padding:10px 14px;
+    font-weight:900;
+    cursor:pointer;
+    box-shadow:0 10px 22px rgba(0,0,0,.08);
+    transition:transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+    text-decoration:none;
+    white-space:nowrap;
+  }
+  .yo-btn:hover{ transform:translateY(-1px); box-shadow:var(--shadow2); }
+  .yo-btn:active{ transform:translateY(0); opacity:.95; }
+  .yo-btn-primary{ background:var(--yo-green); color:#fff; }
+  .yo-btn-soft{ background:#f0fdf4; color:#166534; border:1px solid #cceedd; box-shadow:none; }
+  .yo-btn-soft:hover{ box-shadow:0 10px 22px rgba(0,0,0,.08); }
+
+  /* search + filter bar */
+  .inv-tools{
+    margin-top:14px;
+    display:flex;
+    gap:12px;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+  }
+
+  .search-box{
+    flex: 1 1 460px;
+    display:flex;
+    gap:10px;
+    align-items:center;
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:10px 12px;
+    box-shadow:0 8px 18px rgba(0,0,0,.06);
+  }
+  .search-box i{ color:var(--yo-green); font-size:18px; }
+  .search-box input{
+    border:none;
+    outline:none;
+    width:100%;
+    font-weight:700;
+    background:transparent;
+  }
+
+  .chips{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:flex-end;
+    flex: 1 1 auto;
+  }
+  .chip{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 12px;
+    border-radius:999px;
+    border:1px solid var(--border);
+    background:#fff;
+    font-weight:900;
+    color:#111;
+    text-decoration:none;
+    transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
+  }
+  .chip:hover{ transform:translateY(-1px); box-shadow:0 10px 18px rgba(0,0,0,.08); }
+  .chip.active{
+    background:#e8fbef;
+    border-color:#c8f0d6;
+    color:#0b3518;
+  }
+  .chip small{
+    background:#eef2ff;
+    color:#1f2937;
+    border-radius:999px;
+    padding:2px 8px;
+    font-weight:900;
+  }
+  .chip.overdue small{ background:#ffebee; color:#b71c1c; }
+  .chip.paid small{ background:#e8f5e9; color:#2e7d32; }
+  .chip.partial small{ background:#fff8e1; color:#a05a00; }
+
+  /* table card */
+  .inv-card{
+    margin-top:14px;
+    background:var(--card);
+    border-radius:16px;
+    box-shadow:var(--shadow);
+    border:1px solid #eef0f2;
+    overflow:hidden;
+  }
+  .inv-card-header{
+    padding:12px 14px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+    border-bottom:1px solid #eef0f2;
+  }
+  .inv-card-header .left{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    color:#0b3518; font-weight:900;
+  }
+  .inv-card-header .left span{
+    color:var(--muted); font-weight:800;
+  }
+
+  table{ width:100%; border-collapse:separate; border-spacing:0; }
+  thead th{
+    position:sticky; top:0;
+    background:#f9fafb;
+    color:#0b3518;
+    font-weight:900;
+    font-size:13px;
+    border-bottom:1px solid #eef0f2;
+    padding:12px 12px;
+    white-space:nowrap;
+  }
+  tbody td{
+    padding:12px 12px;
+    border-bottom:1px solid #f1f3f5;
+    vertical-align:middle;
+    font-weight:700;
+    color:#111;
+  }
+  tbody tr:hover{ background:#f6fef8; }
+
+  .muted{ color:var(--muted); font-weight:700; }
+
+  /* status badges */
+  .badge{
+    display:inline-block; padding:4px 10px; border-radius:999px;
+    font-weight:900; font-size:12px; white-space:nowrap;
+  }
+  .badge-paid     { background:#e8f5e9; color:#2e7d32; }
+  .badge-partial  { background:#fff8e1; color:#a05a00; }
+  .badge-overdue  { background:#ffebee; color:#b71c1c; }
+  .badge-warning  { background:#fff8e1; color:#a05a00; }
+  .badge-neutral  { background:#f2f2f2; color:#444; }
 
   /* dropdown */
-
   .action-cell { white-space: nowrap; text-align: left; }
-  .row-actions {
-    display: inline-flex; align-items: center; gap: 6px; position: relative;
-  }
+  .row-actions { display:inline-flex; align-items:center; gap:8px; position:relative; }
 
-  .edit-link {
-    color: #39B54B; font-weight: 700; text-decoration: none;
-  }
-  .edit-link:hover { text-decoration: underline; }
+  .edit-link { color:var(--yo-green); font-weight:900; text-decoration:none; }
+  .edit-link:hover{ text-decoration:underline; }
 
-  .menu-wrap { position: relative; display: inline-block; }
-  .kebab {
-    border: 1px solid #e6e6e6; background: #fff; color: #39B54B;
-    width: 28px; height: 28px; line-height: 26px; text-align: center;
-    border-radius: 6px; cursor: pointer; font-weight: 900; padding: 0;
+  .menu-wrap { position:relative; display:inline-block; }
+  .kebab{
+    border:1px solid #e6e6e6; background:#fff; color:var(--yo-green);
+    width:30px; height:30px; line-height:28px; text-align:center;
+    border-radius:10px; cursor:pointer; font-weight:900; padding:0;
   }
-  .kebab:focus { outline: 2px solid rgba(57,181,75,.35); outline-offset: 2px; }
-
-  .flyout {
-    position: absolute; right: 0; top: calc(100% + 6px);
-    min-width: 200px; background: #fff; border: 1px solid #e6e6e6;
-    border-radius: 10px; box-shadow: 0 10px 24px rgba(0,0,0,.10);
-    padding: 6px; display: none; z-index: 50;
+  .kebab:focus{ outline:2px solid rgba(57,181,75,.35); outline-offset:2px; }
+  .flyout{
+    position:absolute; right:0; top: calc(100% + 6px);
+    min-width: 210px; background:#fff; border:1px solid #e6e6e6;
+    border-radius: 12px; box-shadow:0 12px 28px rgba(0,0,0,.12);
+    padding:6px; display:none; z-index:50;
   }
-  .menu-wrap.open .flyout { display: block; }
-
-  .flyout a {
-    display: block; padding: 8px 10px; border-radius: 6px; color: #111;
-    text-decoration: none; font-weight: 600;
+  .menu-wrap.open .flyout{ display:block; }
+  .flyout a{
+    display:block; padding:9px 10px; border-radius:10px; color:#111;
+    text-decoration:none; font-weight:800;
   }
-  .flyout a:hover { background: #f5f5f5; }
-  .flyout .danger { color: #b71c1c; }
-  .flyout .sep { height: 1px; background: #eee; margin: 6px 4px; }
+  .flyout a:hover{ background:#f6fef8; }
 </style>
 
-   <div class="action">
-      <h1>INVOICES</h1>
-      <div class="search_bar">
-        <input type="text" placeholder="Search Clients" />
+<div class="inv-wrap">
+
+  <!-- HERO -->
+  <div class="inv-hero">
+    <div class="inv-hero-top">
+      <div class="inv-title">
+        <h1>Invoices</h1>
+        <p>Search as you type, filter by status, then edit / view / print in one click.</p>
       </div>
 
-      <a href="{% url 'sales:add-invoice' %}" style="text-decoration: none;">
-         <button class="button">
-          <span class="button_text">ADD NEW</span>
-          <span class="button_icon">
-            <i class='bx bx-folder-plus'></i>
-          </span>
-        </button>
+      <div class="inv-actions">
+        <a class="yo-btn yo-btn-primary" href="{% url 'sales:add-invoice' %}">
+          <i class='bx bx-folder-plus'></i> Add New
         </a>
-        <div>
-       <form action="{% url 'sowaf:import-customers' %}" method="POST" enctype="multipart/form-data" style="display: flex;">
-         {% csrf_token %}
-        <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display: none;" id="excelInput" onchange="this.form.submit()" />
-        <label for="excelInput" class="button" style="cursor: pointer;">
-         <span class="button_text">IMPORT</span>
-        <span class="button_icon">
-        <i class='bx bx-import'></i>
-        </span>
-       </label>
-         </form>
-       </div>
-      <a href="{% url 'sowaf:add-customer' %}" style="text-decoration: none;">
-         <button class="button">
-          <span class="button_text">EXPORT</span>
-          <span class="button_icon">
-            <i class='bx bx-export'></i>
-          </span>
-        </button>
-      </a>
-          <span>
-            <i class='bx bx-printer'></i>
-            <i class='bx bx-customize'></i>
-            <i class='bx bx-cog' ></i>
-          </span>
+
+        <!-- import (auto submit) -->
+        <form action="{% url 'sowaf:import-customers' %}" method="POST" enctype="multipart/form-data" style="display:flex;">
+          {% csrf_token %}
+          <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display:none;" id="excelInput" onchange="this.form.submit()"/>
+          <label for="excelInput" class="yo-btn yo-btn-soft" style="margin:0; cursor:pointer;">
+            <i class='bx bx-import'></i> Import
+          </label>
+        </form>
+
+        <!-- keep your export link as-is -->
+        <a class="yo-btn yo-btn-soft" href="{% url 'sowaf:add-customer' %}">
+          <i class='bx bx-export'></i> Export
+        </a>
+      </div>
     </div>
-    <div class="main_body">
-      <table class="content-table">
+
+    <!-- SEARCH + FILTER -->
+    <div class="inv-tools">
+
+      <!-- ✅ LIVE SEARCH INPUT (no form submit) -->
+      <div class="search-box" style="margin:0;">
+        <i class='bx bx-search'></i>
+        <input
+          type="text"
+          id="liveSearch"
+          placeholder="Search by invoice #, customer name, email, or address..."
+          value="{{ q|default:'' }}"
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="chips">
+        <a class="chip {% if status_filter == 'all' %}active{% endif %}"
+           href="?status=all{% if q %}&q={{ q|urlencode }}{% endif %}">
+          All <small>{{ counts.all|default:0 }}</small>
+        </a>
+
+        <a class="chip overdue {% if status_filter == 'overdue' %}active{% endif %}"
+           href="?status=overdue{% if q %}&q={{ q|urlencode }}{% endif %}">
+          Overdue <small>{{ counts.overdue|default:0 }}</small>
+        </a>
+
+        <a class="chip partial {% if status_filter == 'partial' %}active{% endif %}"
+           href="?status=partial{% if q %}&q={{ q|urlencode }}{% endif %}">
+          Partially Paid <small>{{ counts.partial|default:0 }}</small>
+        </a>
+
+        <a class="chip paid {% if status_filter == 'paid' %}active{% endif %}"
+           href="?status=paid{% if q %}&q={{ q|urlencode }}{% endif %}">
+          Paid <small>{{ counts.paid|default:0 }}</small>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="inv-card">
+    <div class="inv-card-header">
+      <div class="left">
+        <span>Showing</span> <span id="rowCount">{{ invoices|length }}</span> <span>invoice(s)</span>
+      </div>
+
+      <a href="{% url 'sowaf:import_customers_template' %}" class="yo-btn yo-btn-soft" style="box-shadow:none;">
+        Template
+      </a>
+    </div>
+
+    <div style="overflow:auto;">
+      <table>
         <thead>
           <tr>
             <th>Invoice no.</th>
@@ -102,71 +341,67 @@
             <th>Email</th>
             <th>Billing address</th>
             <th>Status</th>
-            <th>  Actions ▾</th>    
+            <th>Actions ▾</th>
           </tr>
         </thead>
-<tbody>
-  {% for inv in invoices %}
-    <tr>
-      <td>#{{ inv.id|stringformat:"04d" }}</td>
-      <td>{{ inv.customer.customer_name }}</td>
-      <td>{{ inv.date_created|date:"d/m/Y" }}</td>
-      <td>{{ inv.due_date|date:"d/m/Y" }}</td>
-      <td>{{ inv.email|default:"—" }}</td>
-      <td>{{ inv.billing_address|default:"—" }}</td>
 
-      <td class="text-dark" style="color: green;">
-        {% with s=inv.status %}
-          {% if "Overdue" in s %}
-            <span class="badge badge-overdue">{{ s }}</span>
-          {% elif "Due today" in s %}
-            <span class="badge badge-warning">{{ s }}</span>
-          {% elif "Partially paid" in s %}
-            <span class="badge badge-partial">{{ s }}</span>
-          {% elif "Deposited" in s or "Paid" in s %}
-            <span class="badge badge-paid">{{ s }}</span>
-          {% else %}
-            <span class="badge badge-neutral">{{ s }}</span>
-          {% endif %}
-        {% endwith %}
-      </td>
+        <!-- ✅ tbody has an id so we can replace rows via AJAX -->
+        <tbody id="invoiceTableBody">
+          {% for inv in invoices %}
+            <tr>
+              <td>#{{ inv.id|stringformat:"04d" }}</td>
+              <td>{{ inv.customer.customer_name }}</td>
+              <td class="muted">{{ inv.date_created|date:"d/m/Y" }}</td>
+              <td class="muted">{{ inv.due_date|date:"d/m/Y" }}</td>
+              <td class="muted">{{ inv.email|default:"—" }}</td>
+              <td class="muted">{{ inv.billing_address|default:"—" }}</td>
 
-     <td class="action-cell">
-  <div class="row-actions">
-    <a class="edit-link" href="{% url 'sales:edit-invoice' inv.id %}">Edit</a>
+              <td>
+                {% with s=inv.status %}
+                  {% if "Overdue" in s %}
+                    <span class="badge badge-overdue">{{ s }}</span>
+                  {% elif "Due today" in s %}
+                    <span class="badge badge-warning">{{ s }}</span>
+                  {% elif "Partially paid" in s %}
+                    <span class="badge badge-partial">{{ s }}</span>
+                  {% elif "Deposited" in s or "Paid" in s %}
+                    <span class="badge badge-paid">{{ s }}</span>
+                  {% else %}
+                    <span class="badge badge-neutral">{{ s }}</span>
+                  {% endif %}
+                {% endwith %}
+              </td>
 
-    <div class="menu-wrap">
-      <button class="kebab" aria-haspopup="true" aria-expanded="false" aria-label="More actions">
-        ▾
-      </button>
-      <div class="flyout" role="menu">
-        <a role="menuitem" href="{% url 'sales:invoice-detail' inv.id %}">View</a>
-        <a role="menuitem" href="{% url 'sales:invoice-print' inv.id %}">Print / PDF</a>
-        <a role="menuitem" href="{% url 'sales:receive-payment' %}?invoice={{ inv.id }}">Receive payment</a>
-      </div>
+              <td class="action-cell">
+                <div class="row-actions">
+                  <a class="edit-link" href="{% url 'sales:edit-invoice' inv.id %}">Edit</a>
+
+                  <div class="menu-wrap">
+                    <button class="kebab" aria-haspopup="true" aria-expanded="false" aria-label="More actions">▾</button>
+                    <div class="flyout" role="menu">
+                      <a role="menuitem" href="{% url 'sales:invoice-detail' inv.id %}">View</a>
+                      <a role="menuitem" href="{% url 'sales:invoice-print' inv.id %}">Print / PDF</a>
+                      <a role="menuitem" href="{% url 'sales:receive-payment' %}?invoice={{ inv.id }}">Receive payment</a>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" style="padding:16px; color:#6b7280; text-align:center;">No invoices available.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
-</td>
 
+</div>
 
-    </tr>
-  {% empty %}
-    <tr><td colspan="8">No invoices available.</td></tr>
-  {% endfor %}
-</tbody>
-
-      </table>
-      <a href="{% url 'sowaf:import_customers_template' %}" style="text-decoration: none; float:right;">
-        <button class="button">
-          <span class="button_text">Template</span>
-        </button>
-      </a>
-    </div>
- <script>
-  // Open/close the per-row action menu
+<script>
+  // ✅ Keep your per-row action dropdown behavior
   document.addEventListener('click', function(e) {
     const btn = e.target.closest('.kebab');
-    // Close any other open menus
+
     document.querySelectorAll('.menu-wrap.open').forEach(w => {
       if (!w.contains(e.target)) {
         w.classList.remove('open');
@@ -174,7 +409,7 @@
         if (b) b.setAttribute('aria-expanded', 'false');
       }
     });
-    // Toggle this one
+
     if (btn) {
       const wrap = btn.closest('.menu-wrap');
       const open = wrap.classList.toggle('open');
@@ -183,7 +418,6 @@
     }
   });
 
-  // Esc closes all
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
       document.querySelectorAll('.menu-wrap.open').forEach(w => {
@@ -193,6 +427,92 @@
       });
     }
   });
+
+  // ✅ LIVE SEARCH (search as you type)
+  (function(){
+    const searchInput = document.getElementById("liveSearch");
+    const tableBody = document.getElementById("invoiceTableBody");
+    const rowCount = document.getElementById("rowCount");
+    const statusFilter = "{{ status_filter|default:'all' }}";
+    let timer = null;
+
+    function badgeClass(statusText){
+      const s = (statusText || "").toLowerCase();
+      if (s.includes("overdue")) return "badge-overdue";
+      if (s.includes("due today")) return "badge-warning";
+      if (s.includes("partially paid")) return "badge-partial";
+      if (s.includes("paid") || s.includes("deposited")) return "badge-paid";
+      return "badge-neutral";
+    }
+
+    function closeAllMenus(){
+      document.querySelectorAll('.menu-wrap.open').forEach(w => {
+        w.classList.remove('open');
+        const b = w.querySelector('.kebab');
+        if (b) b.setAttribute('aria-expanded', 'false');
+      });
+    }
+
+    function renderRows(rows){
+      closeAllMenus();
+      tableBody.innerHTML = "";
+
+      if (!rows || !rows.length){
+        tableBody.innerHTML = `<tr><td colspan="8" style="padding:16px; text-align:center; color:#6b7280;">No results</td></tr>`;
+        if(rowCount) rowCount.textContent = "0";
+        return;
+      }
+
+      rows.forEach(r => {
+        const cls = badgeClass(r.status);
+        tableBody.insertAdjacentHTML("beforeend", `
+          <tr>
+            <td>#${r.id}</td>
+            <td>${r.customer}</td>
+            <td class="muted">${r.created}</td>
+            <td class="muted">${r.due}</td>
+            <td class="muted">${r.email}</td>
+            <td class="muted">${r.billing}</td>
+            <td><span class="badge ${cls}">${r.status}</span></td>
+            <td class="action-cell">
+              <div class="row-actions">
+                <a class="edit-link" href="${r.edit_url}">Edit</a>
+                <div class="menu-wrap">
+                  <button class="kebab" aria-haspopup="true" aria-expanded="false" aria-label="More actions">▾</button>
+                  <div class="flyout" role="menu">
+                    <a role="menuitem" href="${r.view_url}">View</a>
+                    <a role="menuitem" href="${r.print_url}">Print / PDF</a>
+                    <a role="menuitem" href="/sales/receive-payment/?invoice=${parseInt(r.id,10)}">Receive payment</a>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        `);
+      });
+
+      if(rowCount) rowCount.textContent = String(rows.length);
+    }
+
+    function fetchLive(){
+      const q = (searchInput.value || "").trim();
+      fetch(`?q=${encodeURIComponent(q)}&status=${encodeURIComponent(statusFilter)}`, {
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+      })
+      .then(res => res.json())
+      .then(data => renderRows(data.rows || []))
+      .catch(() => {
+        // fail silently, keep current table
+      });
+    }
+
+    if(searchInput){
+      searchInput.addEventListener("input", function(){
+        clearTimeout(timer);
+        timer = setTimeout(fetchLive, 250);
+      });
+    }
+  })();
 </script>
 
 {% include 'includes/footer.html' %}

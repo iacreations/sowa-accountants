@@ -121,6 +121,22 @@
   <div class="search_bar">
     <input type="text" placeholder="Search Reports" />
   </div>
+
+  <!-- ✅ Export buttons now open the Export Hub list -->
+  <button class="button" onclick="window.location.href='{% url 'accounts:reports-export-hub' 'excel' %}'">
+    <span class="button_text">EXPORT EXCEL</span>
+    <span class="button_icon">
+      <i class='bx bxs-file'></i>
+    </span>
+  </button>
+
+  <button class="button" onclick="window.location.href='{% url 'accounts:reports-export-hub' 'pdf' %}'">
+    <span class="button_text">EXPORT PDF</span>
+    <span class="button_icon">
+      <i class='bx bxs-file-pdf'></i>
+    </span>
+  </button>
+
   <button class="button">
     <span class="button_text">CUSTOMIZE</span>
     <span class="button_icon">
@@ -147,12 +163,12 @@
               <h3 class="standard-report-title">Business Overview</h3>
             </div>
             <ul class="standard-report-links">
-              <li><a href="#">Profit and Loss</a></li>
-              <li><a href="#">Balance Sheet</a></li>
+              <li><a href="{% url 'accounts:report-pnl' %}">Profit and Loss</a></li>
+              <li><a href="{% url 'accounts:report-balance-sheet' %}">Balance Sheet</a></li>
               <li><a href="#">Cash Flow</a></li>
-              <li><a href="#">Trial Balance</a></li>
-              <li><a href="#">General Ledger</a></li>
-              <li><a href="#">Account Balances</a></li>
+              <li><a href="{% url 'accounts:report-trial-balance' %}">Trial Balance</a></li>
+              <li><a href="{% url 'accounts:report-cashflow' %}">General Ledger</a></li>
+              <li><a href="{% url 'accounts:accounts' %}">Chart of Accounts</a></li>
             </ul>
           </div>
 
@@ -161,31 +177,14 @@
             <div class="standard-report-head">
               <div class="standard-report-icon"><i class='bx bx-money'></i></div>
               <h3 class="standard-report-title">Accounts Receivable</h3>
-            </div><ul class="standard-report-links">
-  <li><a href="{% url 'sales:aging-report' %}">A/R Ageing Summary</a></li>
-  <li><a href="{% url 'sales:aging-report-detail' %}">A/R Ageing Detail</a></li>
-
-  <li><a href="{% url 'sales:open-invoices-report' %}">Open Invoices</a></li>
-  
-  <li><a href="{% url 'sales:customer-balances-report' %}">Customer Balances</a></li>
-  <li><a href="{% url 'sales:invoice-list-report' %}">Invoice List</a></li>
-  <li><a href="{% url 'sales:collections-report' %}">Collections Report</a></li>
-</ul>
-          </div>
-
-          <!-- Sales and Customers -->
-          <div class="standard-report-box" tabindex="0" role="group" aria-label="Sales and Customers Reports">
-            <div class="standard-report-head">
-              <div class="standard-report-icon"><i class='bx bx-cart'></i></div>
-              <h3 class="standard-report-title">Sales and Customers</h3>
             </div>
             <ul class="standard-report-links">
-              <li><a href="#">Sales by Customer</a></li>
-              <li><a href="#">Sales by Product/Service</a></li>
-              <li><a href="#">Sales Summary</a></li>
-              <li><a href="#">Invoice &amp; Payments</a></li>
-              <li><a href="#">Customer Statements</a></li>
-              <li><a href="#">Sales Receipt List</a></li>
+              <li><a href="{% url 'sales:aging-report' %}">A/R Ageing Summary</a></li>
+              <li><a href="{% url 'sales:aging-report-detail' %}">A/R Ageing Detail</a></li>
+              <li><a href="{% url 'sales:open-invoices-report' %}">Open Invoices</a></li>
+              <li><a href="{% url 'sales:customer-balances-report' %}">Customer Balances</a></li>
+              <li><a href="{% url 'sales:invoice-list-report' %}">Invoice List</a></li>
+              <li><a href="{% url 'sales:collections-report' %}">Collections Report</a></li>
             </ul>
           </div>
 
@@ -196,12 +195,30 @@
               <h3 class="standard-report-title">Accounts Payable</h3>
             </div>
             <ul class="standard-report-links">
-              <li><a href="#">A/P Aging Summary</a></li>
-              <li><a href="#">A/P Aging Detail</a></li>
-              <li><a href="#">Unpaid Bills</a></li>
-              <li><a href="#">Vendor Balances</a></li>
-              <li><a href="#">Bills List</a></li>
-              <li><a href="#">Payments to Vendors</a></li>
+              <li><a href="{% url 'expenses:ap-aging-summary' %}">A/P Ageing Summary</a></li>
+              <li><a href="{% url 'expenses:ap-aging-detail' %}">A/P Ageing Detail</a></li>
+              <li><a href="{% url 'expenses:unpaid-bills-report' %}">Unpaid Bills</a></li>
+              <li><a href="{% url 'expenses:vendor-balances-report' %}">Vendor Balances</a></li>
+              <li><a href="{% url 'expenses:bills-list-report' %}">Bills List</a></li>
+              <li><a href="{% url 'expenses:payments-to-vendors-report' %}">Payments to Vendors</a></li>
+            </ul>
+          </div>
+
+
+          <!-- Sales and Customers -->
+          <div class="standard-report-box" tabindex="0" role="group" aria-label="Sales and Customers Reports">
+            <div class="standard-report-head">
+              <div class="standard-report-icon"><i class='bx bx-cart'></i></div>
+              <h3 class="standard-report-title">Sales and Customers</h3>
+            </div>
+              <ul class="standard-report-links">
+              <!-- will build later -->
+               <li><a href="{% url 'sales:sales-by-customer-report' %}">Sales by Customer</a></li>
+              <li><a href="{% url 'sales:sales-by-product-report' %}">Sales by Product/Service</a></li>
+              <li><a href="{% url 'sales:sales-summary-report' %}">Sales Summary</a></li>
+             <li><a href="{% url 'sales:invoice-payments-report' %}">Invoice &amp; Payments</a></li>
+             <li><a href="{% url 'sales:customer-statements-report' %}">Customer Statements</a></li>
+             <li><a href="{% url 'sales:sales-receipt-list-report' %}">Sales Receipt List</a></li>
             </ul>
           </div>
 
@@ -242,7 +259,7 @@
               <h3 class="standard-report-title">For my account</h3>
             </div>
             <ul class="standard-report-links">
-              <li><a href="#">Audit Log</a></li>
+              <li><a href="{% url 'accounts:audit-trail' %}">Audit Log</a></li>
               <li><a href="#">User Activity</a></li>
               <li><a href="#">Saved Reports</a></li>
               <li><a href="#">System Summary</a></li>

@@ -76,20 +76,25 @@
 <div class="rep-wrap">
   <div class="rep-title">
     <div>
-      <h2>Customer Ageing Report— {{ customer.customer_name }}</h2>
+      <h2>Unpaid Bills</h2>
       <div class="rep-sub">As of {{ today }}</div>
 
       <div class="top-actions">
-        <a class="btn-link" href="{% url 'sales:aging-report' %}">Back to Aging Summary</a>
-        <a class="btn-link" href="{% url 'sales:aging-report-detail' %}?customer={{ customer.id }}">View in Detail Report</a>
-
-        <!-- EXPORTS (NEW) -->
-        <a class="btn-link" href="?{% if request.GET.bucket %}bucket={{ request.GET.bucket }}&{% endif %}export=excel">Export Excel</a>
-        <a class="btn-link" href="?{% if request.GET.bucket %}bucket={{ request.GET.bucket }}&{% endif %}export=pdf">Export PDF</a>
+        <a class="btn-link" href="{{ export_excel_url }}">Export Excel</a>
+        <a class="btn-link" href="{{ export_pdf_url }}">Export PDF</a>
       </div>
     </div>
 
     <form class="filters" method="get">
+      <select name="vendor" onchange="this.form.submit()">
+        <option value="">All Vendors</option>
+        {% for v in vendors %}
+          <option value="{{ v.id }}" {% if selected_vendor == v.id %}selected{% endif %}>
+            {{ v.company_name }}
+          </option>
+        {% endfor %}
+      </select>
+
       <select name="bucket" onchange="this.form.submit()">
         {% for k, label in bucket_choices %}
           <option value="{{ k }}" {% if selected_bucket == k %}selected{% endif %}>{{ label }}</option>
@@ -98,43 +103,13 @@
     </form>
   </div>
 
-  <!-- SUMMARY TOTALS -->
   <div class="rep-card">
     <table>
       <thead>
         <tr>
-          <th>Customer</th>
-          <th>Current</th>
-          <th>1–30</th>
-          <th>31–60</th>
-          <th>61–90</th>
-          <th>90+</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><b>{{ customer.customer_name }}</b></td>
-          <td>{{ summary.current|floatformat:0|intcomma }}</td>
-          <td>{{ summary.b1_30|floatformat:0|intcomma }}</td>
-          <td>{{ summary.b31_60|floatformat:0|intcomma }}</td>
-          <td>{{ summary.b61_90|floatformat:0|intcomma }}</td>
-          <td>{{ summary.b90_plus|floatformat:0|intcomma }}</td>
-          <td><b>{{ summary.total|floatformat:0|intcomma }}</b></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- DETAIL LIST -->
-  <div class="rep-card">
-    <h3 style="margin:0 0 10px; color:#0b1324;">Invoice Details</h3>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Invoice #</th>
-          <th>Invoice Date</th>
+          <th>Vendor</th>
+          <th>Bill #</th>
+          <th>Bill Date</th>
           <th>Due Date</th>
           <th>Status</th>
           <th>Days</th>
@@ -147,8 +122,9 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td>{{ r.invoice_id|stringformat:"03d" }}</td>
-          <td>{{ r.invoice_date }}</td>
+          <td>{{ r.vendor_name }}</td>
+          <td>{{ r.bill_no }}</td>
+          <td>{{ r.bill_date }}</td>
           <td>{{ r.due_date }}</td>
           <td>
             {% if r.bucket == "current" %}
@@ -158,18 +134,21 @@
             {% endif %}
           </td>
           <td>{% if r.days_overdue > 0 %}{{ r.days_overdue }}{% else %}0{% endif %}</td>
-          <td>{{ r.total_due|floatformat:0|intcomma }}</td>
+          <td>{{ r.total_amount|floatformat:0|intcomma }}</td>
           <td>{{ r.amount_paid|floatformat:0|intcomma }}</td>
           <td><b>{{ r.balance|floatformat:0|intcomma }}</b></td>
         </tr>
         {% empty %}
-        <tr>
-          <td colspan="8" style="text-align:center; color:#6b7280;">
-            No outstanding invoices for this customer (or filter).
-          </td>
-        </tr>
+        <tr><td colspan="9" style="text-align:center; color:#6b7280;">No unpaid bills found.</td></tr>
         {% endfor %}
       </tbody>
+
+      <tfoot>
+        <tr>
+          <th colspan="8">Total Outstanding</th>
+          <th>{{ totals.total|floatformat:0|intcomma }}</th>
+        </tr>
+      </tfoot>
     </table>
   </div>
 </div>

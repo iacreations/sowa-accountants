@@ -3,6 +3,9 @@ from django.http import HttpResponse
 from django.http import HttpResponse, Http404
 from django.template.loader import render_to_string
 from openpyxl import Workbook
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.pdfgen import canvas
+from io import BytesIO
 from tempfile import NamedTemporaryFile
 from datetime import date, timedelta, datetime
 from django.utils import timezone
@@ -21,7 +24,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from .models import Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,PaymentOpenBalanceLine,SalesReceipt,SalesReceiptLine,CustomerRefund
+from .models import (Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,PaymentOpenBalanceLine,SalesReceipt,SalesReceiptLine,CustomerRefund,RecurringInvoice, RecurringInvoiceLine)
 from sowaf.models import Newcustomer
 from .models import Statement, StatementLine
 from django.http import JsonResponse
@@ -34,8 +37,8 @@ from .services import (generate_unique_ref_no, parse_date_flexible, status_for_i
 from accounts.utils import deposit_accounts_qs
 from collections import defaultdict
 from accounts.middleware import get_current_user, get_current_ip
+from .recurring_service import generate_recurring_invoices_for_date
 from datetime import datetime, date
-
 from decimal import Decimal, InvalidOperation
 from accounts.utils import (
     VAT_RATE,
@@ -1340,32 +1343,89 @@ def add_class_ajax(request):
     
 #  invoice list
 def invoice_list(request):
-    # Pull amounts once (DB-side) to avoid N+1 loops
+    q = (request.GET.get("q") or "").strip()
+    status_filter = (request.GET.get("status") or "all").lower()
+    is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
+
     invoices_qs = (
         Newinvoice.objects
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
-            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00")))
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid"),
+                Value(Decimal("0.00"))
+            )
         )
         .order_by("-date_created", "-id")
     )
 
+    # ✅ SEARCH (FIXED)
+    if q:
+        search_q = (
+            Q(customer__customer_name__icontains=q) |
+            Q(email__icontains=q) |
+            Q(billing_address__icontains=q)
+        )
+        if q.isdigit():
+            search_q |= Q(id=int(q))
+        invoices_qs = invoices_qs.filter(search_q)
+
     invoices = []
+    counts = {"all": 0, "overdue": 0, "paid": 0, "partial": 0}
+
     for inv in invoices_qs:
-        total_due  = inv.total_due_dec or Decimal("0")
+        total_due = inv.total_due_dec or Decimal("0")
         total_paid = inv.total_paid or Decimal("0")
-        balance    = max(total_due - total_paid, Decimal("0"))
+        balance = max(total_due - total_paid, Decimal("0"))
 
-        # one unified status string everywhere
         inv.status = status_for_invoice(inv, total_due, total_paid, balance)
+        s = inv.status.lower()
 
-        invoices.append(inv)
+        counts["all"] += 1
+        if "overdue" in s:
+            counts["overdue"] += 1
+        if "paid" in s or "deposited" in s:
+            counts["paid"] += 1
+        if "partially paid" in s:
+            counts["partial"] += 1
+
+        # status filter
+        keep = (
+            status_filter == "all" or
+            (status_filter == "overdue" and "overdue" in s) or
+            (status_filter == "paid" and ("paid" in s or "deposited" in s)) or
+            (status_filter == "partial" and "partially paid" in s)
+        )
+
+        if keep:
+            invoices.append(inv)
+
+    # ✅ AJAX RESPONSE (for live search)
+    if is_ajax:
+        rows = []
+        for inv in invoices:
+            rows.append({
+                "id": f"{inv.id:04d}",
+                "customer": inv.customer.customer_name,
+                "created": inv.date_created.strftime("%d/%m/%Y"),
+                "due": inv.due_date.strftime("%d/%m/%Y") if inv.due_date else "—",
+                "email": inv.email or "—",
+                "billing": inv.billing_address or "—",
+                "status": inv.status,
+                "edit_url": f"/sales/invoices/{inv.id}/edit/",
+                "view_url": f"/sales/invoices/{inv.id}/",
+                "print_url": f"/sales/invoices/{inv.id}/print/",
+            })
+        return JsonResponse({"rows": rows})
 
     customers = Newcustomer.objects.all()
     return render(request, "invoice_lists.html", {
         "invoices": invoices,
         "customers": customers,
+        "q": q,
+        "status_filter": status_filter,
+        "counts": counts,
     })
 
 # ednd
@@ -2927,7 +2987,7 @@ def statement_export_pdf(request, pk: int):
     resp["Content-Disposition"] = f'attachment; filename="{fname}"'
     return resp
 
-# @login_required
+@login_required
 def customer_credits_list(request):
     customers = Newcustomer.objects.order_by("customer_name")
     rows = []
@@ -2939,7 +2999,7 @@ def customer_credits_list(request):
     return render(request, "customer_credits_list.html", {"rows": rows})
 
 
-# @login_required
+@login_required
 @require_http_methods(["GET", "POST"])
 @transaction.atomic
 def customer_refund_new(request, customer_id: int):
@@ -2997,3 +3057,617 @@ def customer_refund_new(request, customer_id: int):
         "accounts": accounts,
         "max_refundable": max_refundable,
     })
+
+
+# =========================================================
+# 1) SALES RECEIPT LIST REPORT
+# =========================================================
+def sales_receipt_list_report(request):
+    today = timezone.localdate()
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    qs = SalesReceipt.objects.select_related("customer").all().order_by("-receipt_date", "-id")
+
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+    if date_from:
+        qs = qs.filter(receipt_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(receipt_date__lte=date_to)
+
+    rows = []
+    total_amount = Decimal("0.00")
+
+    for r in qs:
+        total_amount += _dec(r.total_amount)
+        rows.append({
+            "id": r.id,
+            "customer": r.customer,
+            "receipt_date": r.receipt_date,
+            "payment_method": r.payment_method,
+            "reference_no": r.reference_no,
+            "deposit_to": r.deposit_to,
+            "subtotal": _dec(r.subtotal),
+            "discount": _dec(r.total_discount),
+            "vat": _dec(r.total_vat),
+            "shipping": _dec(r.shipping_fee),
+            "total": _dec(r.total_amount),
+        })
+
+    customers = Newcustomer.objects.order_by("customer_name")
+
+    return render(request, "sales_receipt_list_report.html", {
+        "today": today,
+        "rows": rows,
+        "customers": customers,
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "date_from": date_from,
+        "date_to": date_to,
+        "total_amount": total_amount,
+    })
+
+
+def sales_receipt_list_export(request, fmt: str):
+    """
+    fmt = excel | pdf
+    """
+    fmt = (fmt or "").lower()
+    today = timezone.localdate()
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    qs = SalesReceipt.objects.select_related("customer").all().order_by("-receipt_date", "-id")
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+    if date_from:
+        qs = qs.filter(receipt_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(receipt_date__lte=date_to)
+
+    rows = []
+    for r in qs:
+        rows.append([
+            str(r.customer.customer_name),
+            str(r.receipt_date),
+            str(r.payment_method),
+            str(r.reference_no or ""),
+            str(getattr(r.deposit_to, "account_name", getattr(r.deposit_to, "name", ""))),
+            float(_dec(r.subtotal)),
+            float(_dec(r.total_discount)),
+            float(_dec(r.total_vat)),
+            float(_dec(r.shipping_fee)),
+            float(_dec(r.total_amount)),
+        ])
+
+    headers = [
+        "Customer", "Receipt Date", "Method", "Reference", "Deposit To",
+        "Subtotal", "Discount", "VAT", "Shipping", "Total"
+    ]
+
+    if fmt == "excel":
+        # CSV works perfectly with Excel and needs no extra libs
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="sales_receipts_{today}.csv"'
+        import csv
+        w = csv.writer(response)
+        w.writerow(headers)
+        for row in rows:
+            w.writerow(row)
+        return response
+
+    if fmt == "pdf":
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=landscape(A4))
+        width, height = landscape(A4)
+
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(30, height - 30, f"Sales Receipt List (As of {today})")
+
+        y = height - 60
+        p.setFont("Helvetica-Bold", 9)
+        x_positions = [30, 150, 240, 320, 420, 520, 590, 660, 720, 800]
+
+        for i, h in enumerate(headers):
+            p.drawString(x_positions[i], y, h)
+
+        p.setFont("Helvetica", 9)
+        y -= 18
+
+        for row in rows:
+            if y < 40:
+                p.showPage()
+                y = height - 40
+                p.setFont("Helvetica", 9)
+
+            for i, cell in enumerate(row):
+                p.drawString(x_positions[i], y, str(cell)[:25])
+            y -= 14
+
+        p.showPage()
+        p.save()
+
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(pdf, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="sales_receipts_{today}.pdf"'
+        return response
+
+    return HttpResponse("Invalid format", status=400)
+
+
+# =========================================================
+# 2) CUSTOMER STATEMENTS REPORT (list + export)
+# =========================================================
+def customer_statements_report(request):
+    today = timezone.localdate()
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    qs = Statement.objects.select_related("customer").all().order_by("-statement_date", "-id")
+
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+    if date_from:
+        qs = qs.filter(statement_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(statement_date__lte=date_to)
+
+    rows = []
+    for s in qs:
+        rows.append({
+            "id": s.id,
+            "customer": s.customer,
+            "statement_date": s.statement_date,
+            "start_date": s.start_date,
+            "end_date": s.end_date,
+            "statement_type": s.statement_type,
+            "opening_balance": _dec(s.opening_balance),
+            "closing_balance": _dec(s.closing_balance),
+            "email_to": s.email_to,
+        })
+
+    customers = Newcustomer.objects.order_by("customer_name")
+
+    return render(request, "customer_statements_report.html", {
+        "today": today,
+        "rows": rows,
+        "customers": customers,
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "date_from": date_from,
+        "date_to": date_to,
+    })
+
+
+def customer_statements_export(request, fmt: str):
+    fmt = (fmt or "").lower()
+    today = timezone.localdate()
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    qs = Statement.objects.select_related("customer").all().order_by("-statement_date", "-id")
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+    if date_from:
+        qs = qs.filter(statement_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(statement_date__lte=date_to)
+
+    headers = [
+        "Customer", "Statement Date", "Start", "End", "Type",
+        "Opening Balance", "Closing Balance", "Email"
+    ]
+
+    rows = []
+    for s in qs:
+        rows.append([
+            str(s.customer.customer_name),
+            str(s.statement_date),
+            str(s.start_date),
+            str(s.end_date),
+            str(s.statement_type),
+            float(_dec(s.opening_balance)),
+            float(_dec(s.closing_balance)),
+            str(s.email_to or ""),
+        ])
+
+    if fmt == "excel":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="customer_statements_{today}.csv"'
+        import csv
+        w = csv.writer(response)
+        w.writerow(headers)
+        for row in rows:
+            w.writerow(row)
+        return response
+
+    if fmt == "pdf":
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=landscape(A4))
+        width, height = landscape(A4)
+
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(30, height - 30, f"Customer Statements (As of {today})")
+
+        y = height - 60
+        p.setFont("Helvetica-Bold", 9)
+        x_positions = [30, 180, 280, 360, 430, 520, 630, 740]
+
+        for i, h in enumerate(headers):
+            p.drawString(x_positions[i], y, h)
+
+        p.setFont("Helvetica", 9)
+        y -= 18
+
+        for row in rows:
+            if y < 40:
+                p.showPage()
+                y = height - 40
+                p.setFont("Helvetica", 9)
+
+            for i, cell in enumerate(row):
+                p.drawString(x_positions[i], y, str(cell)[:28])
+            y -= 14
+
+        p.showPage()
+        p.save()
+
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(pdf, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="customer_statements_{today}.pdf"'
+        return response
+
+    return HttpResponse("Invalid format", status=400)
+
+
+# =========================================================
+# PLACEHOLDERS
+# =========================================================
+
+def sales_by_customer_report(request):
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(balance_db=F("total_due_dec") - F("total_paid"))
+        .only("id", "customer_id", "date_created", "total_due")
+        .order_by("customer__customer_name", "date_created", "id")
+    )
+
+    # filters
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+    if date_from:
+        qs = qs.filter(date_created__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(date_created__date__lte=date_to)
+
+    # group manually to avoid changing your model logic
+    rows_map = {}
+    grand = {
+        "invoiced": Decimal("0.00"),
+        "paid": Decimal("0.00"),
+        "balance": Decimal("0.00"),
+    }
+
+    for inv in qs:
+        cust = inv.customer
+        cid = cust.id
+
+        invoiced = _dec(inv.total_due_dec)
+        paid = _dec(inv.total_paid)
+        bal = _dec(inv.balance_db)
+
+        if cid not in rows_map:
+            rows_map[cid] = {
+                "customer": cust,
+                "invoice_count": 0,
+                "invoiced": Decimal("0.00"),
+                "paid": Decimal("0.00"),
+                "balance": Decimal("0.00"),
+            }
+
+        rows_map[cid]["invoice_count"] += 1
+        rows_map[cid]["invoiced"] += invoiced
+        rows_map[cid]["paid"] += paid
+        rows_map[cid]["balance"] += bal
+
+        grand["invoiced"] += invoiced
+        grand["paid"] += paid
+        grand["balance"] += bal
+
+    rows = list(rows_map.values())
+    rows.sort(key=lambda r: (getattr(r["customer"], "customer_name", "") or "").lower())
+
+    customers = Newcustomer.objects.order_by("customer_name")
+
+    return render(request, "sales_by_customer_report.html", {
+        "today": today,
+        "rows": rows,
+        "grand": grand,
+        "customers": customers,
+        "selected_customer": int(customer_id) if customer_id.isdigit() else "",
+        "date_from": date_from,
+        "date_to": date_to,
+    })
+
+
+def sales_by_customer_export(request, fmt: str):
+    fmt = (fmt or "").lower()
+    today = timezone.localdate()
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    customer_id = (request.GET.get("customer") or "").strip()
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    qs = (
+        Newinvoice.objects
+        .select_related("customer")
+        .annotate(
+            total_due_dec=Cast(F("total_due"), output_field=dec_out),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(balance_db=F("total_due_dec") - F("total_paid"))
+        .only("id", "customer_id", "date_created", "total_due")
+        .order_by("customer__customer_name", "date_created", "id")
+    )
+
+    if customer_id.isdigit():
+        qs = qs.filter(customer_id=int(customer_id))
+    if date_from:
+        qs = qs.filter(date_created__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(date_created__date__lte=date_to)
+
+    rows_map = {}
+    for inv in qs:
+        cust = inv.customer
+        cid = cust.id
+        if cid not in rows_map:
+            rows_map[cid] = {
+                "customer": cust,
+                "invoice_count": 0,
+                "invoiced": Decimal("0.00"),
+                "paid": Decimal("0.00"),
+                "balance": Decimal("0.00"),
+            }
+
+        rows_map[cid]["invoice_count"] += 1
+        rows_map[cid]["invoiced"] += _dec(inv.total_due_dec)
+        rows_map[cid]["paid"] += _dec(inv.total_paid)
+        rows_map[cid]["balance"] += _dec(inv.balance_db)
+
+    rows = list(rows_map.values())
+    rows.sort(key=lambda r: (getattr(r["customer"], "customer_name", "") or "").lower())
+
+    headers = ["Customer", "Invoices", "Invoiced", "Paid", "Balance"]
+
+    if fmt == "excel":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="sales_by_customer_{today}.csv"'
+        w = csv.writer(response)
+        w.writerow(headers)
+        for r in rows:
+            w.writerow([
+                r["customer"].customer_name,
+                r["invoice_count"],
+                float(r["invoiced"]),
+                float(r["paid"]),
+                float(r["balance"]),
+            ])
+        return response
+
+    if fmt == "pdf":
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=landscape(A4))
+        width, height = landscape(A4)
+
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(30, height - 30, f"Sales by Customer (As of {today})")
+
+        y = height - 60
+        p.setFont("Helvetica-Bold", 10)
+        x = [30, 280, 380, 500, 620]
+        for i, h in enumerate(headers):
+            p.drawString(x[i], y, h)
+
+        p.setFont("Helvetica", 10)
+        y -= 18
+
+        for r in rows:
+            if y < 40:
+                p.showPage()
+                y = height - 40
+                p.setFont("Helvetica", 10)
+
+            p.drawString(x[0], y, str(r["customer"].customer_name)[:35])
+            p.drawString(x[1], y, str(r["invoice_count"]))
+            p.drawString(x[2], y, f"{r['invoiced']}")
+            p.drawString(x[3], y, f"{r['paid']}")
+            p.drawString(x[4], y, f"{r['balance']}")
+            y -= 14
+
+        p.showPage()
+        p.save()
+
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(pdf, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="sales_by_customer_{today}.pdf"'
+        return response
+
+    return HttpResponse("Invalid format", status=400)
+def sales_by_product_report(request):
+    return HttpResponse("Sales by Product/Service report not implemented yet.", status=501)
+
+def sales_summary_report(request):
+    return HttpResponse("Sales Summary report not implemented yet.", status=501)
+
+def invoice_payments_report(request):
+    return HttpResponse("Invoice & Payments report not implemented yet.", status=501)
+
+# working on the recurring invoices
+# @login_required
+def recurring_invoice_list(request):
+    recs = RecurringInvoice.objects.select_related("customer").order_by("-id")
+    return render(request, "recurring_invoice_list.html", {"recs": recs})
+
+
+# @login_required
+@transaction.atomic
+def recurring_invoice_new(request):
+    """
+    Create a recurring invoice template using the same style/layout.
+    """
+    from .models import Product, Newcustomer, Pclass  # keep same pattern as your invoice view
+
+    if request.method == "POST":
+        customer_id = request.POST.get("customer")
+        customer = get_object_or_404(Newcustomer, pk=customer_id)
+
+        class_field_id = request.POST.get("class_field")
+        class_field = get_object_or_404(Pclass, pk=class_field_id)
+
+        email = request.POST.get("email")
+        billing_address = request.POST.get("billing_address")
+        shipping_address = request.POST.get("shipping_address")
+        terms = (request.POST.get("terms") or "").strip()
+        sales_rep = request.POST.get("sales_rep")
+        tags = request.POST.get("tags")
+        po_num = request.POST.get("po_number")
+        memo = request.POST.get("memo")
+        customs_notes = request.POST.get("customs_notes")
+
+        # schedule fields
+        frequency = (request.POST.get("frequency") or "monthly").strip()
+        interval = int(request.POST.get("interval") or 1)
+
+        start_dt = request.POST.get("start_date")
+        end_dt = request.POST.get("end_date")
+        max_occ = request.POST.get("max_occurrences")
+
+        start_date = timezone.localdate()
+        if start_dt:
+            parsed = parse_date_flexible(start_dt)
+            if parsed:
+                start_date = parsed
+
+        end_date = None
+        if end_dt:
+            parsed = parse_date_flexible(end_dt)
+            if parsed:
+                end_date = parsed
+
+        max_occurrences = int(max_occ) if (max_occ and str(max_occ).isdigit()) else None
+
+        shipping_fee = Decimal(request.POST.get("shipping_fee") or "0")
+
+        rec = RecurringInvoice.objects.create(
+            customer=customer,
+            email=email,
+            billing_address=billing_address,
+            shipping_address=shipping_address,
+            terms=terms,
+            sales_rep=sales_rep,
+            class_field=class_field,
+            tags=tags,
+            po_num=po_num if (po_num and str(po_num).isdigit()) else None,
+            memo=memo,
+            customs_notes=customs_notes,
+            shipping_fee=shipping_fee,
+            frequency=frequency,
+            interval=interval if interval > 0 else 1,
+            start_date=start_date,
+            next_run_date=start_date,
+            end_date=end_date,
+            max_occurrences=max_occurrences,
+            is_active=True,
+        )
+
+        # lines
+        products = request.POST.getlist("product[]")
+        descriptions = request.POST.getlist("description[]")
+        qtys = request.POST.getlist("qty[]")
+        rates = request.POST.getlist("unit_price[]")
+        discount_nums = request.POST.getlist("discount_num[]")
+
+        rows = []
+        for i in range(len(products)):
+            if not products[i]:
+                continue
+
+            product = get_object_or_404(Product, pk=products[i])
+            desc = descriptions[i] if i < len(descriptions) else ""
+            qty = Decimal(qtys[i] or "0") if i < len(qtys) else Decimal("0")
+            rate = Decimal(rates[i] or "0") if i < len(rates) else Decimal("0")
+            dpc = Decimal(discount_nums[i] or "0") if i < len(discount_nums) else Decimal("0")
+
+            rows.append(RecurringInvoiceLine(
+                recurring=rec,
+                product=product,
+                description=desc,
+                qty=qty,
+                unit_price=rate,
+                discount_num=dpc,
+            ))
+
+        if rows:
+            RecurringInvoiceLine.objects.bulk_create(rows)
+
+        return redirect("sales:recurring-invoices")
+
+    products = Product.objects.all()
+    customers = Newcustomer.objects.all()
+    classes = Pclass.objects.all()
+
+    return render(request, "recurring_invoice_form.html", {
+        "customers": customers,
+        "classes": classes,
+        "products": products,
+    })
+
+
+# @login_required
+def recurring_run_today(request):
+    """
+    Manual trigger (useful while you later set cron/celery).
+    Generates all due recurring invoices for today.
+    """
+    result = generate_recurring_invoices_for_date(
+        run_date=timezone.localdate(),
+        apply_audit_fields=apply_audit_fields,
+        _post_invoice_to_ledger=_post_invoice_to_ledger,
+        as_aware_datetime=as_aware_datetime,
+    )
+    return JsonResponse(result)

@@ -279,3 +279,89 @@ class SupplierRefund(models.Model):
 
     def __str__(self):
         return f"SupplierRefund {self.id} - {self.supplier} ({self.amount})"
+from decimal import Decimal
+
+# -------------------------------------------------------------------
+# RECURRING INVOICES (TEMPLATES)
+# -------------------------------------------------------------------
+
+class RecurringInvoice(models.Model):
+    FREQ_CHOICES = [
+        ("daily", "Daily"),
+        ("weekly", "Weekly"),
+        ("monthly", "Monthly"),
+        ("yearly", "Yearly"),
+    ]
+
+    # Template header fields (match your Newinvoice fields)
+    customer = models.ForeignKey(Newcustomer, on_delete=models.CASCADE, related_name="recurring_invoices")
+    email = models.EmailField(max_length=255, null=True, blank=True)
+    billing_address = models.CharField(max_length=255, null=True, blank=True)
+    shipping_address = models.CharField(max_length=255, null=True, blank=True)
+    terms = models.CharField(max_length=255, null=True, blank=True)
+    sales_rep = models.CharField(max_length=255, null=True, blank=True)
+    class_field = models.ForeignKey(Pclass, on_delete=models.CASCADE)  # keep same as your Invoice model
+    tags = models.CharField(max_length=255, null=True, blank=True)
+    po_num = models.PositiveIntegerField(null=True, blank=True)
+    memo = models.CharField(max_length=255, null=True, blank=True)
+    customs_notes = models.CharField(max_length=255, null=True, blank=True)
+
+    # default shipping for each generated invoice
+    shipping_fee = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    # Schedule controls
+    frequency = models.CharField(max_length=20, choices=FREQ_CHOICES, default="monthly")
+    interval = models.PositiveIntegerField(default=1)  # every N frequency units
+    start_date = models.DateField(default=timezone.localdate)
+    next_run_date = models.DateField(default=timezone.localdate)
+
+    end_date = models.DateField(null=True, blank=True)
+    max_occurrences = models.PositiveIntegerField(null=True, blank=True)
+    occurrences_generated = models.PositiveIntegerField(default=0)
+
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"RecurringInvoice#{self.id} - {self.customer.customer_name} ({self.frequency})"
+
+
+class RecurringInvoiceLine(models.Model):
+    recurring = models.ForeignKey(RecurringInvoice, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+
+    # snapshots / values used when generating
+    description = models.TextField(blank=True, null=True)
+
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    discount_num = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"), null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"RecurringLine#{self.id} ({self.product.name})"
+
+
+class RecurringGeneratedInvoice(models.Model):
+    """
+    Records each generated invoice for a given recurring template & run date,
+    preventing duplicates if your scheduler runs twice.
+    """
+    recurring = models.ForeignKey(RecurringInvoice, on_delete=models.CASCADE, related_name="generated")
+    invoice = models.ForeignKey(Newinvoice, on_delete=models.CASCADE, related_name="generated_from_recurring")
+    run_date = models.DateField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("recurring", "run_date")
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"Generated Invoice {self.invoice_id} from Recurring {self.recurring_id} on {self.run_date}"

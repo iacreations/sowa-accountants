@@ -25,6 +25,12 @@ urlpatterns = [
     path("invoices/<int:pk>/print/", views.invoice_print, name="invoice-print"),
     path("customer-credits/", views.customer_credits_list, name="customer-refunds-list"),
     path("customer-credits/<int:customer_id>/refund/new/", views.customer_refund_new, name="customer-refund-new"),
+# Recurring invoices
+    path("sales/recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
+    path("sales/recurring-invoices/new/", views.recurring_invoice_new, name="recurring-invoice-new"),
+    path("recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
+    path("recurring-invoices/new/", views.recurring_invoice_new, name="recurring-invoice-new"),
+    path("sales/recurring-invoices/run-today/", views.recurring_run_today, name="recurring-run-today"),
 
     # adding receipt urls
     path("add-receipt/", views.sales_receipt_new, name="add-receipt"),       
@@ -58,4 +64,19 @@ urlpatterns = [
     path("reports/customer-balances/", customer_balances_report, name="customer-balances-report"),
     path("reports/invoice-list/", invoice_list_report, name="invoice-list-report"),
     path("reports/collections/", collections_report, name="collections-report"),
+    # Sales & Customers Reports
+    # -----------------------------
+    path("reports/sales-by-customer/", views.sales_by_customer_report, name="sales-by-customer-report"),
+    
+    path("reports/sales-by-customer/export/<str:fmt>/", views.sales_by_customer_export, name="sales-by-customer-export"),
+    path("reports/sales-by-product/", views.sales_by_product_report, name="sales-by-product-report"),
+    path("reports/sales-summary/", views.sales_summary_report, name="sales-summary-report"),
+    path("reports/invoice-payments/", views.invoice_payments_report, name="invoice-payments-report"),
+
+    path("reports/customer-statements/", views.customer_statements_report, name="customer-statements-report"),
+    path("reports/sales-receipts/", views.sales_receipt_list_report, name="sales-receipt-list-report"),
+
+    # exports for the two we implement now
+    path("reports/customer-statements/export/<str:fmt>/", views.customer_statements_export, name="customer-statements-export"),
+    path("reports/sales-receipts/export/<str:fmt>/", views.sales_receipt_list_export, name="sales-receipt-list-export"),
 ]

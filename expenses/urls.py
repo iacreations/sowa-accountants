@@ -57,6 +57,14 @@ urlpatterns = [
     path('expenses/import_bills', views.import_bills, name='import-bills'),
     path("supplier-prepayments/", views.supplier_prepayments_list, name="supplier-prepayments-list"),
     path("supplier-prepayments/<int:supplier_id>/refund/new/", views.supplier_refund_new, name="supplier-refund-new"),
+# reports
+     path("reports/ap-aging/", views.ap_aging_summary, name="ap-aging-summary"),
+    path("reports/ap-aging/detail/", views.ap_aging_detail, name="ap-aging-detail"),
+    path("reports/ap-aging/vendor/<int:vendor_id>/", views.ap_aging_vendor, name="ap-aging-vendor"),
 
+    path("reports/unpaid-bills/", views.unpaid_bills_report, name="unpaid-bills-report"),
+    path("reports/vendor-balances/", views.vendor_balances_report, name="vendor-balances-report"),
+    path("reports/bills-list/", views.bills_list_report, name="bills-list-report"),
+    path("reports/payments-to-vendors/", views.payments_to_vendors_report, name="payments-to-vendors-report"),
     
 ]

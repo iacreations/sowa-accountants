@@ -1,4 +1,16 @@
 # Create your views here.
+from decimal import Decimal
+from urllib.parse import urlencode
+
+from django.db.models import Sum, Value, F, DecimalField, ExpressionWrapper
+from django.db.models.functions import Coalesce
+from django.http import HttpResponse
+from django.shortcuts import render, get_object_or_404
+from django.utils import timezone
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.pdfgen import canvas
 from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.db.models.functions import Coalesce
@@ -699,7 +711,957 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
         supplier=supplier_ref,  
     )
 
+# ageing reports 
+
+# ==========================================================
+# Helpers (same style as A/R, safe keys)
+# ==========================================================
+def _dec(x) -> Decimal:
+    try:
+        return Decimal(str(x or "0"))
+    except Exception:
+        return Decimal("0")
+
+
+def _as_date(dt):
+    if not dt:
+        return None
+    try:
+        return dt.date()
+    except Exception:
+        return dt
+
+
+def _ap_bucket(due_date, today):
+    """
+    Safe keys:
+      current, b1_30, b31_60, b61_90, b90_plus
+    """
+    if not due_date:
+        return "current"
+
+    days = (today - due_date).days
+    if days <= 0:
+        return "current"
+    if 1 <= days <= 30:
+        return "b1_30"
+    if 31 <= days <= 60:
+        return "b31_60"
+    if 61 <= days <= 90:
+        return "b61_90"
+    return "b90_plus"
+
+
+def _bucket_label(key: str) -> str:
+    return {
+        "current": "Current",
+        "b1_30": "1–30",
+        "b31_60": "31–60",
+        "b61_90": "61–90",
+        "b90_plus": "90+",
+    }.get(key, key)
+
+
+def _vendor_model():
+    return Bill._meta.get_field("supplier").remote_field.model
+
+
+def _vendors_qs():
+    Vendor = _vendor_model()
+    # assumes company_name exists on Newsupplier
+    try:
+        return Vendor.objects.order_by("company_name")
+    except Exception:
+        return Vendor.objects.all()
+
+
+def _export_urls(request):
+    """
+    Keep filters and just toggle export=excel/pdf.
+    """
+    base = request.GET.copy()
+    base.pop("export", None)
+
+    excel_qs = base.copy()
+    excel_qs["export"] = "excel"
+
+    pdf_qs = base.copy()
+    pdf_qs["export"] = "pdf"
+
+    excel_url = f"?{excel_qs.urlencode()}" if excel_qs else "?export=excel"
+    pdf_url = f"?{pdf_qs.urlencode()}" if pdf_qs else "?export=pdf"
+    return excel_url, pdf_url
+
+
+# ==========================================================
+# Export (Excel)
+# ==========================================================
+def _excel_response(filename: str, sheet_name: str, headers: list, data_rows: list):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+
+    ws.append(headers)
+    for row in data_rows:
+        ws.append(row)
+
+    # autosize columns
+    for col_idx in range(1, len(headers) + 1):
+        max_len = 10
+        for r in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=col_idx, max_col=col_idx):
+            v = r[0].value
+            if v is None:
+                continue
+            max_len = max(max_len, len(str(v)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 45)
+
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    wb.save(resp)
+    return resp
+
+
+# ==========================================================
+# Export (PDF) - simple clean reportlab table-like output
+# ==========================================================
+def _pdf_response(filename: str, title: str, subtitle: str, headers: list, data_rows: list):
+    resp = HttpResponse(content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    c = canvas.Canvas(resp, pagesize=landscape(A4))
+    width, height = landscape(A4)
+
+    x = 24
+    y = height - 30
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(x, y, title)
+    y -= 16
+
+    c.setFont("Helvetica", 10)
+    c.drawString(x, y, subtitle)
+    y -= 18
+
+    # headers
+    c.setFont("Helvetica-Bold", 9)
+    col_w = max((width - 2 * x) / max(len(headers), 1), 70)
+    col_w = min(col_w, 140)
+
+    for i, h in enumerate(headers):
+        c.drawString(x + i * col_w, y, str(h)[:25])
+    y -= 14
+
+    c.setFont("Helvetica", 9)
+    for row in data_rows:
+        if y < 30:
+            c.showPage()
+            y = height - 30
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(x, y, title)
+            y -= 16
+            c.setFont("Helvetica", 10)
+            c.drawString(x, y, subtitle)
+            y -= 18
+            c.setFont("Helvetica-Bold", 9)
+            for i, h in enumerate(headers):
+                c.drawString(x + i * col_w, y, str(h)[:25])
+            y -= 14
+            c.setFont("Helvetica", 9)
+
+        for i, val in enumerate(row):
+            c.drawString(x + i * col_w, y, str(val)[:28])
+        y -= 12
+
+    c.showPage()
+    c.save()
+    return resp
+
+
+# ==========================================================
+# Shared Bill queryset (Outstanding = total_amount - sum(applied))
+# ==========================================================
+def _bills_with_outstanding_qs():
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    return (
+        Bill.objects
+        .select_related("supplier")
+        .annotate(
+            total_amt=Coalesce(F("total_amount"), Value(Decimal("0.00"), output_field=dec_out)),
+            total_paid=Coalesce(
+                Sum("cheque_bill_lines__amount_applied", output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out),
+                output_field=dec_out
+            ),
+        )
+        .annotate(
+            outstanding_db=ExpressionWrapper(
+                F("total_amt") - F("total_paid"),
+                output_field=dec_out
+            )
+        )
+    )
+
+
+# ==========================================================
+# 1) A/P Ageing Summary (per vendor)
+# ==========================================================
+def ap_aging_summary(request):
+    today = timezone.localdate()
+
+    vendor_id = (request.GET.get("vendor") or "").strip()
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    bills = _bills_with_outstanding_qs().only(
+        "id", "supplier_id", "supplier_name", "bill_no", "bill_date", "due_date", "total_amount"
+    )
+
+    if vendor_id.isdigit():
+        bills = bills.filter(supplier_id=int(vendor_id))
+
+    rows_map = {}
+    grand = {
+        "current": Decimal("0.00"),
+        "b1_30": Decimal("0.00"),
+        "b31_60": Decimal("0.00"),
+        "b61_90": Decimal("0.00"),
+        "b90_plus": Decimal("0.00"),
+        "total": Decimal("0.00"),
+    }
+
+    for b in bills:
+        bal = _dec(b.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(b.due_date) or _as_date(b.bill_date)
+        key = _ap_bucket(due, today)
+
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        vendor = b.supplier
+        if not vendor:
+            # skip orphan bills without supplier FK (supplier_name only)
+            # still could be supported later, but cleanest now
+            continue
+
+        vid = vendor.id
+        if vid not in rows_map:
+            rows_map[vid] = {
+                "vendor": vendor,
+                "current": Decimal("0.00"),
+                "b1_30": Decimal("0.00"),
+                "b31_60": Decimal("0.00"),
+                "b61_90": Decimal("0.00"),
+                "b90_plus": Decimal("0.00"),
+                "total": Decimal("0.00"),
+            }
+
+        rows_map[vid][key] += bal
+        rows_map[vid]["total"] += bal
+
+        grand[key] += bal
+        grand["total"] += bal
+
+    rows = list(rows_map.values())
+    rows.sort(key=lambda r: (getattr(r["vendor"], "company_name", "") or "").lower())
+
+    vendors = _vendors_qs()
+    excel_url, pdf_url = _export_urls(request)
+
+    # EXPORT
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
+        data = []
+        for r in rows:
+            data.append([
+                getattr(r["vendor"], "company_name", "—"),
+                float(r["current"]),
+                float(r["b1_30"]),
+                float(r["b31_60"]),
+                float(r["b61_90"]),
+                float(r["b90_plus"]),
+                float(r["total"]),
+            ])
+        data.append(["GRAND TOTAL", float(grand["current"]), float(grand["b1_30"]), float(grand["b31_60"]),
+                     float(grand["b61_90"]), float(grand["b90_plus"]), float(grand["total"])])
+        return _excel_response("ap_aging_summary.xlsx", "AP Aging Summary", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
+        data = []
+        for r in rows:
+            data.append([
+                getattr(r["vendor"], "company_name", "—"),
+                r["current"], r["b1_30"], r["b31_60"], r["b61_90"], r["b90_plus"], r["total"]
+            ])
+        data.append(["GRAND TOTAL", grand["current"], grand["b1_30"], grand["b31_60"],
+                     grand["b61_90"], grand["b90_plus"], grand["total"]])
+        return _pdf_response("ap_aging_summary.pdf", "A/P Ageing Summary", f"As of {today}", headers, data)
+
+    return render(request, "ap_aging_summary.html", {
+        "today": today,
+        "rows": rows,
+        "grand": grand,
+        "vendors": vendors,
+        "selected_vendor": int(vendor_id) if vendor_id.isdigit() else "",
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
+
+# ==========================================================
+# 2) A/P Ageing Detail (bill-level)
+# ==========================================================
+def ap_aging_detail(request):
+    today = timezone.localdate()
+
+    vendor_id = (request.GET.get("vendor") or "").strip()
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    bills = (
+        _bills_with_outstanding_qs()
+        .only("id", "supplier_id", "bill_no", "bill_date", "due_date", "total_amount")
+        .order_by("supplier__company_name", "due_date", "bill_date", "id")
+    )
+
+    if vendor_id.isdigit():
+        bills = bills.filter(supplier_id=int(vendor_id))
+
+    rows = []
+    totals = {
+        "current": Decimal("0.00"),
+        "b1_30": Decimal("0.00"),
+        "b31_60": Decimal("0.00"),
+        "b61_90": Decimal("0.00"),
+        "b90_plus": Decimal("0.00"),
+        "total": Decimal("0.00"),
+    }
+
+    for b in bills:
+        bal = _dec(b.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(b.due_date) or _as_date(b.bill_date)
+        key = _ap_bucket(due, today)
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        days_overdue = (today - due).days if due else 0
+
+        vendor = b.supplier
+        vendor_name = getattr(vendor, "company_name", "") if vendor else (b.supplier_name or "—")
+
+        rows.append({
+            "bill": b,
+            "vendor": vendor,
+            "vendor_name": vendor_name,
+            "bill_id": b.id,
+            "bill_no": b.bill_no,
+            "bill_date": _as_date(b.bill_date),
+            "due_date": due,
+            "days_overdue": days_overdue,
+            "total_amount": _dec(b.total_amount),
+            "amount_paid": _dec(b.total_paid),
+            "balance": bal,
+            "bucket": key,
+            "bucket_label": _bucket_label(key),
+        })
+
+        totals[key] += bal
+        totals["total"] += bal
+
+    vendors = _vendors_qs()
+    excel_url, pdf_url = _export_urls(request)
+
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Bill #", "Bill Date", "Due Date", "Status", "Days", "Total", "Paid", "Balance"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"],
+                r["bill_no"],
+                str(r["bill_date"]),
+                str(r["due_date"]),
+                r["bucket_label"],
+                int(r["days_overdue"]) if r["days_overdue"] > 0 else 0,
+                float(r["total_amount"]),
+                float(r["amount_paid"]),
+                float(r["balance"]),
+            ])
+        data.append(["TOTAL", "", "", "", "", "", "", "", float(totals["total"])])
+        return _excel_response("ap_aging_detail.xlsx", "AP Aging Detail", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Bill #", "Bill Date", "Due Date", "Status", "Days", "Total", "Paid", "Balance"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"], r["bill_no"], r["bill_date"], r["due_date"],
+                r["bucket_label"], int(r["days_overdue"]) if r["days_overdue"] > 0 else 0,
+                r["total_amount"], r["amount_paid"], r["balance"],
+            ])
+        data.append(["TOTAL", "", "", "", "", "", "", "", totals["total"]])
+        return _pdf_response("ap_aging_detail.pdf", "A/P Ageing Detail", f"As of {today}", headers, data)
+
+    return render(request, "ap_aging_detail.html", {
+        "today": today,
+        "rows": rows,
+        "totals": totals,
+        "vendors": vendors,
+        "selected_vendor": int(vendor_id) if vendor_id.isdigit() else "",
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
+
+# ==========================================================
+# 3) Vendor-specific A/P Ageing (summary+detail)
+# ==========================================================
+def ap_aging_vendor(request, vendor_id: int):
+    today = timezone.localdate()
+    Vendor = _vendor_model()
+    vendor = get_object_or_404(Vendor, pk=vendor_id)
+
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    bills = (
+        _bills_with_outstanding_qs()
+        .filter(supplier_id=vendor_id)
+        .only("id", "bill_no", "bill_date", "due_date", "total_amount")
+        .order_by("due_date", "bill_date", "id")
+    )
+
+    summary = {
+        "current": Decimal("0.00"),
+        "b1_30": Decimal("0.00"),
+        "b31_60": Decimal("0.00"),
+        "b61_90": Decimal("0.00"),
+        "b90_plus": Decimal("0.00"),
+        "total": Decimal("0.00"),
+    }
+
+    rows = []
+    for b in bills:
+        bal = _dec(b.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(b.due_date) or _as_date(b.bill_date)
+        key = _ap_bucket(due, today)
+
+        summary[key] += bal
+        summary["total"] += bal
+
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        days_overdue = (today - due).days if due else 0
+
+        rows.append({
+            "bill_no": b.bill_no,
+            "bill_date": _as_date(b.bill_date),
+            "due_date": due,
+            "bucket": key,
+            "bucket_label": _bucket_label(key),
+            "days_overdue": days_overdue,
+            "total_amount": _dec(b.total_amount),
+            "amount_paid": _dec(b.total_paid),
+            "balance": bal,
+        })
+
+    excel_url, pdf_url = _export_urls(request)
+
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
+        data = [[
+            getattr(vendor, "company_name", "—"),
+            float(summary["current"]),
+            float(summary["b1_30"]),
+            float(summary["b31_60"]),
+            float(summary["b61_90"]),
+            float(summary["b90_plus"]),
+            float(summary["total"]),
+        ]]
+        return _excel_response("ap_aging_vendor.xlsx", "AP Aging Vendor", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
+        data = [[
+            getattr(vendor, "company_name", "—"),
+            summary["current"], summary["b1_30"], summary["b31_60"],
+            summary["b61_90"], summary["b90_plus"], summary["total"]
+        ]]
+        return _pdf_response("ap_aging_vendor.pdf", "Vendor A/P Ageing", f"As of {today}", headers, data)
+
+    return render(request, "ap_aging_vendor.html", {
+        "today": today,
+        "vendor": vendor,
+        "summary": summary,
+        "rows": rows,
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
+
+# ==========================================================
+# 4) Unpaid Bills (OPEN bills)
+# ==========================================================
+def unpaid_bills_report(request):
+    today = timezone.localdate()
+
+    vendor_id = (request.GET.get("vendor") or "").strip()
+    bucket_filter = (request.GET.get("bucket") or "").strip()
+
+    bills = (
+        _bills_with_outstanding_qs()
+        .only("id", "supplier_id", "bill_no", "bill_date", "due_date", "total_amount")
+        .order_by("supplier__company_name", "due_date", "bill_date", "id")
+    )
+
+    if vendor_id.isdigit():
+        bills = bills.filter(supplier_id=int(vendor_id))
+
+    rows = []
+    totals = {"total": Decimal("0.00")}
+
+    for b in bills:
+        bal = _dec(b.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(b.due_date) or _as_date(b.bill_date)
+        key = _ap_bucket(due, today)
+
+        if bucket_filter and bucket_filter != key:
+            continue
+
+        days_overdue = (today - due).days if due else 0
+
+        vendor = b.supplier
+        vendor_name = getattr(vendor, "company_name", "") if vendor else (b.supplier_name or "—")
+
+        rows.append({
+            "vendor": vendor,
+            "vendor_name": vendor_name,
+            "bill_no": b.bill_no,
+            "bill_date": _as_date(b.bill_date),
+            "due_date": due,
+            "bucket": key,
+            "bucket_label": _bucket_label(key),
+            "days_overdue": days_overdue,
+            "total_amount": _dec(b.total_amount),
+            "amount_paid": _dec(b.total_paid),
+            "balance": bal,
+        })
+        totals["total"] += bal
+
+    vendors = _vendors_qs()
+    excel_url, pdf_url = _export_urls(request)
+
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Bill #", "Bill Date", "Due Date", "Status", "Days", "Total", "Paid", "Balance"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"], r["bill_no"], str(r["bill_date"]), str(r["due_date"]),
+                r["bucket_label"], int(r["days_overdue"]) if r["days_overdue"] > 0 else 0,
+                float(r["total_amount"]), float(r["amount_paid"]), float(r["balance"])
+            ])
+        data.append(["TOTAL", "", "", "", "", "", "", "", float(totals["total"])])
+        return _excel_response("unpaid_bills.xlsx", "Unpaid Bills", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Bill #", "Bill Date", "Due Date", "Status", "Days", "Total", "Paid", "Balance"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"], r["bill_no"], r["bill_date"], r["due_date"],
+                r["bucket_label"], int(r["days_overdue"]) if r["days_overdue"] > 0 else 0,
+                r["total_amount"], r["amount_paid"], r["balance"]
+            ])
+        data.append(["TOTAL", "", "", "", "", "", "", "", totals["total"]])
+        return _pdf_response("unpaid_bills.pdf", "Unpaid Bills", f"As of {today}", headers, data)
+
+    return render(request, "ap_unpaid_bills.html", {
+        "today": today,
+        "rows": rows,
+        "totals": totals,
+        "vendors": vendors,
+        "selected_vendor": int(vendor_id) if vendor_id.isdigit() else "",
+        "selected_bucket": bucket_filter,
+        "bucket_choices": [
+            ("", "All"),
+            ("current", "Current"),
+            ("b1_30", "1–30"),
+            ("b31_60", "31–60"),
+            ("b61_90", "61–90"),
+            ("b90_plus", "90+"),
+        ],
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
+
+# ==========================================================
+# 5) Vendor Balances (current vs overdue)
+# ==========================================================
+def vendor_balances_report(request):
+    today = timezone.localdate()
+
+    bills = _bills_with_outstanding_qs().only("id", "supplier_id", "supplier_name", "bill_date", "due_date", "total_amount")
+
+    vendor_map = {}
+    grand = {"current": Decimal("0.00"), "overdue": Decimal("0.00"), "total": Decimal("0.00")}
+
+    for b in bills:
+        bal = _dec(b.outstanding_db)
+        if bal <= Decimal("0.00001"):
+            continue
+
+        due = _as_date(b.due_date) or _as_date(b.bill_date)
+        overdue = bool(due and due < today)
+
+        vendor = b.supplier
+        if not vendor:
+            continue
+
+        vid = vendor.id
+        if vid not in vendor_map:
+            vendor_map[vid] = {
+                "vendor": vendor,
+                "current": Decimal("0.00"),
+                "overdue": Decimal("0.00"),
+                "total": Decimal("0.00"),
+            }
+
+        if overdue:
+            vendor_map[vid]["overdue"] += bal
+            grand["overdue"] += bal
+        else:
+            vendor_map[vid]["current"] += bal
+            grand["current"] += bal
+
+        vendor_map[vid]["total"] += bal
+        grand["total"] += bal
+
+    rows = list(vendor_map.values())
+    rows.sort(key=lambda r: (getattr(r["vendor"], "company_name", "") or "").lower())
+
+    excel_url, pdf_url = _export_urls(request)
+
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Current", "Overdue", "Total"]
+        data = []
+        for r in rows:
+            data.append([
+                getattr(r["vendor"], "company_name", "—"),
+                float(r["current"]),
+                float(r["overdue"]),
+                float(r["total"]),
+            ])
+        data.append(["GRAND TOTAL", float(grand["current"]), float(grand["overdue"]), float(grand["total"])])
+        return _excel_response("vendor_balances.xlsx", "Vendor Balances", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Current", "Overdue", "Total"]
+        data = []
+        for r in rows:
+            data.append([getattr(r["vendor"], "company_name", "—"), r["current"], r["overdue"], r["total"]])
+        data.append(["GRAND TOTAL", grand["current"], grand["overdue"], grand["total"]])
+        return _pdf_response("vendor_balances.pdf", "Vendor Balances", f"As of {today}", headers, data)
+
+    return render(request, "ap_vendor_balances.html", {
+        "today": today,
+        "rows": rows,
+        "grand": grand,
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
+
+# ==========================================================
+# 6) Bills List (all bills, paid/open/overdue)
+# ==========================================================
+def bills_list_report(request):
+    today = timezone.localdate()
+
+    vendor_id = (request.GET.get("vendor") or "").strip()
+    status = (request.GET.get("status") or "").strip()  # all|paid|unpaid|overdue
+
+    bills = (
+        _bills_with_outstanding_qs()
+        .only("id", "supplier_id", "bill_no", "bill_date", "due_date", "total_amount")
+        .order_by("-bill_date", "-id")
+    )
+
+    if vendor_id.isdigit():
+        bills = bills.filter(supplier_id=int(vendor_id))
+
+    rows = []
+    for b in bills:
+        bal = _dec(b.outstanding_db)
+        due = _as_date(b.due_date) or _as_date(b.bill_date)
+
+        is_paid = bal <= Decimal("0.00001")
+        is_overdue = bool((not is_paid) and due and due < today)
+
+        if status == "paid" and not is_paid:
+            continue
+        if status == "unpaid" and is_paid:
+            continue
+        if status == "overdue" and not is_overdue:
+            continue
+
+        vendor = b.supplier
+        vendor_name = getattr(vendor, "company_name", "") if vendor else (b.supplier_name or "—")
+
+        rows.append({
+            "vendor": vendor,
+            "vendor_name": vendor_name,
+            "bill_no": b.bill_no,
+            "bill_date": _as_date(b.bill_date),
+            "due_date": due,
+            "total_amount": _dec(b.total_amount),
+            "amount_paid": _dec(b.total_paid),
+            "balance": bal if bal > 0 else Decimal("0.00"),
+            "status": "PAID" if is_paid else ("OVERDUE" if is_overdue else "OPEN"),
+        })
+
+    vendors = _vendors_qs()
+    excel_url, pdf_url = _export_urls(request)
+
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Bill #", "Bill Date", "Due Date", "Status", "Total", "Paid", "Balance"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"], r["bill_no"], str(r["bill_date"]), str(r["due_date"]),
+                r["status"], float(r["total_amount"]), float(r["amount_paid"]), float(r["balance"])
+            ])
+        return _excel_response("bills_list.xlsx", "Bills List", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Bill #", "Bill Date", "Due Date", "Status", "Total", "Paid", "Balance"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"], r["bill_no"], r["bill_date"], r["due_date"],
+                r["status"], r["total_amount"], r["amount_paid"], r["balance"]
+            ])
+        return _pdf_response("bills_list.pdf", "Bills List", f"As of {today}", headers, data)
+
+    return render(request, "ap_bills_list.html", {
+        "today": today,
+        "rows": rows,
+        "vendors": vendors,
+        "selected_vendor": int(vendor_id) if vendor_id.isdigit() else "",
+        "selected_status": status,
+        "status_choices": [
+            ("", "All"),
+            ("paid", "Paid"),
+            ("unpaid", "Unpaid"),
+            ("overdue", "Overdue"),
+        ],
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
+
+# ==========================================================
+# 7) Payments to Vendors (Cheques)
+# ==========================================================
+def payments_to_vendors_report(request):
+    today = timezone.localdate()
+
+    date_from = (request.GET.get("from") or "").strip()
+    date_to = (request.GET.get("to") or "").strip()
+
+    if not date_from and not date_to:
+        first = today.replace(day=1)
+        date_from = str(first)
+        date_to = str(today)
+
+    dec_out = DecimalField(max_digits=18, decimal_places=2)
+
+    qs = Cheque.objects.select_related("payee_supplier").all().order_by("-payment_date", "-id")
+
+    if date_from:
+        qs = qs.filter(payment_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(payment_date__lte=date_to)
+
+    qs = qs.annotate(
+        total_applied=Coalesce(
+            Sum("bill_lines__amount_applied", output_field=dec_out),
+            Value(Decimal("0.00"), output_field=dec_out),
+            output_field=dec_out
+        ),
+        open_balance=Coalesce(
+            F("open_balance_line__amount_applied"),
+            Value(Decimal("0.00"), output_field=dec_out),
+            output_field=dec_out
+        )
+    )
+
+    rows = []
+    totals = {"paid": Decimal("0.00"), "applied": Decimal("0.00"), "unapplied": Decimal("0.00")}
+
+    for ch in qs:
+        paid = _dec(ch.total_amount)
+        applied = _dec(ch.total_applied)
+        open_bal = _dec(ch.open_balance)
+        unapplied = paid - applied - open_bal
+        if unapplied < 0:
+            unapplied = Decimal("0.00")
+
+        vendor_name = (ch.payee_supplier.company_name if ch.payee_supplier else (ch.payee_name or "—"))
+
+        rows.append({
+            "vendor_name": vendor_name,
+            "date": ch.payment_date,
+            "ref": ch.cheque_no,
+            "method": "Cheque",
+            "paid": paid,
+            "applied": applied,
+            "unapplied": unapplied,
+        })
+
+        totals["paid"] += paid
+        totals["applied"] += applied
+        totals["unapplied"] += unapplied
+
+    excel_url, pdf_url = _export_urls(request)
+
+    export = (request.GET.get("export") or "").lower().strip()
+    if export == "excel":
+        headers = ["Vendor", "Date", "Cheque #", "Method", "Paid", "Applied", "Unapplied"]
+        data = []
+        for r in rows:
+            data.append([
+                r["vendor_name"], str(r["date"]), r["ref"], r["method"],
+                float(r["paid"]), float(r["applied"]), float(r["unapplied"])
+            ])
+        data.append(["TOTALS", "", "", "", float(totals["paid"]), float(totals["applied"]), float(totals["unapplied"])])
+        return _excel_response("payments_to_vendors.xlsx", "Payments to Vendors", headers, data)
+
+    if export == "pdf":
+        headers = ["Vendor", "Date", "Cheque #", "Method", "Paid", "Applied", "Unapplied"]
+        data = []
+        for r in rows:
+            data.append([r["vendor_name"], r["date"], r["ref"], r["method"], r["paid"], r["applied"], r["unapplied"]])
+        data.append(["TOTALS", "", "", "", totals["paid"], totals["applied"], totals["unapplied"]])
+        return _pdf_response("payments_to_vendors.pdf", "Payments to Vendors", f"From {date_from} to {date_to}", headers, data)
+
+    return render(request, "ap_payments_to_vendors.html", {
+        "today": today,
+        "rows": rows,
+        "totals": totals,
+        "date_from": date_from,
+        "date_to": date_to,
+        "export_excel_url": excel_url,
+        "export_pdf_url": pdf_url,
+    })
+
   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # posting supplier credit to ledger
 
 # def _post_supplier_credit_to_ledger(credit: SupplierCredit):
