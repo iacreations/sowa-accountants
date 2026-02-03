@@ -5,6 +5,8 @@ from django.core.paginator import Paginator
 from decimal import Decimal
 import json
 import io
+from io import BytesIO
+from openpyxl import Workbook
 import csv
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -23,7 +25,7 @@ from django.utils import timezone
 from sales.models import Newinvoice,Payment
 from django.db.models import ExpressionWrapper
 from sowaf.models import Newcustomer
-from .utils import income_accounts_qs, expense_accounts_qs
+from .utils import income_accounts_qs, expense_accounts_qs, deposit_accounts_qs
 from .models import (Account, ColumnPreference, JournalEntry, JournalLine, AuditTrail)
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -70,6 +72,40 @@ CASH_DETAIL_TYPES = [
     # "Bank current account",
     # "Mobile Money",
 ]
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
+
+# import your Account model + the same queryset function you already use
+# from .models import Account
+# from .queries import deposit_accounts_qs
+
+@require_GET
+def deposit_accounts_api(request):
+    """
+    Returns deposit accounts for dropdown refresh.
+    """
+    qs = deposit_accounts_qs().order_by("account_name")
+
+    data = []
+    for a in qs:
+        label = a.account_name or ""
+        if getattr(a, "account_number", None):
+            label += f" ({a.account_number})"
+        # keep your extra text same as template display
+        at = getattr(a, "account_type", "") or ""
+        dt = getattr(a, "detail_type", "") or ""
+        if at:
+            label += f" — {at}"
+        if dt:
+            label += f" / {dt}"
+
+        data.append({
+            "id": a.id,
+            "label": label,
+        })
+
+    return JsonResponse({"results": data})
+
 # @login_required
 def accounts(request):
     status = request.GET.get("status", "active")  # default is active
@@ -205,6 +241,7 @@ def accounts(request):
         },
     )
 
+
 # audit trail view
 def audit_trail(request):
     logs = AuditTrail.objects.select_related("user").all()
@@ -212,8 +249,6 @@ def audit_trail(request):
     return render(request, "audit_trail.html", {
         "logs": logs
     })
-
-
 
 # @login_required
 def save_column_prefs(request):
@@ -1476,6 +1511,130 @@ def report_trial_balance(request):
     for r in roots:
         walk_parent_only(r, 0)
 
+    # =========================================================
+    # ✅ EXPORTS: CSV / EXCEL / PDF (without changing your styles)
+    # =========================================================
+    export = (request.GET.get("export") or "").strip().lower()
+
+    def _period_label():
+        a = dfrom.strftime("%d/%m/%Y") if dfrom else "None"
+        b = dto.strftime("%d/%m/%Y") if dto else "None"
+        return f"{a} – {b}"
+
+    filename_base = f"trial_balance_{timezone.localdate().strftime('%Y%m%d')}"
+
+    if export == "csv":
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_base}.csv"'
+
+        writer = csv.writer(resp)
+        writer.writerow([f"Trial Balance - { _period_label() }"])
+        writer.writerow([f"Company: YoAccountant", f"Currency: UGX"])
+        writer.writerow([])
+        writer.writerow(["Account", "Debit", "Credit"])
+
+        for r in rows:
+            writer.writerow([
+                r["account"],
+                f"{r['debit']:.2f}",
+                f"{r['credit']:.2f}",
+            ])
+
+        writer.writerow([])
+        writer.writerow(["Total", f"{total_debit:.2f}", f"{total_credit:.2f}"])
+        return resp
+
+    if export == "xlsx":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Trial Balance"
+
+        ws.append([f"Trial Balance - { _period_label() }"])
+        ws.append([f"Company: YoAccountant", f"Currency: UGX"])
+        ws.append([])
+        ws.append(["Account", "Debit", "Credit"])
+
+        # headers bold-ish (simple)
+        for cell in ws[4]:
+            cell.font = cell.font.copy(bold=True)
+
+        for r in rows:
+            ws.append([r["account"], float(r["debit"]), float(r["credit"])])
+
+        ws.append([])
+        ws.append(["Total", float(total_debit), float(total_credit)])
+
+        # number format
+        for row in ws.iter_rows(min_row=5, min_col=2, max_col=3):
+            for c in row:
+                c.number_format = "#,##0.00"
+
+        # column widths
+        ws.column_dimensions["A"].width = 42
+        ws.column_dimensions["B"].width = 18
+        ws.column_dimensions["C"].width = 18
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+
+        resp = HttpResponse(
+            out.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="{filename_base}.xlsx"'
+        return resp
+
+    if export == "pdf":
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+
+        styles = getSampleStyleSheet()
+        story = []
+        story.append(Paragraph("Trial Balance", styles["Title"]))
+        story.append(Paragraph(f"Company: YoAccountant", styles["Normal"]))
+        story.append(Paragraph(f"Period: {_period_label()}", styles["Normal"]))
+        story.append(Paragraph(f"Reporting Currency: UGX", styles["Normal"]))
+        story.append(Spacer(1, 12))
+
+        data = [["Account", "Debit", "Credit"]]
+        for r in rows:
+            data.append([
+                r["account"],
+                f"{r['debit']:,.2f}",
+                f"{r['credit']:,.2f}",
+            ])
+        data.append(["Total", f"{total_debit:,.2f}", f"{total_credit:,.2f}"])
+
+        table = Table(data, colWidths=[280, 110, 110])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e6f7ea")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f5132")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e7e7e7")),
+            ("FONTSIZE", (0, 1), (-1, -2), 9),
+            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ("BACKGROUND", (0, 1), (-1, -2), colors.white),
+
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f8fff9")),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ]))
+
+        story.append(table)
+        doc.build(story)
+
+        pdf = buf.getvalue()
+        buf.close()
+
+        resp = HttpResponse(pdf, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_base}.pdf"'
+        return resp
+
+    # =========================================================
+    # ✅ NORMAL PAGE RENDER
+    # =========================================================
     context = {
         "company_name": "YoAccountant",
         "reporting_currency": "UGX",
@@ -1520,6 +1679,14 @@ def bankish_q():
 # Your COA codes (recommended) + fallback text matching
 INCOME_TYPES = {"OPERATING_INCOME", "INVESTING_INCOME"}
 EXPENSE_TYPES = {"OPERATING_EXPENSE", "INVESTING_EXPENSE", "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"}
+
+def dec(x) -> Decimal:
+    return Decimal(str(x or "0.00"))
+
+# Example placeholders — keep your real ones
+INCOME_TYPES = {"Income", "Other Income"}
+EXPENSE_TYPES = {"Expense", "Other Expense", "Cost of Goods Sold"}
+COGS_DETAIL_TYPES = {"costofgoodssold", "cogs"}  # keep your real set
 
 def report_pnl(request):
     # ---------- 1. Parse date filters ----------
@@ -1604,7 +1771,7 @@ def report_pnl(request):
         return None
 
     # ============================================================
-    # NEW PART (minimal change): PARENT-ONLY ROLLUP LIKE TRIAL BALANCE
+    # PARENT-ONLY ROLLUP LIKE TRIAL BALANCE
     # ============================================================
 
     # Build a lightweight tree map for ALL active accounts (needed for rollups)
@@ -1617,7 +1784,7 @@ def report_pnl(request):
         if a.parent_id:
             children_by_parent[a.parent_id].append(a)
 
-    # helper: get top-most parent (root) or "P&L parent" you want to show
+    # helper: get top-most parent (root)
     def get_top_parent(acc: Account) -> Account:
         cur = acc
         while cur and cur.parent_id:
@@ -1711,6 +1878,155 @@ def report_pnl(request):
     operating_profit = gross_profit - totals["expense"]
     net_profit = operating_profit
 
+    # ---------- 8. Export (CSV / Excel / PDF) ----------
+    export = (request.GET.get("export") or "").lower().strip()
+    if export in {"csv", "xlsx", "pdf"}:
+        # file-friendly period text
+        period_text = f"{date_from or 'None'} to {date_to or 'None'} ({basis})"
+
+        # -------- CSV --------
+        if export == "csv":
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = 'attachment; filename="profit_and_loss.csv"'
+
+            writer = csv.writer(response)
+            writer.writerow(["Statement of Profit or Loss"])
+            writer.writerow(["Company", "YoAccountant"])
+            writer.writerow(["Period", period_text])
+            writer.writerow([])
+            writer.writerow(["Section", "Account", "Amount"])
+
+            # Revenue
+            writer.writerow(["Revenue", "", ""])
+            for r in buckets["income"]:
+                writer.writerow(["Revenue", r["account"], f"{r['amount']:.2f}"])
+            writer.writerow(["", "Total revenue", f"{totals['income']:.2f}"])
+            writer.writerow([])
+
+            # COGS
+            writer.writerow(["Cost of goods sold", "", ""])
+            for r in buckets["cogs"]:
+                writer.writerow(["COGS", r["account"], f"{r['amount']:.2f}"])
+            writer.writerow(["", "Total COGS", f"{totals['cogs']:.2f}"])
+            writer.writerow([])
+
+            writer.writerow(["", "Gross profit", f"{gross_profit:.2f}"])
+            writer.writerow([])
+
+            # Expenses
+            writer.writerow(["Operating expenses", "", ""])
+            for r in buckets["expense"]:
+                writer.writerow(["Expense", r["account"], f"{r['amount']:.2f}"])
+            writer.writerow(["", "Total operating expenses", f"{totals['expense']:.2f}"])
+            writer.writerow([])
+
+            writer.writerow(["", "Operating profit", f"{operating_profit:.2f}"])
+            writer.writerow(["", "Net profit", f"{net_profit:.2f}"])
+            return response
+
+        # -------- Excel (XLSX) --------
+        if export == "xlsx":
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Profit & Loss"
+
+            ws.append(["Statement of Profit or Loss"])
+            ws.append(["Company", "YoAccountant"])
+            ws.append(["Period", period_text])
+            ws.append([])
+            ws.append(["Section", "Account", "Amount"])
+
+            ws.append(["Revenue", "", ""])
+            for r in buckets["income"]:
+                ws.append(["Revenue", r["account"], float(r["amount"])])
+            ws.append(["", "Total revenue", float(totals["income"])])
+            ws.append([])
+
+            ws.append(["Cost of goods sold", "", ""])
+            for r in buckets["cogs"]:
+                ws.append(["COGS", r["account"], float(r["amount"])])
+            ws.append(["", "Total COGS", float(totals["cogs"])])
+            ws.append([])
+
+            ws.append(["", "Gross profit", float(gross_profit)])
+            ws.append([])
+
+            ws.append(["Operating expenses", "", ""])
+            for r in buckets["expense"]:
+                ws.append(["Expense", r["account"], float(r["amount"])])
+            ws.append(["", "Total operating expenses", float(totals["expense"])])
+            ws.append([])
+
+            ws.append(["", "Operating profit", float(operating_profit)])
+            ws.append(["", "Net profit", float(net_profit)])
+
+            bio = BytesIO()
+            wb.save(bio)
+            bio.seek(0)
+
+            response = HttpResponse(
+                bio.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            response["Content-Disposition"] = 'attachment; filename="profit_and_loss.xlsx"'
+            return response
+
+        # -------- PDF --------
+        if export == "pdf":
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer, pagesize=A4)
+            width, height = A4
+
+            y = height - 50
+            line = 16
+
+            def draw(text, bold=False):
+                nonlocal y
+                if y < 60:
+                    p.showPage()
+                    y = height - 50
+                p.setFont("Helvetica-Bold" if bold else "Helvetica", 10 if not bold else 11)
+                p.drawString(50, y, text)
+                y -= line
+
+            draw("Statement of Profit or Loss", bold=True)
+            draw("Company: YoAccountant")
+            draw(f"Period: {period_text}")
+            draw("")
+
+            draw("Revenue", bold=True)
+            for r in buckets["income"]:
+                draw(f"  {r['account']}: {r['amount']:.2f}")
+            draw(f"Total revenue: {totals['income']:.2f}", bold=True)
+            draw("")
+
+            draw("Cost of goods sold", bold=True)
+            for r in buckets["cogs"]:
+                draw(f"  {r['account']}: {r['amount']:.2f}")
+            draw(f"Total COGS: {totals['cogs']:.2f}", bold=True)
+            draw("")
+
+            draw(f"Gross profit: {gross_profit:.2f}", bold=True)
+            draw("")
+
+            draw("Operating expenses", bold=True)
+            for r in buckets["expense"]:
+                draw(f"  {r['account']}: {r['amount']:.2f}")
+            draw(f"Total operating expenses: {totals['expense']:.2f}", bold=True)
+            draw("")
+
+            draw(f"Operating profit: {operating_profit:.2f}", bold=True)
+            draw(f"Net profit: {net_profit:.2f}", bold=True)
+
+            p.showPage()
+            p.save()
+
+            buffer.seek(0)
+            response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+            response["Content-Disposition"] = 'attachment; filename="profit_and_loss.pdf"'
+            return response
+
+    # ---------- 9. Normal HTML render ----------
     context = {
         "company_name": "YoAccountant",
         "reporting_currency": "UGX",
@@ -1743,7 +2059,7 @@ def report_balance_sheet(request):
     - accrual: use all JournalLines up to 'asof'
     - cash:    use ONLY JournalLines that hit bank/cash accounts
 
- Retained Earnings / Current Year Profit:
+    Retained Earnings / Current Year Profit:
     - computed dynamically (reports only)
     - does NOT create Retained Earnings in DB
     - keeps accounting correct and balances the sheet even without closing entries
@@ -1837,9 +2153,6 @@ def report_balance_sheet(request):
         """
         Returns NET PROFIT (positive = profit, negative = loss)
         computed from Income and Expense accounts using your movement logic.
-
-        Net Profit = Income (credit-normal) - Expenses (debit-normal)
-        Using apply_movement per account means signs are correct per normal side.
         """
         qs = JournalLine.objects.select_related("entry", "account").filter(entry__date__lte=dto)
 
@@ -1872,10 +2185,8 @@ def report_balance_sheet(request):
                 continue
 
             if acc.level1_group == "Income":
-                # credit-normal, profit increases with credit => bal will be positive normally
                 total_income += bal
             elif acc.level1_group == "Expenses":
-                # debit-normal, expenses increase with debit => bal will be positive normally
                 total_exp += bal
 
         return total_income - total_exp  # profit (+) or loss (-)
@@ -1947,32 +2258,27 @@ def report_balance_sheet(request):
 
     # =========================================================
     # Inject computed Retained Earnings + Current Year Earnings
-    # into Equity section (reports-only, no DB)
     # =========================================================
     if retained_earnings != 0:
-        # Equity is credit-normal in BS display, so show as credit-positive:
-        # profit => increases equity, loss => negative equity
         eq_rows.append({
             "account": "Retained Earnings",
-            "account_id": None,         # no DB account
-            "amount": retained_earnings # display as-is
+            "account_id": None,
+            "amount": retained_earnings
         })
 
     if current_year_profit != 0:
         eq_rows.append({
             "account": "Current Year Profit/Loss",
-            "account_id": None,          # no DB account
+            "account_id": None,
             "amount": current_year_profit
         })
 
-    # Optional: sort by account name (keep computed ones at bottom)
+    # Sorting
     asset_nc_rows.sort(key=lambda x: (x["account"] or "").lower())
     asset_curr_rows.sort(key=lambda x: (x["account"] or "").lower())
     liab_nc_rows.sort(key=lambda x: (x["account"] or "").lower())
     liab_curr_rows.sort(key=lambda x: (x["account"] or "").lower())
 
-    # keep equity sorted but computed ones often best at bottom:
-    # so we sort only DB-backed equity rows, then append computed rows
     eq_db = [r for r in eq_rows if r.get("account_id")]
     eq_calc = [r for r in eq_rows if not r.get("account_id")]
     eq_db.sort(key=lambda x: (x["account"] or "").lower())
@@ -1994,9 +2300,170 @@ def report_balance_sheet(request):
 
     method_label = "Cash basis" if method == "cash" else "Accrual basis"
 
+    # =========================================================
+    # ✅ EXPORTS: CSV / EXCEL / PDF
+    # =========================================================
+    export = (request.GET.get("export") or "").strip().lower()
+    reporting_currency = "UGX"
+    company_name = "YoAccountant"
+    filename_base = f"balance_sheet_{asof.strftime('%Y%m%d')}_{method}"
+
+    def money(x: Decimal) -> str:
+        try:
+            return f"{Decimal(x):,.2f}"
+        except Exception:
+            return "0.00"
+
+    # Build a simple flat export layout (section + amount)
+    def build_export_rows():
+        out = []
+        out.append(("ASSETS", ""))
+
+        out.append(("Non-current Assets", ""))
+        for r in asset_nc_rows:
+            out.append((r["account"], money(r["amount"])))
+        out.append(("Subtotal Non-current Assets", money(asset_nc_total)))
+
+        out.append(("Current Assets", ""))
+        for r in asset_curr_rows:
+            out.append((r["account"], money(r["amount"])))
+        out.append(("Subtotal Current Assets", money(asset_curr_total)))
+
+        out.append(("Total Assets", money(asset_total)))
+        out.append(("", ""))
+
+        out.append(("EQUITY & LIABILITIES", ""))
+
+        out.append(("Equity", ""))
+        for r in eq_rows:
+            out.append((r["account"], money(r["amount"])))
+        out.append(("Total Equity", money(eq_total)))
+
+        out.append(("Liabilities", ""))
+
+        out.append(("Non-current Liabilities", ""))
+        for r in liab_nc_rows:
+            out.append((r["account"], money(r["amount"])))
+        out.append(("Subtotal Non-current Liabilities", money(liab_nc_total)))
+
+        out.append(("Current Liabilities", ""))
+        for r in liab_curr_rows:
+            out.append((r["account"], money(r["amount"])))
+        out.append(("Subtotal Current Liabilities", money(liab_curr_total)))
+
+        out.append(("Total Liabilities", money(liab_total)))
+        out.append(("Total Equity & Liabilities", money(liab_total + eq_total)))
+
+        return out
+
+    export_rows = build_export_rows()
+
+    if export == "csv":
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_base}.csv"'
+        w = csv.writer(resp)
+
+        w.writerow(["Statement of Financial Position (Balance Sheet)"])
+        w.writerow(["Company", company_name])
+        w.writerow(["As of", asof.strftime("%d/%m/%Y")])
+        w.writerow(["Method", method_label])
+        w.writerow(["Currency", reporting_currency])
+        w.writerow([])
+
+        w.writerow(["Section / Account", "Amount"])
+        for a, b in export_rows:
+            w.writerow([a, b])
+
+        w.writerow([])
+        w.writerow(["Check Balanced", "YES" if check_ok else "NO"])
+        return resp
+
+    if export == "xlsx":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Balance Sheet"
+
+        ws.append(["Statement of Financial Position (Balance Sheet)"])
+        ws.append(["Company", company_name])
+        ws.append(["As of", asof.strftime("%d/%m/%Y")])
+        ws.append(["Method", method_label])
+        ws.append(["Currency", reporting_currency])
+        ws.append([])
+
+        ws.append(["Section / Account", "Amount"])
+        ws["A7"].font = ws["A7"].font.copy(bold=True)
+        ws["B7"].font = ws["B7"].font.copy(bold=True)
+
+        for a, b in export_rows:
+            ws.append([a, b])
+
+        ws.append([])
+        ws.append(["Check Balanced", "YES" if check_ok else "NO"])
+
+        ws.column_dimensions["A"].width = 52
+        ws.column_dimensions["B"].width = 20
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+
+        resp = HttpResponse(
+            out.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="{filename_base}.xlsx"'
+        return resp
+
+    if export == "pdf":
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+        styles = getSampleStyleSheet()
+
+        story = []
+        story.append(Paragraph("Statement of Financial Position (Balance Sheet)", styles["Title"]))
+        story.append(Paragraph(f"Company: {company_name}", styles["Normal"]))
+        story.append(Paragraph(f"As of: {asof.strftime('%d/%m/%Y')}", styles["Normal"]))
+        story.append(Paragraph(f"Method: {method_label}", styles["Normal"]))
+        story.append(Paragraph(f"Currency: {reporting_currency}", styles["Normal"]))
+        story.append(Spacer(1, 12))
+
+        data = [["Section / Account", "Amount"]]
+        for a, b in export_rows:
+            data.append([a, b])
+
+        data.append(["", ""])
+        data.append(["Check Balanced", "YES" if check_ok else "NO"])
+
+        table = Table(data, colWidths=[360, 140])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9fbef")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f5132")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e7e7e7")),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ]))
+        story.append(table)
+        doc.build(story)
+
+        pdf = buf.getvalue()
+        buf.close()
+
+        resp = HttpResponse(pdf, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_base}.pdf"'
+        return resp
+
+    # =========================================================
+    # NORMAL RENDER
+    # =========================================================
     context = {
-        "company_name": "YoAccountant",
-        "reporting_currency": "UGX",
+        "company_name": company_name,
+        "reporting_currency": reporting_currency,
         "asof": asof,
         "method": method,
         "method_label": method_label,
@@ -2024,123 +2491,89 @@ def report_balance_sheet(request):
 
 
 # cash flow
+# ------------------------------------------------------------
+# Helpers (full code)
+# ------------------------------------------------------------
+def _to_decimal(x) -> Decimal:
+    try:
+        return Decimal(str(x or "0")).quantize(Decimal("0.01"))
+    except Exception:
+        return Decimal("0.00")
 
-def _parse_date_or_none(date_str):
-    if not date_str:
+def _parse_date_or_none(s):
+    if not s:
         return None
     try:
-        return datetime.strptime(date_str, "%Y-%m-%d").date()
-    except ValueError:
+        return timezone.datetime.strptime(s, "%Y-%m-%d").date()
+    except Exception:
         return None
 
+def _normal_side(acc) -> str:
+    if getattr(acc, "level1_group", None) in ["Assets", "Expenses"]:
+        return "debit"
+    return "credit"
 
-def _balance_for_accounts(accounts_qs, date_to=None, strict_lt=False):
-    """
-    Returns debit-minus-credit balance for a set of accounts
-    up to date_to (inclusive by default, or < date_to if strict_lt=True).
-    """
-    if not accounts_qs.exists():
-        return 0
+def _apply_movement(acc, running: Decimal, debit: Decimal, credit: Decimal) -> Decimal:
+    side = _normal_side(acc)
+    if side == "debit":
+        return running + (debit - credit)
+    return running + (credit - debit)
 
-    lines = JournalLine.objects.filter(account__in=accounts_qs)
-    if date_to:
-        if strict_lt:
-            lines = lines.filter(entry__date__lt=date_to)
-        else:
-            lines = lines.filter(entry__date__lte=date_to)
+def _collect_subtree_ids(root_ids):
+    from accounts.models import Account
 
-    agg = lines.aggregate(
-        d=Sum("debit"),
-        c=Sum("credit"),
-    )
-    d = agg["d"] or 0
-    c = agg["c"] or 0
-    return d - c  # debit-positive convention
+    all_active = list(Account.objects.filter(is_active=True).only("id", "parent_id"))
+    children_by_parent = defaultdict(list)
+    for a in all_active:
+        if a.parent_id:
+            children_by_parent[a.parent_id].append(a.id)
 
-# cashflow
-def report_cashflow(request):
-    """
-    Statement of cash flows (very simplified, indirect method),
-    with drill-down links to General Ledger for key line items.
-    """
+    out = set()
+    for rid in root_ids:
+        stack = [rid]
+        while stack:
+            nid = stack.pop()
+            if nid in out:
+                continue
+            out.add(nid)
+            for ch in children_by_parent.get(nid, []):
+                stack.append(ch)
+    return list(out)
 
-    from_str = request.GET.get("from")
-    to_str = request.GET.get("to")
+def _balance_for_account_ids(account_ids, as_of_date, strict_lt=False) -> Decimal:
+    from accounts.models import JournalLine
 
-    dfrom = _parse_date_or_none(from_str)
-    dto = _parse_date_or_none(to_str)
+    if not account_ids:
+        return Decimal("0.00")
 
-    today = timezone.localdate()
-    if not dto:
-        dto = today
+    qs = JournalLine.objects.select_related("entry", "account").filter(account_id__in=account_ids)
+    if strict_lt:
+        qs = qs.filter(entry__date__lt=as_of_date)
+    else:
+        qs = qs.filter(entry__date__lte=as_of_date)
 
-    start_date = dfrom
+    running_by_acc = defaultdict(lambda: Decimal("0.00"))
 
-    # Cash & bank accounts (all asset codes, but with 'cash' or 'bank')
-    cash_accounts = Account.objects.filter(
-        account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
-    ).filter(
-        Q(detail_type__icontains="cash") |
-        Q(detail_type__icontains="bank")
-    )
+    for ln in qs:
+        acc = ln.account
+        d = _to_decimal(getattr(ln, "debit", None))
+        c = _to_decimal(getattr(ln, "credit", None))
+        running_by_acc[acc.id] = _apply_movement(acc, running_by_acc[acc.id], d, c)
 
-    # Accounts receivable
-    ar_accounts = Account.objects.filter(
-        Q(detail_type__icontains="receivable") |
-        Q(account_name__icontains="receivable")
-    )
+    total = Decimal("0.00")
+    for aid in account_ids:
+        total += running_by_acc.get(aid, Decimal("0.00"))
 
-    # Inventory
-    inv_accounts = Account.objects.filter(
-        Q(detail_type__icontains="inventory") |
-        Q(account_name__icontains="inventory")
-    )
+    return total.quantize(Decimal("0.01"))
 
-    # Accounts payable
-    ap_accounts = Account.objects.filter(
-        Q(detail_type__icontains="payable") |
-        Q(account_name__icontains="payable")
-    )
+def _period_net_profit(dfrom, dto) -> Decimal:
+    from accounts.models import JournalLine
 
-    # Fixed / other non-current assets (still asset codes)
-    fa_accounts = Account.objects.filter(
-        account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
-    ).filter(
-        Q(detail_type__icontains="fixed") |
-        Q(detail_type__icontains="property") |
-        Q(detail_type__icontains="equipment")
-    )
-
-    # Loans – liability codes
-    loan_accounts = Account.objects.filter(
-        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"]
-    ).filter(
-        Q(detail_type__icontains="loan") |
-        Q(account_name__icontains="loan")
-    )
-
-    # Equity – owner’s capital / retained earnings etc.
-    equity_accounts = Account.objects.filter(
-        account_type="OWNER_EQUITY"
-    )
-
-    # IDs used for GL drill-down (pick first if many)
-    cash_account_id = cash_accounts.first().id if cash_accounts.exists() else None
-    ar_account_id = ar_accounts.first().id if ar_accounts.exists() else None
-    inv_account_id = inv_accounts.first().id if inv_accounts.exists() else None
-    ap_account_id = ap_accounts.first().id if ap_accounts.exists() else None
-    fa_account_id = fa_accounts.first().id if fa_accounts.exists() else None
-    loans_account_id = loan_accounts.first().id if loan_accounts.exists() else None
-    equity_account_id = equity_accounts.first().id if equity_accounts.exists() else None
-
-    # ---------- Net profit for the period (from GL) ----------
-
-    period_lines = JournalLine.objects.all()
+    period_lines = JournalLine.objects.select_related("entry", "account").all()
     if dfrom:
         period_lines = period_lines.filter(entry__date__gte=dfrom)
     period_lines = period_lines.filter(entry__date__lte=dto)
 
-    # here we can still use your account_type codes:
     income_lines = period_lines.filter(
         account__account_type__in=["OPERATING_INCOME", "INVESTING_INCOME"]
     )
@@ -2154,54 +2587,321 @@ def report_cashflow(request):
     income_agg = income_lines.aggregate(d=Sum("debit"), c=Sum("credit"))
     expense_agg = expense_lines.aggregate(d=Sum("debit"), c=Sum("credit"))
 
-    income_total = (income_agg["c"] or 0) - (income_agg["d"] or 0)      # credits - debits
-    expense_total = (expense_agg["d"] or 0) - (expense_agg["c"] or 0)   # debits - credits
+    income_total = _to_decimal(income_agg["c"]) - _to_decimal(income_agg["d"])
+    expense_total = _to_decimal(expense_agg["d"]) - _to_decimal(expense_agg["c"])
 
-    net_profit = income_total - expense_total
+    return (income_total - expense_total).quantize(Decimal("0.01"))
 
-    # ---------- Opening & closing balances for key accounts ----------
+def _first_id_or_none(qs):
+    first = qs.first()
+    return first.id if first else None
 
+
+def report_cashflow(request):
+    """
+    Statement of cash flows (simplified, indirect method),
+    recalculated live from JournalLines (updated data).
+    """
+
+    from_str = request.GET.get("from")
+    to_str = request.GET.get("to")
+    export = (request.GET.get("export") or "").strip().lower()
+
+    dfrom = _parse_date_or_none(from_str)
+    dto = _parse_date_or_none(to_str)
+
+    today = timezone.localdate()
+    if not dto:
+        dto = today
+
+    start_date = dfrom
+
+    # --------------------------------------------------------
+    # Account buckets
+    # --------------------------------------------------------
+    from accounts.models import Account
+
+    cash_roots = Account.objects.filter(
+        is_active=True,
+        account_type="CURRENT_ASSET",
+    ).filter(
+        Q(detail_type__icontains="bank") |
+        Q(detail_type__icontains="cash") |
+        Q(account_name__icontains="bank") |
+        Q(account_name__icontains="cash")
+    )
+
+    ar_roots = Account.objects.filter(
+        is_active=True,
+        account_type="CURRENT_ASSET"
+    ).filter(
+        Q(detail_type__icontains="receivable") |
+        Q(account_name__icontains="receivable") |
+        Q(detail_type__icontains="a/r") |
+        Q(account_name__icontains="a/r")
+    )
+
+    inv_roots = Account.objects.filter(
+        is_active=True,
+        account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
+    ).filter(
+        Q(detail_type__icontains="inventory") |
+        Q(account_name__icontains="inventory")
+    )
+
+    ap_roots = Account.objects.filter(
+        is_active=True,
+        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"]
+    ).filter(
+        Q(detail_type__icontains="payable") |
+        Q(account_name__icontains="payable") |
+        Q(detail_type__icontains="a/p") |
+        Q(account_name__icontains="a/p")
+    )
+
+    fa_roots = Account.objects.filter(
+        is_active=True,
+        account_type="NON_CURRENT_ASSET"
+    ).filter(
+        Q(detail_type__icontains="fixed") |
+        Q(detail_type__icontains="property") |
+        Q(detail_type__icontains="equipment") |
+        Q(account_name__icontains="fixed") |
+        Q(account_name__icontains="property") |
+        Q(account_name__icontains="equipment")
+    )
+
+    loan_roots = Account.objects.filter(
+        is_active=True,
+        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"]
+    ).filter(
+        Q(detail_type__icontains="loan") |
+        Q(account_name__icontains="loan")
+    )
+
+    equity_roots = Account.objects.filter(
+        is_active=True,
+        account_type="OWNER_EQUITY"
+    )
+
+    # --------------------------------------------------------
+    # Subtree expansion (include children)
+    # --------------------------------------------------------
+    cash_ids = _collect_subtree_ids(list(cash_roots.values_list("id", flat=True)))
+    ar_ids   = _collect_subtree_ids(list(ar_roots.values_list("id", flat=True)))
+    inv_ids  = _collect_subtree_ids(list(inv_roots.values_list("id", flat=True)))
+    ap_ids   = _collect_subtree_ids(list(ap_roots.values_list("id", flat=True)))
+    fa_ids   = _collect_subtree_ids(list(fa_roots.values_list("id", flat=True)))
+    loan_ids = _collect_subtree_ids(list(loan_roots.values_list("id", flat=True)))
+    eq_ids   = _collect_subtree_ids(list(equity_roots.values_list("id", flat=True)))
+
+    cash_account_id   = _first_id_or_none(cash_roots)
+    ar_account_id     = _first_id_or_none(ar_roots)
+    inv_account_id    = _first_id_or_none(inv_roots)
+    ap_account_id     = _first_id_or_none(ap_roots)
+    fa_account_id     = _first_id_or_none(fa_roots)
+    loans_account_id  = _first_id_or_none(loan_roots)
+    equity_account_id = _first_id_or_none(equity_roots)
+
+    # --------------------------------------------------------
+    # Net profit
+    # --------------------------------------------------------
+    net_profit = _period_net_profit(dfrom, dto)
+
+    # --------------------------------------------------------
+    # Opening balances (strictly before start_date)
+    # --------------------------------------------------------
     if start_date:
-        cash_start   = _balance_for_accounts(cash_accounts, start_date, strict_lt=True)
-        ar_start     = _balance_for_accounts(ar_accounts, start_date, strict_lt=True)
-        inv_start    = _balance_for_accounts(inv_accounts, start_date, strict_lt=True)
-        ap_start     = _balance_for_accounts(ap_accounts, start_date, strict_lt=True)
-        fa_start     = _balance_for_accounts(fa_accounts, start_date, strict_lt=True)
-        loans_start  = _balance_for_accounts(loan_accounts, start_date, strict_lt=True)
-        equity_start = _balance_for_accounts(equity_accounts, start_date, strict_lt=True)
+        cash_start   = _balance_for_account_ids(cash_ids, start_date, strict_lt=True)
+        ar_start     = _balance_for_account_ids(ar_ids, start_date, strict_lt=True)
+        inv_start    = _balance_for_account_ids(inv_ids, start_date, strict_lt=True)
+        ap_start     = _balance_for_account_ids(ap_ids, start_date, strict_lt=True)
+        fa_start     = _balance_for_account_ids(fa_ids, start_date, strict_lt=True)
+        loans_start  = _balance_for_account_ids(loan_ids, start_date, strict_lt=True)
+        equity_start = _balance_for_account_ids(eq_ids, start_date, strict_lt=True)
     else:
-        cash_start = ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = 0
+        cash_start = ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = Decimal("0.00")
 
-    cash_end   = _balance_for_accounts(cash_accounts, dto)
-    ar_end     = _balance_for_accounts(ar_accounts, dto)
-    inv_end    = _balance_for_accounts(inv_accounts, dto)
-    ap_end     = _balance_for_accounts(ap_accounts, dto)
-    fa_end     = _balance_for_accounts(fa_accounts, dto)
-    loans_end  = _balance_for_accounts(loan_accounts, dto)
-    equity_end = _balance_for_accounts(equity_accounts, dto)
+    # --------------------------------------------------------
+    # Closing balances (<= dto)
+    # --------------------------------------------------------
+    cash_end   = _balance_for_account_ids(cash_ids, dto)
+    ar_end     = _balance_for_account_ids(ar_ids, dto)
+    inv_end    = _balance_for_account_ids(inv_ids, dto)
+    ap_end     = _balance_for_account_ids(ap_ids, dto)
+    fa_end     = _balance_for_account_ids(fa_ids, dto)
+    loans_end  = _balance_for_account_ids(loan_ids, dto)
+    equity_end = _balance_for_account_ids(eq_ids, dto)
 
-    # ---------- Deltas (end - start) ----------
+    # --------------------------------------------------------
+    # Deltas (end - start)
+    # --------------------------------------------------------
+    delta_ar     = (ar_end - ar_start).quantize(Decimal("0.01"))
+    delta_inv    = (inv_end - inv_start).quantize(Decimal("0.01"))
+    delta_ap     = (ap_end - ap_start).quantize(Decimal("0.01"))
+    delta_fa     = (fa_end - fa_start).quantize(Decimal("0.01"))
+    delta_loans  = (loans_end - loans_start).quantize(Decimal("0.01"))
+    delta_equity = (equity_end - equity_start).quantize(Decimal("0.01"))
 
-    delta_ar     = ar_end - ar_start
-    delta_inv    = inv_end - inv_start
-    delta_ap     = ap_end - ap_start
-    delta_fa     = fa_end - fa_start
-    delta_loans  = loans_end - loans_start
-    delta_equity = equity_end - equity_start
+    # --------------------------------------------------------
+    # Indirect cash flows (unchanged)
+    # --------------------------------------------------------
+    cash_from_ops       = (net_profit - delta_ar - delta_inv + delta_ap).quantize(Decimal("0.01"))
+    cash_from_investing = (-delta_fa).quantize(Decimal("0.01"))
+    cash_from_financing = (delta_loans + delta_equity).quantize(Decimal("0.01"))
 
-    # ---------- Cash flows ----------
+    net_change = (cash_from_ops + cash_from_investing + cash_from_financing).quantize(Decimal("0.01"))
+    recon_ok = (cash_start + net_change).quantize(Decimal("0.01")) == cash_end.quantize(Decimal("0.01"))
 
-    cash_from_ops       = net_profit - delta_ar - delta_inv + delta_ap
-    cash_from_investing = -delta_fa
-    cash_from_financing = delta_loans + delta_equity
+    company_name = "YoAccountant"
+    reporting_currency = "UGX"
 
-    net_change = cash_from_ops + cash_from_investing + cash_from_financing
+    # =========================================================
+    # ✅ EXPORTS (CSV / EXCEL / PDF) — NO CHANGE TO CALCULATIONS
+    # =========================================================
+    period_label = f"{dfrom.strftime('%Y-%m-%d') if dfrom else 'None'}_to_{dto.strftime('%Y-%m-%d') if dto else 'None'}"
 
-    recon_ok = round(cash_start + net_change, 2) == round(cash_end, 2)
+    export_rows = [
+        ("Cash Flows from Operating Activities", "", ""),
+        ("Net Profit", reporting_currency, net_profit),
+        ("Change in Accounts Receivable", reporting_currency, delta_ar),
+        ("Change in Inventory", reporting_currency, delta_inv),
+        ("Change in Accounts Payable", reporting_currency, delta_ap),
+        ("Net Cash from Operating Activities", reporting_currency, cash_from_ops),
+        ("", "", ""),
 
+        ("Cash Flows from Investing Activities", "", ""),
+        ("Change in Fixed/Other Assets", reporting_currency, delta_fa),
+        ("Net Cash from Investing Activities", reporting_currency, cash_from_investing),
+        ("", "", ""),
+
+        ("Cash Flows from Financing Activities", "", ""),
+        ("Change in Loans", reporting_currency, delta_loans),
+        ("Change in Equity", reporting_currency, delta_equity),
+        ("Net Cash from Financing Activities", reporting_currency, cash_from_financing),
+        ("", "", ""),
+
+        ("Net Change in Cash", "", ""),
+        ("Cash at Start", reporting_currency, cash_start),
+        ("Net Change in Cash", reporting_currency, net_change),
+        ("Cash at End", reporting_currency, cash_end),
+        ("Reconciliation OK", "", "YES" if recon_ok else "NO"),
+    ]
+
+    if export == "csv":
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = f'attachment; filename="cashflow_{period_label}.csv"'
+        w = csv.writer(resp)
+        w.writerow(["Statement of Cash Flows", company_name])
+        w.writerow(["Period", f"{dfrom.strftime('%d/%m/%Y') if dfrom else 'None'} - {dto.strftime('%d/%m/%Y') if dto else 'None'}"])
+        w.writerow(["Reporting Currency", reporting_currency])
+        w.writerow([])
+        w.writerow(["Line", "Currency", "Amount"])
+        for label, cur, amt in export_rows:
+            if label == "" and cur == "" and amt == "":
+                w.writerow([])
+            else:
+                w.writerow([label, cur, str(amt)])
+        return resp
+
+    if export == "excel":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Cashflow"
+
+        ws.append(["Statement of Cash Flows", company_name])
+        ws.append(["Period", f"{dfrom.strftime('%d/%m/%Y') if dfrom else 'None'} - {dto.strftime('%d/%m/%Y') if dto else 'None'}"])
+        ws.append(["Reporting Currency", reporting_currency])
+        ws.append([])
+        ws.append(["Line", "Currency", "Amount"])
+
+        for label, cur, amt in export_rows:
+            if label == "" and cur == "" and amt == "":
+                ws.append([])
+            else:
+                ws.append([label, cur, float(amt) if isinstance(amt, Decimal) else amt])
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+
+        resp = HttpResponse(
+            bio.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        resp["Content-Disposition"] = f'attachment; filename="cashflow_{period_label}.xlsx"'
+        return resp
+
+    if export == "pdf":
+        bio = BytesIO()
+        c = canvas.Canvas(bio, pagesize=A4)
+        width, height = A4
+
+        y = height - 50
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y, "Statement of Cash Flows")
+        y -= 18
+
+        c.setFont("Helvetica", 10)
+        c.drawString(50, y, f"Company: {company_name}")
+        y -= 14
+        c.drawString(50, y, f"Period: {dfrom.strftime('%d/%m/%Y') if dfrom else 'None'} – {dto.strftime('%d/%m/%Y') if dto else 'None'}")
+        y -= 14
+        c.drawString(50, y, f"Reporting Currency: {reporting_currency}")
+        y -= 20
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(50, y, "Line")
+        c.drawString(360, y, "Amount")
+        y -= 10
+        c.line(50, y, width - 50, y)
+        y -= 14
+
+        c.setFont("Helvetica", 10)
+
+        for label, cur, amt in export_rows:
+            if label == "" and cur == "" and amt == "":
+                y -= 10
+                continue
+
+            if y < 60:
+                c.showPage()
+                y = height - 60
+                c.setFont("Helvetica-Bold", 10)
+                c.drawString(50, y, "Line")
+                c.drawString(360, y, "Amount")
+                y -= 10
+                c.line(50, y, width - 50, y)
+                y -= 14
+                c.setFont("Helvetica", 10)
+
+            if cur == "" and (amt == "" or isinstance(amt, str)):
+                # section header
+                c.setFont("Helvetica-Bold", 10)
+                c.drawString(50, y, str(label))
+                c.setFont("Helvetica", 10)
+            else:
+                c.drawString(50, y, str(label))
+                amt_str = str(amt)
+                if cur:
+                    amt_str = f"{amt_str} {cur}"
+                c.drawRightString(width - 50, y, amt_str)
+
+            y -= 14
+
+        c.save()
+        bio.seek(0)
+
+        resp = HttpResponse(bio.getvalue(), content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="cashflow_{period_label}.pdf"'
+        return resp
+
+    # --------------------------------------------------------
+    # Normal render
+    # --------------------------------------------------------
     context = {
-        "company_name": "YoAccountant",
-        "reporting_currency": "UGX",
+        "company_name": company_name,
+        "reporting_currency": reporting_currency,
         "dfrom": dfrom,
         "dto": dto,
 
@@ -2213,7 +2913,7 @@ def report_cashflow(request):
         "delta_loans": delta_loans,
         "delta_equity": delta_equity,
 
-        "cash_from_ops":       cash_from_ops,
+        "cash_from_ops": cash_from_ops,
         "cash_from_investing": cash_from_investing,
         "cash_from_financing": cash_from_financing,
 

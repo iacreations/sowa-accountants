@@ -333,7 +333,30 @@ box-sizing: border-box;
 {% include 'includes/sidebar.html' %}
 
 <div class="action" id="action">
-  <h1 style="color: #39B54B; font-weight: 600;">HOME</h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <h1 style="color: #39B54B; font-weight: 600; margin:0;">HOME</h1>
+
+    <!-- ✅ NEW: Welcome message (no style changes, inline only) -->
+    {% if request.user.is_authenticated %}
+      <span style="
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        padding:6px 10px;
+        border-radius:999px;
+        background:#e8fbef;
+        border:1px solid #c7f1d6;
+        color:#0b3518;
+        font-weight:800;
+        font-size:12px;
+        white-space:nowrap;
+      ">
+        <i class='bx bx-smile' style="color:#39B54B;"></i>
+        Welcome, {{ request.user.username }}
+      </span>
+    {% endif %}
+  </div>
+
   <div class="search_bar" id="search" style="width: 25%;">
     <input type="text" placeholder="Search Home" />
   </div>
@@ -436,7 +459,6 @@ box-sizing: border-box;
     <label for="tab2" class="tabs_label">Business Overview</label>
 
     <div class="tab-content">
-      <!-- Anchor to return here after refresh -->
       <div id="business-overview"></div>
 
       <div class="qb-grid">
@@ -595,7 +617,6 @@ box-sizing: border-box;
   </div>
 </div>
 
-<!-- JSON blobs for the QB tiles charts only -->
 {{ exp_labels|json_script:"expLabelsJson" }}
 {{ exp_values|json_script:"expValuesJson" }}
 {{ sales_tile.labels|json_script:"salesLabelsJson" }}
@@ -607,10 +628,7 @@ function setRangeParam(paramName, val){
   const url = new URL(window.location.href);
   url.searchParams.set(paramName, val);
 
-  // ✅ keep Business Overview tab active after reload
   url.searchParams.set("tab", "tab2");
-
-  // ✅ jump back to business overview section after reload
   url.hash = "business-overview";
 
   window.location.href = url.toString();
@@ -623,7 +641,6 @@ document.addEventListener('DOMContentLoaded', function(){
     try { return JSON.parse(el.textContent) ?? fb; } catch { return fb; }
   };
 
-  // ✅ If user loaded page with ?tab=tab2, ensure browser jumps to business overview
   const u = new URL(window.location.href);
   if (u.searchParams.get("tab") === "tab2") {
     const anchor = document.getElementById("business-overview");
@@ -635,7 +652,6 @@ document.addEventListener('DOMContentLoaded', function(){
   const salesLabels = safeParse("salesLabelsJson", []);
   const salesValues = safeParse("salesValuesJson", []).map(n => Number(n)||0);
 
-  // Expenses donut
   const expCanvas = document.getElementById("expDonut");
   if (expCanvas){
     new Chart(expCanvas, {
@@ -645,7 +661,6 @@ document.addEventListener('DOMContentLoaded', function(){
     });
   }
 
-  // Sales line
   const salesCanvas = document.getElementById("salesLine");
   if (salesCanvas){
     new Chart(salesCanvas, {

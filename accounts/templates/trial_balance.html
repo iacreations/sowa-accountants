@@ -25,7 +25,7 @@
 
     .subbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:10px}
     .muted{color:var(--muted)}
-    .range{display:flex;gap:8px;align-items:center}
+    .range{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
     .range input[type="date"]{
       border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff;
     }
@@ -51,6 +51,7 @@
 </head>
 <body>
   <a href="{% url 'accounts:reports' %}" style="color: #39B54B; font-weight: 900; text-decoration: none; margin-left: 3%;"> &lt; Back to Reports </a>
+
   <div class="wrap my-5">
     <div class="subbar">
       <div>
@@ -70,12 +71,20 @@
       <form method="get" class="range">
         <label class="muted" for="from">From</label>
         <input id="from" type="date" name="from" value="{{ dfrom|date:'Y-m-d' }}">
+
         <label class="muted" for="to">To</label>
         <input id="to" type="date" name="to" value="{{ dto|date:'Y-m-d' }}">
+
         <button class="btn" type="submit">Run</button>
+
         {% if dfrom or dto %}
           <a class="btn light" href="{% url 'accounts:report-trial-balance' %}">Clear</a>
         {% endif %}
+
+        <!-- ✅ Export buttons (keeps filters) -->
+        <button class="btn light" name="export" value="csv" type="submit">Export CSV</button>
+        <button class="btn light" name="export" value="xlsx" type="submit">Export Excel</button>
+        <button class="btn light" name="export" value="pdf" type="submit">Export PDF</button>
       </form>
     </div>
 

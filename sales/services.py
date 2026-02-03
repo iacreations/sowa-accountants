@@ -100,9 +100,14 @@ TERMS_DAYS = {
 
 def _as_date(d):
     """
-    Normalize a value to datetime.date.
-    Handles datetime.datetime, datetime.date, or None.
+    Normalize a value that could be:
+    - None
+    - datetime.date
+    - datetime.datetime
+    into a datetime.date (or None)
     """
+    if d is None:
+        return None
     if isinstance(d, datetime):
         return d.date()
     if isinstance(d, date):
@@ -155,6 +160,8 @@ def status_for_invoice(inv, total_due: Decimal, total_paid: Decimal, balance: De
         if total_paid > 0
         else f"{balance:,.0f} is remaining"
     )
+
+
 def _payment_prefill_rows(payment):
     """
     Returns a dict the template expects:
@@ -178,13 +185,12 @@ def _payment_prefill_rows(payment):
         total_due = Decimal(inv.total_due or 0)
         amount_applied = Decimal(pi.amount_paid or 0)
 
-        # remaining within THIS payment (for a single row it's amount_applied - amount_applied = 0)
         remaining_this_payment = Decimal("0.00")
 
-        # outstanding now = total_due - all payments applied to that invoice (including this one)
         total_paid_now = inv.payments_applied.aggregate(
             s=Coalesce(Sum("amount_paid"), Value(Decimal("0.00")))
         )["s"] or Decimal("0.00")
+
         outstanding_now_row = total_due - total_paid_now
         if outstanding_now_row < 0:
             outstanding_now_row = Decimal("0.00")
@@ -204,11 +210,10 @@ def _payment_prefill_rows(payment):
     return {
         "payment": payment,
         "lines": lines,
-        "applied_total": applied_total,  # never None
+        "applied_total": applied_total,
         "remaining_total_this_payment": remaining_total_this_payment,
         "outstanding_total_now": outstanding_total_now,
     }
-
 
 
 # working on the sales receipt

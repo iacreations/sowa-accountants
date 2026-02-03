@@ -1,8 +1,6 @@
 {% load static %}
 {% load humanize %}
 
-{% include 'includes/navbar.html' %}
-{% include 'includes/sidebar.html' %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,7 +13,7 @@
   <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}"/>
 
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif;}
     body { background: #f4f6f8; padding: 30px; }
     .container { background: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 90%; margin: auto; }
     h2.title { text-align: center; color: #39B54B; margin-bottom: 25px; font-size: 28px; font-weight: 700; }
@@ -67,9 +65,187 @@
       #home{ margin-top: -10%; }
       .container{ width: 65%; margin-top: 5%; margin-left: 25%; }
     }
+
+/* Navbar styles*/
+ @media only screen and (max-width: 600px) {
+        .search_bar{
+          display: none;
+        }
+        .logo_item{
+          padding: 5px;
+          margin: 3%;
+        }
+
+        #iconDropdown {
+          display: block;
+          background-color: rgb(7, 142, 36);
+          border-radius: 20px;
+        }
+        #iconDropdown #btn{
+          float: left;
+          color: rgb(7, 142, 36);
+        }
+        #dropdownMenu{
+          background-color: rgb(7, 142, 36);
+          color: white;
+          float: left;
+        }
+        #action{
+          width: 50%;
+        }
+      }
+
+      /* Settings Center overlay (QuickBooks style) */
+      .settings-center-overlay{
+        display:none;
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.35);
+        z-index:9999;
+        justify-content:center;
+        align-items:center;
+      }
+      .settings-center-panel{
+        background:#ffffff;
+        border-radius:12px;
+        max-width:900px;
+        width:92%;
+        padding:18px 20px 20px;
+        box-shadow:0 12px 32px rgba(0,0,0,.25);
+      }
+      .settings-center-header{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:10px;
+      }
+      .settings-center-header h3{
+        margin:0;
+        font-size:18px;
+        font-weight:700;
+      }
+      .settings-center-close{
+        border:0;
+        background:transparent;
+        cursor:pointer;
+        font-size:20px;
+      }
+      .settings-center-grid{
+        display:grid;
+        grid-template-columns:1.2fr 1.2fr 1.2fr 1.1fr;
+        gap:18px;
+        margin-top:10px;
+      }
+      .settings-center-col-title{
+        font-size:12px;
+        text-transform:uppercase;
+        letter-spacing:.08em;
+        color:#6b7280;
+        margin-bottom:6px;
+      }
+      .settings-link{
+        display:block;
+        padding:6px 0;
+        font-size:14px;
+        color:#111827;
+        text-decoration:none;
+      }
+      .settings-link:hover{
+        color:#39B54B;
+      }
+
+      /* ✅ NEW: Avatar (image or first letter) - added styles only */
+      .nav-avatar{
+        width:34px;
+        height:34px;
+        border-radius:50%;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        overflow:hidden;
+        border:2px solid rgba(57,181,75,.35);
+        background:#e8fbef;
+        font-weight:900;
+        font-size:14px;
+        color:#0b3518;
+        cursor:pointer;
+        user-select:none;
+      }
+      .nav-avatar img{
+        width:100%;
+        height:100%;
+        object-fit:cover;
+        display:block;
+      }
   </style>
 </head>
 <body>
+{% include 'includes/sidebar.html' %}
+    <!-- navbar -->
+    <nav class="navbar w3-row-padding">
+      <div class="logo_item">
+        <i class="bx bx-menu" id="sidebarOpen"></i>
+        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt="">
+        YoAccountant
+      </div>
+
+      <div class="search_bar">
+        <input type="text" placeholder="Search" />
+      </div>
+
+      <!-- icons on drop down in small screens -->
+      <div class="dropdown" id="iconDropdown">
+        <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
+          <i class='bx bx-menu'></i>
+        </button>
+        <div class="dropdown-menu" id="dropdownMenu">
+          <i class="bi bi-grid"></i>
+          <i class='bx bx-sun' id="darkLight"></i>
+          <a href="javascript:void(0);" onclick="openSettingsCenter()"><i class='bx bx-cog'></i></a>
+          <i class='bx bx-bell'></i>
+
+          <!-- ✅ UPDATED: avatar in dropdown -->
+          {% if request.user.is_authenticated %}
+            <a href="javascript:void(0);" onclick="openSettingsCenter()" style="text-decoration:none;">
+              <span class="nav-avatar" title="{{ request.user.username }}">
+                {% if request.user.profile_image %}
+                  <img src="{{ request.user.profile_image.url }}" alt="{{ request.user.username }}">
+                {% else %}
+                  {{ request.user.username|slice:":1"|upper }}
+                {% endif %}
+              </span>
+            </a>
+          {% else %}
+            <i class='bx bx-user-circle'></i>
+          {% endif %}
+
+          <i class='bx bxs-down-arrow'></i>
+        </div>
+      </div>
+
+      <div class="navbar_content" id="icons">
+        <i class="bi bi-grid"></i>
+        <i class='bx bx-sun' id="darkLight"></i>
+        <a href="javascript:void(0);" onclick="openSettingsCenter()"><i class='bx bx-cog'></i></a>
+        <i class='bx bx-bell'></i>
+
+        <!-- ✅ UPDATED: avatar on main navbar -->
+        {% if request.user.is_authenticated %}
+        
+            <span class="nav-avatar" title="{{ request.user.username }}">
+              {% if request.user.profile_image %}
+                <img src="{{ request.user.profile_image.url }}" alt="{{ request.user.username }}">
+              {% else %}
+                {{ request.user.username|slice:":1"|upper }}
+              {% endif %}
+            </span>
+        {% else %}
+          <i class='bx bx-user-circle'></i>
+        {% endif %}
+
+        <i class='bx bxs-down-arrow'></i>
+      </div>
+    </nav>
   <a href="" class="btn button">Back to Product List</a>
   <div class="container">
     <h2 class="title">{% if edit_mode %}Edit{% else %}New{% endif %} Product/Service</h2>
@@ -516,5 +692,4 @@
       });
     }
   </script>
-</body>
-</html>
+{% include 'includes/footer.html' %}

@@ -17,7 +17,6 @@
 
   body{ background:var(--yo-bg); }
 
-  /* page layout (match your sidebar spacing) */
   .inv-wrap{
     width:80%;
     margin-left:20%;
@@ -33,7 +32,6 @@
     }
   }
 
-  /* header card */
   .inv-hero{
     background:linear-gradient(135deg, rgba(57,181,75,.12) 0%, rgba(255,255,255,1) 45%, rgba(57,181,75,.08) 100%);
     border:1px solid rgba(57,181,75,.18);
@@ -66,7 +64,6 @@
     font-size:13px;
   }
 
-  /* actions */
   .inv-actions{
     display:flex;
     gap:10px;
@@ -93,7 +90,6 @@
   .yo-btn-soft{ background:#f0fdf4; color:#166534; border:1px solid #cceedd; box-shadow:none; }
   .yo-btn-soft:hover{ box-shadow:0 10px 22px rgba(0,0,0,.08); }
 
-  /* search + filter bar */
   .inv-tools{
     margin-top:14px;
     display:flex;
@@ -161,7 +157,6 @@
   .chip.paid small{ background:#e8f5e9; color:#2e7d32; }
   .chip.partial small{ background:#fff8e1; color:#a05a00; }
 
-  /* table card */
   .inv-card{
     margin-top:14px;
     background:var(--card);
@@ -187,29 +182,40 @@
     color:var(--muted); font-weight:800;
   }
 
+  /* Sales-table feel */
   table{ width:100%; border-collapse:separate; border-spacing:0; }
-  thead th{
-    position:sticky; top:0;
-    background:#f9fafb;
-    color:#0b3518;
+
+  #invoiceTable thead th{
+    background:#185a2e;
+    color:#fff;
     font-weight:900;
-    font-size:13px;
-    border-bottom:1px solid #eef0f2;
-    padding:12px 12px;
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    padding:14px 12px;
     white-space:nowrap;
+    border-bottom:0;
   }
-  tbody td{
-    padding:12px 12px;
+  #invoiceTable thead th:first-child{ border-top-left-radius:12px; }
+  #invoiceTable thead th:last-child{ border-top-right-radius:12px; }
+
+  #invoiceTable tbody td{
+    padding:14px 12px;
     border-bottom:1px solid #f1f3f5;
     vertical-align:middle;
     font-weight:700;
     color:#111;
+    background:#fff;
   }
-  tbody tr:hover{ background:#f6fef8; }
+  #invoiceTable tbody tr:nth-child(even) td{
+    background:#f3f3f3;
+  }
+  #invoiceTable tbody tr:hover td{
+    background:#f6fef8 !important;
+  }
 
   .muted{ color:var(--muted); font-weight:700; }
 
-  /* status badges */
   .badge{
     display:inline-block; padding:4px 10px; border-radius:999px;
     font-weight:900; font-size:12px; white-space:nowrap;
@@ -220,7 +226,6 @@
   .badge-warning  { background:#fff8e1; color:#a05a00; }
   .badge-neutral  { background:#f2f2f2; color:#444; }
 
-  /* dropdown */
   .action-cell { white-space: nowrap; text-align: left; }
   .row-actions { display:inline-flex; align-items:center; gap:8px; position:relative; }
 
@@ -246,11 +251,40 @@
     text-decoration:none; font-weight:800;
   }
   .flyout a:hover{ background:#f6fef8; }
+
+  tr.click-row { cursor:pointer; }
+
+  /* modal */
+  .yo-modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.35);
+    display:none; align-items:center; justify-content:center; z-index:9999;
+  }
+  .yo-modal-backdrop.show{ display:flex; }
+  .yo-modal{
+    width:min(520px, 92vw);
+    background:#fff; border-radius:16px; box-shadow:0 18px 44px rgba(0,0,0,.2);
+    border:1px solid #e6e6e6; overflow:hidden;
+  }
+  .yo-modal-header{
+    padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    border-bottom:1px solid #eef0f2;
+  }
+  .yo-modal-header .title{ font-weight:900; color:#0b3518; }
+  .yo-modal-body{ padding:12px 14px; }
+  .yo-modal-footer{
+    padding:12px 14px; display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;
+    border-top:1px solid #eef0f2;
+  }
+  .yo-check{
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px; border:1px solid #eef0f2; border-radius:12px;
+    background:#fff;
+  }
+  .yo-check input{ width:18px; height:18px; }
 </style>
 
 <div class="inv-wrap">
 
-  <!-- HERO -->
   <div class="inv-hero">
     <div class="inv-hero-top">
       <div class="inv-title">
@@ -263,7 +297,6 @@
           <i class='bx bx-folder-plus'></i> Add New
         </a>
 
-        <!-- import (auto submit) -->
         <form action="{% url 'sowaf:import-customers' %}" method="POST" enctype="multipart/form-data" style="display:flex;">
           {% csrf_token %}
           <input type="file" name="excel_file" accept=".xlsx, .xls, .csv" required style="display:none;" id="excelInput" onchange="this.form.submit()"/>
@@ -271,18 +304,10 @@
             <i class='bx bx-import'></i> Import
           </label>
         </form>
-
-        <!-- keep your export link as-is -->
-        <a class="yo-btn yo-btn-soft" href="{% url 'sowaf:add-customer' %}">
-          <i class='bx bx-export'></i> Export
-        </a>
       </div>
     </div>
 
-    <!-- SEARCH + FILTER -->
     <div class="inv-tools">
-
-      <!-- ✅ LIVE SEARCH INPUT (no form submit) -->
       <div class="search-box" style="margin:0;">
         <i class='bx bx-search'></i>
         <input
@@ -295,68 +320,70 @@
       </div>
 
       <div class="chips">
-        <a class="chip {% if status_filter == 'all' %}active{% endif %}"
-           href="?status=all{% if q %}&q={{ q|urlencode }}{% endif %}">
-          All <small>{{ counts.all|default:0 }}</small>
+        <a class="chip {% if status_filter == 'all' %}active{% endif %}" href="?status=all">
+          All <small>{{ total_all|default:0 }}</small>
         </a>
 
-        <a class="chip overdue {% if status_filter == 'overdue' %}active{% endif %}"
-           href="?status=overdue{% if q %}&q={{ q|urlencode }}{% endif %}">
+        <a class="chip overdue {% if status_filter == 'overdue' %}active{% endif %}" href="?status=overdue">
           Overdue <small>{{ counts.overdue|default:0 }}</small>
         </a>
 
-        <a class="chip partial {% if status_filter == 'partial' %}active{% endif %}"
-           href="?status=partial{% if q %}&q={{ q|urlencode }}{% endif %}">
+        <a class="chip partial {% if status_filter == 'partial' %}active{% endif %}" href="?status=partial">
           Partially Paid <small>{{ counts.partial|default:0 }}</small>
         </a>
 
-        <a class="chip paid {% if status_filter == 'paid' %}active{% endif %}"
-           href="?status=paid{% if q %}&q={{ q|urlencode }}{% endif %}">
+        <a class="chip paid {% if status_filter == 'paid' %}active{% endif %}" href="?status=paid">
           Paid <small>{{ counts.paid|default:0 }}</small>
         </a>
       </div>
     </div>
   </div>
 
-  <!-- TABLE -->
   <div class="inv-card">
     <div class="inv-card-header">
       <div class="left">
         <span>Showing</span> <span id="rowCount">{{ invoices|length }}</span> <span>invoice(s)</span>
       </div>
 
-      <a href="{% url 'sowaf:import_customers_template' %}" class="yo-btn yo-btn-soft" style="box-shadow:none;">
-        Template
-      </a>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button type="button" id="openColumns" class="yo-btn yo-btn-soft" style="box-shadow:none;">
+          Customize
+        </button>
+
+        <a href="{% url 'sowaf:import_customers_template' %}" class="yo-btn yo-btn-soft" style="box-shadow:none;">
+          Template
+        </a>
+      </div>
     </div>
 
-    <div style="overflow:auto;">
-      <table>
+    <div style="overflow-x:auto; overflow-y:visible; padding:14px;">
+      <table id="invoiceTable">
         <thead>
-          <tr>
-            <th>Invoice no.</th>
-            <th>Customer Name</th>
-            <th>Created date</th>
-            <th>Due date</th>
-            <th>Email</th>
-            <th>Billing address</th>
-            <th>Status</th>
-            <th>Actions ▾</th>
+          <tr id="headRow">
+            {% for key in column_order %}
+              {% if key == "invoice_no" %}<th data-col="invoice_no">Invoice no.</th>{% endif %}
+              {% if key == "customer" %}<th data-col="customer">Customer Name</th>{% endif %}
+              {% if key == "created" %}<th data-col="created">Created date</th>{% endif %}
+              {% if key == "due" %}<th data-col="due">Due date</th>{% endif %}
+              {% if key == "email" %}<th data-col="email">Email</th>{% endif %}
+              {% if key == "billing" %}<th data-col="billing">Billing address</th>{% endif %}
+              {% if key == "status" %}<th data-col="status">Status</th>{% endif %}
+              {% if key == "actions" %}<th data-col="actions">Actions ▾</th>{% endif %}
+            {% endfor %}
           </tr>
         </thead>
 
-        <!-- ✅ tbody has an id so we can replace rows via AJAX -->
         <tbody id="invoiceTableBody">
           {% for inv in invoices %}
-            <tr>
-              <td>#{{ inv.id|stringformat:"04d" }}</td>
-              <td>{{ inv.customer.customer_name }}</td>
-              <td class="muted">{{ inv.date_created|date:"d/m/Y" }}</td>
-              <td class="muted">{{ inv.due_date|date:"d/m/Y" }}</td>
-              <td class="muted">{{ inv.email|default:"—" }}</td>
-              <td class="muted">{{ inv.billing_address|default:"—" }}</td>
+            <tr class="click-row" data-edit-url="{% url 'sales:edit-invoice' inv.id %}">
+              <td data-col="invoice_no">#{{ inv.id|stringformat:"04d" }}</td>
+              <td data-col="customer">{{ inv.customer.customer_name }}</td>
+              <td data-col="created" class="muted">{{ inv.date_created|date:"d/m/Y" }}</td>
+              <td data-col="due" class="muted">{{ inv.due_date|date:"d/m/Y" }}</td>
+              <td data-col="email" class="muted">{{ inv.email|default:"—" }}</td>
+              <td data-col="billing" class="muted">{{ inv.billing_address|default:"—" }}</td>
 
-              <td>
+              <td data-col="status">
                 {% with s=inv.status %}
                   {% if "Overdue" in s %}
                     <span class="badge badge-overdue">{{ s }}</span>
@@ -372,7 +399,7 @@
                 {% endwith %}
               </td>
 
-              <td class="action-cell">
+              <td data-col="actions" class="action-cell" data-no-row-click="1">
                 <div class="row-actions">
                   <a class="edit-link" href="{% url 'sales:edit-invoice' inv.id %}">Edit</a>
 
@@ -397,8 +424,56 @@
 
 </div>
 
+<!-- Columns Modal -->
+<div class="yo-modal-backdrop" id="columnsBackdrop" aria-hidden="true">
+  <div class="yo-modal" role="dialog" aria-modal="true" aria-labelledby="colsTitle">
+    <div class="yo-modal-header">
+      <div class="title" id="colsTitle">Customize Columns</div>
+      <button type="button" class="kebab" id="closeColumns" aria-label="Close">✕</button>
+    </div>
+
+    <div class="yo-modal-body">
+      <div style="margin-bottom:10px; font-weight:800; color:#0b3518;">
+        Drag to reorder + tick to show/hide
+      </div>
+
+      <div id="colList" style="display:flex; flex-direction:column; gap:10px;">
+        {% for key,label in all_columns %}
+          <div class="yo-check" draggable="true" data-key="{{ key }}" style="cursor:grab;">
+            <input type="checkbox" value="{{ key }}" class="col-check">
+            <span style="flex:1;">{{ label }}</span>
+            <span style="color:#6b7280;">⋮⋮</span>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div style="margin-top:10px; color:#6b7280; font-weight:700; font-size:12px;">
+        Tip: keep “Actions” visible for View / Print.
+      </div>
+    </div>
+
+    <div class="yo-modal-footer">
+      <button type="button" class="yo-btn yo-btn-soft" id="resetCols" style="box-shadow:none;">Reset</button>
+      <button type="button" class="yo-btn yo-btn-primary" id="saveCols">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
-  // ✅ Keep your per-row action dropdown behavior
+  // Row click -> edit page (but ignore actions)
+  document.addEventListener("click", function(e){
+    const actionArea = e.target.closest("[data-no-row-click='1']");
+    const isInsideMenu = e.target.closest(".menu-wrap") || e.target.closest(".flyout") || e.target.closest(".kebab");
+    const isLinkOrButton = e.target.closest("a") || e.target.closest("button");
+    if (actionArea || isInsideMenu || isLinkOrButton) return;
+
+    const row = e.target.closest("tr.click-row");
+    if (row && row.dataset.editUrl){
+      window.location.href = row.dataset.editUrl;
+    }
+  });
+
+  // dropdown menus
   document.addEventListener('click', function(e) {
     const btn = e.target.closest('.kebab');
 
@@ -428,7 +503,7 @@
     }
   });
 
-  // ✅ LIVE SEARCH (search as you type)
+  // LIVE SEARCH
   (function(){
     const searchInput = document.getElementById("liveSearch");
     const tableBody = document.getElementById("invoiceTableBody");
@@ -460,21 +535,23 @@
       if (!rows || !rows.length){
         tableBody.innerHTML = `<tr><td colspan="8" style="padding:16px; text-align:center; color:#6b7280;">No results</td></tr>`;
         if(rowCount) rowCount.textContent = "0";
+        if (window.__applyOrder) window.__applyOrder(window.__currentOrder || []);
+        if (window.__applyColumns) window.__applyColumns(window.__currentVisible || []);
         return;
       }
 
       rows.forEach(r => {
         const cls = badgeClass(r.status);
         tableBody.insertAdjacentHTML("beforeend", `
-          <tr>
-            <td>#${r.id}</td>
-            <td>${r.customer}</td>
-            <td class="muted">${r.created}</td>
-            <td class="muted">${r.due}</td>
-            <td class="muted">${r.email}</td>
-            <td class="muted">${r.billing}</td>
-            <td><span class="badge ${cls}">${r.status}</span></td>
-            <td class="action-cell">
+          <tr class="click-row" data-edit-url="${r.edit_url}">
+            <td data-col="invoice_no">#${r.id}</td>
+            <td data-col="customer">${r.customer}</td>
+            <td data-col="created" class="muted">${r.created}</td>
+            <td data-col="due" class="muted">${r.due}</td>
+            <td data-col="email" class="muted">${r.email}</td>
+            <td data-col="billing" class="muted">${r.billing}</td>
+            <td data-col="status"><span class="badge ${cls}">${r.status}</span></td>
+            <td data-col="actions" class="action-cell" data-no-row-click="1">
               <div class="row-actions">
                 <a class="edit-link" href="${r.edit_url}">Edit</a>
                 <div class="menu-wrap">
@@ -492,6 +569,9 @@
       });
 
       if(rowCount) rowCount.textContent = String(rows.length);
+
+      if (window.__applyOrder) window.__applyOrder(window.__currentOrder || []);
+      if (window.__applyColumns) window.__applyColumns(window.__currentVisible || []);
     }
 
     function fetchLive(){
@@ -501,9 +581,7 @@
       })
       .then(res => res.json())
       .then(data => renderRows(data.rows || []))
-      .catch(() => {
-        // fail silently, keep current table
-      });
+      .catch(() => {});
     }
 
     if(searchInput){
@@ -513,6 +591,203 @@
       });
     }
   })();
+
+  // =========================
+  // Column Customization
+  // =========================
+  const initialVisible = {{ visible_columns_json|safe }};
+  const initialOrder = {{ column_order_json|safe }};
+
+  let currentVisibleColumns = Array.isArray(initialVisible) && initialVisible.length
+    ? initialVisible : ["invoice_no","customer","created","due","email","billing","status","actions"];
+
+  let currentOrder = Array.isArray(initialOrder) && initialOrder.length
+    ? initialOrder : ["invoice_no","customer","created","due","email","billing","status","actions"];
+
+  window.__currentVisible = currentVisibleColumns;
+  window.__currentOrder = currentOrder;
+
+  const backdrop = document.getElementById("columnsBackdrop");
+  const openBtn = document.getElementById("openColumns");
+  const closeBtn = document.getElementById("closeColumns");
+  const saveBtn = document.getElementById("saveCols");
+  const resetBtn = document.getElementById("resetCols");
+  const colList = document.getElementById("colList");
+
+  function openColumnsModal(){
+    document.querySelectorAll(".col-check").forEach(ch => {
+      ch.checked = currentVisibleColumns.includes(ch.value);
+    });
+
+    if (colList){
+      const map = {};
+      colList.querySelectorAll("[data-key]").forEach(item => map[item.dataset.key] = item);
+      colList.innerHTML = "";
+      currentOrder.forEach(k => { if(map[k]) colList.appendChild(map[k]); });
+      Object.keys(map).forEach(k => { if(!currentOrder.includes(k)) colList.appendChild(map[k]); });
+    }
+
+    backdrop.classList.add("show");
+    backdrop.setAttribute("aria-hidden", "false");
+  }
+
+  function closeColumnsModal(){
+    backdrop.classList.remove("show");
+    backdrop.setAttribute("aria-hidden", "true");
+  }
+
+  function getSelectedColumns(){
+    const cols = [];
+    document.querySelectorAll(".col-check").forEach(ch => {
+      if (ch.checked) cols.push(ch.value);
+    });
+    return cols;
+  }
+
+  function getCurrentOrderFromList(){
+    const order = [];
+    colList.querySelectorAll("[data-key]").forEach(item => order.push(item.dataset.key));
+    return order;
+  }
+
+  function applyColumns(cols){
+    const set = new Set(cols || []);
+    document.querySelectorAll("[data-col]").forEach(el => {
+      const col = el.getAttribute("data-col");
+      el.style.display = set.has(col) ? "" : "none";
+    });
+  }
+
+  function applyOrder(order){
+    const table = document.getElementById("invoiceTable");
+    if (!table) return;
+
+    const theadRow = table.querySelector("thead tr");
+    const tbody = table.querySelector("tbody");
+    if (!theadRow || !tbody) return;
+
+    const thMap = {};
+    theadRow.querySelectorAll("th[data-col]").forEach(th => thMap[th.dataset.col] = th);
+
+    if (!order || !order.length) return;
+
+    theadRow.innerHTML = "";
+    order.forEach(col => { if (thMap[col]) theadRow.appendChild(thMap[col]); });
+
+    tbody.querySelectorAll("tr").forEach(tr => {
+      const tdMap = {};
+      tr.querySelectorAll("td[data-col]").forEach(td => tdMap[td.dataset.col] = td);
+      if (!Object.keys(tdMap).length) return;
+
+      const saved = {};
+      Object.keys(tdMap).forEach(k => saved[k] = tdMap[k]);
+
+      tr.innerHTML = "";
+      order.forEach(col => { if (saved[col]) tr.appendChild(saved[col]); });
+    });
+  }
+
+  window.__applyColumns = applyColumns;
+  window.__applyOrder = applyOrder;
+
+  async function saveColumns(){
+    const cols = getSelectedColumns();
+    const order = getCurrentOrderFromList();
+
+    if (!cols.length){
+      alert("Please keep at least one column.");
+      return;
+    }
+
+    if (!cols.includes("actions")){
+      cols.push("actions");
+      document.querySelectorAll(".col-check").forEach(ch => {
+        if (ch.value === "actions") ch.checked = true;
+      });
+    }
+
+    const formData = new FormData();
+    cols.forEach(c => formData.append("columns[]", c));
+    order.forEach(o => formData.append("order[]", o));
+    formData.append("csrfmiddlewaretoken", "{{ csrf_token }}");
+
+    const res = await fetch("{% url 'sales:invoice-columns-save' %}", {
+      method: "POST",
+      body: formData,
+      headers: { "X-Requested-With": "XMLHttpRequest" }
+    });
+
+    if (res.ok){
+      currentVisibleColumns = cols;
+      currentOrder = order;
+
+      window.__currentVisible = currentVisibleColumns;
+      window.__currentOrder = currentOrder;
+
+      applyOrder(currentOrder);
+      applyColumns(currentVisibleColumns);
+
+      closeColumnsModal();
+    }
+  }
+
+  let dragged = null;
+
+  if (colList){
+    colList.addEventListener("dragstart", (e) => {
+      const item = e.target.closest("[data-key]");
+      if (!item) return;
+      dragged = item;
+      item.style.opacity = "0.6";
+    });
+
+    colList.addEventListener("dragend", (e) => {
+      const item = e.target.closest("[data-key]");
+      if (!item) return;
+      item.style.opacity = "1";
+      dragged = null;
+    });
+
+    colList.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      const over = e.target.closest("[data-key]");
+      if (!over || !dragged || over === dragged) return;
+
+      const rect = over.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > (rect.height / 2);
+      colList.insertBefore(dragged, after ? over.nextSibling : over);
+    });
+  }
+
+  if (openBtn) openBtn.addEventListener("click", openColumnsModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeColumnsModal);
+  if (backdrop) backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeColumnsModal(); });
+  if (saveBtn) saveBtn.addEventListener("click", saveColumns);
+
+  if (resetBtn) resetBtn.addEventListener("click", () => {
+    currentVisibleColumns = ["invoice_no","customer","created","due","email","billing","status","actions"];
+    currentOrder = ["invoice_no","customer","created","due","email","billing","status","actions"];
+
+    window.__currentVisible = currentVisibleColumns;
+    window.__currentOrder = currentOrder;
+
+    document.querySelectorAll(".col-check").forEach(ch => {
+      ch.checked = currentVisibleColumns.includes(ch.value);
+    });
+
+    if (colList){
+      const map = {};
+      colList.querySelectorAll("[data-key]").forEach(item => map[item.dataset.key] = item);
+      colList.innerHTML = "";
+      currentOrder.forEach(k => { if (map[k]) colList.appendChild(map[k]); });
+    }
+
+    applyOrder(currentOrder);
+    applyColumns(currentVisibleColumns);
+  });
+
+  applyOrder(currentOrder);
+  applyColumns(currentVisibleColumns);
 </script>
 
 {% include 'includes/footer.html' %}

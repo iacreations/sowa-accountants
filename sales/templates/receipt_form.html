@@ -154,18 +154,30 @@
           </select>
         </div>
 
+        <!--Deposit To + Add button -->
         <div>
           <label>Deposit To</label>
-          <select name="deposit_to">
-            <option value="">Select account</option>
-            {% for acc in accounts %}
-              <option value="{{ acc.id }}"
-                {% if edit_mode and receipt.deposit_to_id == acc.id %}selected{% endif %}>
-                {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
-                — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
-              </option>
-            {% endfor %}
-          </select>
+
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select name="deposit_to" id="depositToSelect" style="flex:1;">
+              <option value="">Select account</option>
+              {% for acc in accounts %}
+                <option value="{{ acc.id }}"
+                  {% if edit_mode and receipt.deposit_to_id == acc.id %}selected{% endif %}>
+                  {{ acc.account_name }}{% if acc.account_number %} ({{ acc.account_number }}){% endif %}
+                  — {{ acc.account_type }}{% if acc.detail_type %} / {{ acc.detail_type }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+
+            <button type="button" id="addDepositAccountBtn"
+                    title="Add new deposit account"
+                    style="white-space:nowrap;background:#eaf7ee;color:#0f5132;border:1px solid #cfe9d6;border-radius:8px;padding:8px 12px;font-weight:800;">
+              + Add
+            </button>
+          </div>
+
+          <small class="muted" id="depositRefreshHint" style="display:none;">Refreshing accounts…</small>
         </div>
 
         <div>
@@ -293,11 +305,14 @@
             <input id="grandTotal" name="total_amount" type="number" step="0.01" class="money"
                    value="{% if edit_mode %}{{ receipt.total_amount }}{% else %}0{% endif %}" readonly>
           </div>
+
           <div class="pair">
             <span class="muted">Amount Paid</span>
             <input id="amountPaid" name="amount_paid" type="number" step="0.01"
-                   value="{% if edit_mode %}{{ receipt.amount_paid|default:0 }}{% else %}0{% endif %}">
+                   data-manual="0"
+                   value="{% if edit_mode %}{{ receipt.amount_paid|default:0 }}{% else %}{% endif %}">
           </div>
+
           <div class="pair">
             <span class="money">Balance</span>
             <input id="balanceDue" name="balance" type="number" step="0.01" class="money"
@@ -321,11 +336,9 @@
     </form>
   </div>
 
-  <!-- ✅ SHARED SCRIPT -->
   <script src="{% static 'sowaf/js/add_new_select.js' %}"></script>
 
   <script>
-    // open Add Customer in new tab if chosen (your existing logic)
     (function(){
       const addCustomerUrl = "{% url 'sowaf:add-customer' %}";
       const sel = document.getElementById('customer-select');
@@ -339,7 +352,82 @@
       }
     })();
 
-    // Row helpers
+    // =============================
+    //Deposit To: Add + refresh
+    // =============================
+    (function(){
+      const addAccountUrl = "{% url 'accounts:add-account' %}";
+      const apiUrl = "{% url 'accounts:deposit-accounts-api' %}";
+      const btn = document.getElementById("addDepositAccountBtn");
+      const select = document.getElementById("depositToSelect");
+      const hint = document.getElementById("depositRefreshHint");
+
+      if (!btn || !select) return;
+
+      function setHint(show){
+        if (!hint) return;
+        hint.style.display = show ? "inline-block" : "none";
+      }
+
+      async function refreshDepositAccounts(oldSelected){
+        setHint(true);
+        try{
+          const res = await fetch(apiUrl, { credentials: "same-origin" });
+          if (!res.ok) throw new Error("Failed to load accounts");
+          const data = await res.json();
+          const results = data.results || [];
+
+          // rebuild options
+          const current = oldSelected || select.value || "";
+          select.innerHTML = "";
+          const opt0 = document.createElement("option");
+          opt0.value = "";
+          opt0.textContent = "Select account";
+          select.appendChild(opt0);
+
+          // track last id to auto-select "newest"
+          let maxId = null;
+
+          results.forEach(item => {
+            const o = document.createElement("option");
+            o.value = String(item.id);
+            o.textContent = item.label;
+            select.appendChild(o);
+
+            if (maxId === null || Number(item.id) > Number(maxId)) maxId = item.id;
+          });
+
+          // try restore old selection; else pick newest
+          if (current && results.some(r => String(r.id) === String(current))){
+            select.value = String(current);
+          } else if (maxId !== null){
+            select.value = String(maxId);
+          }
+
+        } catch(err){
+          console.error(err);
+        } finally {
+          setHint(false);
+        }
+      }
+
+      btn.addEventListener("click", function(){
+        const oldSelected = select.value || "";
+        const w = window.open(addAccountUrl, "_blank", "noopener");
+
+        // poll until tab closes, then refresh
+        const timer = setInterval(function(){
+          if (!w || w.closed){
+            clearInterval(timer);
+            refreshDepositAccounts(oldSelected);
+          }
+        }, 600);
+      });
+    })();
+
+    // =============================
+    // your existing table logic...
+    // =============================
     function rowDel(btn){
       const tbody = document.querySelector('#item-table tbody');
       const row = btn.closest('tr');
@@ -378,10 +466,8 @@
       });
     }
 
-    // Change handlers (your logic, plus 1 guard for add_new)
     document.addEventListener('change', function(e){
       if (e.target.classList.contains('product-select')){
-        // ✅ guard: shared script handles add_new, we stop here
         if (e.target.value === 'add_new') return;
 
         const opt = e.target.selectedOptions[0];
@@ -403,7 +489,11 @@
       if (e.target.id === 'discountPercent' || e.target.id === 'shipping'){
         recalcAll();
       }
-      if (e.target.id === 'amountPaid'){
+    });
+
+    document.addEventListener('input', function(e){
+      if (e.target && e.target.id === 'amountPaid'){
+        e.target.dataset.manual = "1";
         recalcBalanceOnly();
       }
     });
@@ -430,6 +520,16 @@
       document.getElementById('shippingView').value = shipping.toFixed(2);
       document.getElementById('grandTotal').value = total.toFixed(2);
 
+      const amountPaidEl = document.getElementById('amountPaid');
+      const manual = (amountPaidEl.dataset.manual === "1");
+      const currentPaid = parseFloat(amountPaidEl.value) || 0;
+
+      if (!manual){
+        if (amountPaidEl.value === "" || currentPaid === 0 || Math.abs(currentPaid - total) > 0.009){
+          amountPaidEl.value = total.toFixed(2);
+        }
+      }
+
       recalcBalanceOnly();
     }
 
@@ -443,27 +543,26 @@
     document.addEventListener('DOMContentLoaded', ()=>{
       document.querySelectorAll('#item-table tbody tr').forEach(tr=>rowRecalc(tr));
       recalcAll();
+
+      const paidEl = document.getElementById('amountPaid');
+      if (paidEl && paidEl.value !== "" && (parseFloat(paidEl.value) || 0) > 0){
+        paidEl.dataset.manual = "1";
+      }
     });
 
-    // static/sowaf/js/add_new_select.js
-(function () {
-  document.addEventListener("change", function (e) {
-    const sel = e.target;
+    (function () {
+      document.addEventListener("change", function (e) {
+        const sel = e.target;
+        if (!sel || sel.tagName !== "SELECT") return;
+        const addUrl = sel.getAttribute("data-add-url");
+        if (!addUrl) return;
 
-    // Only handle <select> elements that declare a data-add-url
-    if (!sel || sel.tagName !== "SELECT") return;
-    const addUrl = sel.getAttribute("data-add-url");
-    if (!addUrl) return;
-
-    // Trigger when the option value is add_new
-    if (sel.value === "add_new") {
-      window.open(addUrl, "_blank", "noopener");
-      sel.value = ""; // reset back to blank
-      // Do NOT dispatch change again (avoids messing with your existing logic)
-    }
-  });
-})();
-
+        if (sel.value === "add_new") {
+          window.open(addUrl, "_blank", "noopener");
+          sel.value = "";
+        }
+      });
+    })();
   </script>
 
 </body>

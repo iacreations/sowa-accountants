@@ -14,19 +14,21 @@ app_name='sales'
 # my urls
 urlpatterns = [  
 # sales urls
-    path('sales/', views.sales, name='sales'),
-    path('sales/add/invoice', views.add_invoice, name='add-invoice'),
-    path('sales/invoices/', views.invoice_list, name='invoices'),
-    path("product-details/<int:pk>/", views.get_product_details, name="product-details"),
+
+ path("invoices/columns/save/", views.invoice_columns_save, name="invoice-columns-save"),
+ path('sales/', views.sales, name='sales'),
+ path('sales/add/invoice', views.add_invoice, name='add-invoice'),
+ path('sales/invoices/', views.invoice_list, name='invoices'),
+ path("product-details/<int:pk>/", views.get_product_details, name="product-details"),
  # invoice edit and view
-    path("invoices/<int:pk>/", views.invoice_detail, name="invoice-detail"),
-    path("invoices/<int:pk>/edit/", views.edit_invoice, name="edit-invoice"), 
+ path("invoices/<int:pk>/", views.invoice_detail, name="invoice-detail"),
+ path("invoices/<int:pk>/edit/", views.edit_invoice, name="edit-invoice"), 
     # invoice printout
-    path("invoices/<int:pk>/print/", views.invoice_print, name="invoice-print"),
-    path("customer-credits/", views.customer_credits_list, name="customer-refunds-list"),
-    path("customer-credits/<int:customer_id>/refund/new/", views.customer_refund_new, name="customer-refund-new"),
+ path("invoices/<int:pk>/print/", views.invoice_print, name="invoice-print"),
+ path("customer-credits/", views.customer_credits_list, name="customer-refunds-list"),
+ path("customer-credits/<int:customer_id>/refund/new/", views.customer_refund_new, name="customer-refund-new"),
 # Recurring invoices
-    path("sales/recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
+ path("sales/recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
     path("sales/recurring-invoices/new/", views.recurring_invoice_new, name="recurring-invoice-new"),
     path("recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
     path("recurring-invoices/new/", views.recurring_invoice_new, name="recurring-invoice-new"),

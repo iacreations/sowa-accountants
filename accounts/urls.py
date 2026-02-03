@@ -7,6 +7,7 @@ app_name='accounts'
 urlpatterns = [  
     path('accounts/', views.accounts, name='accounts'),
     path('accounts/add/account', views.add_account, name='add-account'),
+    path('accounts/api/deposit-accounts', views.deposit_accounts_api, name='deposit-accounts-api'),
     path("accounts/<int:pk>/edit/", views.edit_account, name="edit-account"),
     path('accounts/dropdown-data/', views.accounts_dropdown_data, name='accounts-dropdown-data'),
     path("accounts/<int:pk>/deactivate/", views.deactivate_account, name="deactivate-account"),

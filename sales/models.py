@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
+from django.conf import settings
 from django.db.models import Sum
 from accounts.models import Account
 from sowaf.models import Newcustomer
@@ -365,3 +366,12 @@ class RecurringGeneratedInvoice(models.Model):
 
     def __str__(self):
         return f"Generated Invoice {self.invoice_id} from Recurring {self.recurring_id} on {self.run_date}"
+class ColumnPreference(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    table_name = models.CharField(max_length=80)  # "invoice_list"
+    visible_columns = models.JSONField(default=list)
+    column_order = models.JSONField(default=list)  # ✅ NEW
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "table_name")

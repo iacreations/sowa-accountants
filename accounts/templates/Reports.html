@@ -117,32 +117,10 @@
 {% include 'includes/sidebar.html' %}
 
 <div class="action">
-  <h1>REPORTS</h1>
+  <h1 style="color: #39B54B;">REPORTS</h1>
   <div class="search_bar">
     <input type="text" placeholder="Search Reports" />
   </div>
-
-  <!-- ✅ Export buttons now open the Export Hub list -->
-  <button class="button" onclick="window.location.href='{% url 'accounts:reports-export-hub' 'excel' %}'">
-    <span class="button_text">EXPORT EXCEL</span>
-    <span class="button_icon">
-      <i class='bx bxs-file'></i>
-    </span>
-  </button>
-
-  <button class="button" onclick="window.location.href='{% url 'accounts:reports-export-hub' 'pdf' %}'">
-    <span class="button_text">EXPORT PDF</span>
-    <span class="button_icon">
-      <i class='bx bxs-file-pdf'></i>
-    </span>
-  </button>
-
-  <button class="button">
-    <span class="button_text">CUSTOMIZE</span>
-    <span class="button_icon">
-      <i class='bx bxs-customize' ></i>
-    </span>
-  </button>
 </div>
 
 <div class="main_body" id="main">

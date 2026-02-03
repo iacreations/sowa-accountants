@@ -34,7 +34,7 @@ from django.db import transaction
 from django.views.decorators.http import require_http_methods
 from inventory.models import Product,Pclass
 from .utils import (generate_unique_ref_no,_save_cheque_bill_allocations,bankish_q)
-
+from inventory.services import rebuild_movements_for_bill
 # Expenses view
 
 DEFAULT_ACCOUNTS_COL_PREFS = {
@@ -2613,7 +2613,7 @@ def add_bill(request):
 
         # Post to ledger: Dr Expenses/Items, Cr Accounts Payable
         _post_bill_to_ledger(bill)
-
+        rebuild_movements_for_bill(bill)
         action = request.POST.get("save_action") or "save"
         if action == "save":
             return redirect("expenses:bills-list")
@@ -2751,7 +2751,7 @@ def edit_bill(request, pk: int):
 
         # Update ledger entry (rewrite lines)
         _post_bill_to_ledger(bill)
-
+        rebuild_movements_for_bill(bill)
         action = request.POST.get("save_action") or "save"
         if action == "save&new":
             return redirect("expenses:add-bill")

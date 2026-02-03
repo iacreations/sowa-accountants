@@ -126,7 +126,7 @@
       </div>
     </div>
 
-    <!-- Filter bar (kept, just below header) -->
+    <!-- Filter bar -->
     <div class="filters d-flex" style="margin-bottom:14px;">
       <form class="ms-auto" method="get" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
         <label class="meta">As of</label>
@@ -144,6 +144,11 @@
 
         <button class="btn" type="submit">Run</button>
         <a class="btn ghost" href="?">Clear</a>
+
+        <!-- ✅ EXPORT BUTTONS (keeps current filters) -->
+        <button class="btn ghost" name="export" value="csv" type="submit">Export CSV</button>
+        <button class="btn ghost" name="export" value="xlsx" type="submit">Export Excel</button>
+        <button class="btn ghost" name="export" value="pdf" type="submit">Export PDF</button>
       </form>
     </div>
 

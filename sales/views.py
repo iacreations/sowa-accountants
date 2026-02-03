@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse
+import json
 from django.http import HttpResponse, Http404
 from django.template.loader import render_to_string
 from openpyxl import Workbook
@@ -24,7 +25,8 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from .models import (Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,PaymentOpenBalanceLine,SalesReceipt,SalesReceiptLine,CustomerRefund,RecurringInvoice, RecurringInvoiceLine)
+from django.views.decorators.http import require_POST
+from .models import (Newinvoice,InvoiceItem,Product,Payment,PaymentInvoice,PaymentOpenBalanceLine,SalesReceipt,SalesReceiptLine,CustomerRefund,RecurringInvoice, RecurringInvoiceLine,ColumnPreference)
 from sowaf.models import Newcustomer
 from .models import Statement, StatementLine
 from django.http import JsonResponse
@@ -40,13 +42,15 @@ from accounts.middleware import get_current_user, get_current_ip
 from .recurring_service import generate_recurring_invoices_for_date
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
+from inventory.models import InventoryMovement, Product
+from inventory.services import rebuild_movements_for_sales_receipt
 from accounts.utils import (
     VAT_RATE,
     _get_inventory_asset_account,
     _get_cogs_account,
     _get_vat_payable_account,
 )
-from inventory.models import InventoryMovement, Product
+
 
 def _as_date(d):
     if isinstance(d, datetime):
@@ -525,7 +529,7 @@ def _post_payment_to_ledger(payment: Payment):
     # what should be applied to AR
     total_applied_to_ar = invoice_total + ob_total
 
-    # ✅ SAFETY: normalize negative values
+    # SAFETY: normalize negative values
     if amount_received < 0:
         amount_received = Decimal("0.00")
     if unapplied < 0:
@@ -533,7 +537,7 @@ def _post_payment_to_ledger(payment: Payment):
     if total_applied_to_ar < 0:
         total_applied_to_ar = Decimal("0.00")
 
-    # ✅ SAFETY: enforce consistency:
+    # SAFETY: enforce consistency:
     # amount_received should equal applied_to_ar + unapplied
     expected_total = total_applied_to_ar + unapplied
 
@@ -644,6 +648,11 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
             CR Revenue (allocated by lines)     = sales portion
             CR VAT Payable (if any)             = vat_total
             CR Customer Advances (liability)    = (amount_paid - total_amount)
+
+      - NEW (Inventory COGS):
+            DR COGS (per product.cogs_account)
+            CR Inventory Asset (per product.inventory_asset_account)
+            Amount uses InventoryMovement if present; otherwise falls back to product.avg_cost * qty
     """
 
     # ----------------------------
@@ -731,7 +740,6 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
 
     # Adjust rounding/differences into default income account to keep JE balanced
     diff = sales_target - current_sales_credit
-    # allow tiny rounding differences
     if default_income_acc and diff != 0:
         revenue_by_account[default_income_acc] += diff
 
@@ -804,7 +812,6 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
     # CREDITS (Revenue)
     # ----------------------------
     for acc, amt in revenue_by_account.items():
-        # allow negative adjustments only if needed; but skip fully zero lines
         if not acc or amt == 0:
             continue
 
@@ -849,6 +856,94 @@ def _post_sales_receipt_to_ledger(receipt: SalesReceipt):
             customer=receipt.customer,
             supplier=None,
         )
+
+    # =========================================================
+    # NEW: Inventory COGS posting (does NOT change your logic above)
+    #   Dr COGS / Cr Inventory Asset
+    #   Uses InventoryMovement if already created, otherwise fallback:
+    #       product.avg_cost * qty
+    # =========================================================
+    try:
+        from inventory.models import InventoryMovement  # adjust import path if needed
+    except Exception:
+        InventoryMovement = None
+
+    cogs_by_acc = defaultdict(lambda: Decimal("0.00"))
+    inv_by_acc  = defaultdict(lambda: Decimal("0.00"))
+
+    used_movements = False
+
+    if InventoryMovement is not None:
+        movs = (
+            InventoryMovement.objects
+            .filter(source_type="SALES_RECEIPT", source_id=receipt.id, qty_out__gt=0)
+            .select_related("product", "product__cogs_account", "product__inventory_asset_account")
+        )
+        if movs.exists():
+            used_movements = True
+            for m in movs:
+                p = m.product
+                if not p or getattr(p, "type", None) != "Inventory":
+                    continue
+
+                cogs_acc = getattr(p, "cogs_account", None)
+                inv_acc  = getattr(p, "inventory_asset_account", None)
+                val = Decimal(str(getattr(m, "value", None) or "0"))
+
+                if val <= 0 or not cogs_acc or not inv_acc:
+                    continue
+
+                cogs_by_acc[cogs_acc] += val
+                inv_by_acc[inv_acc]   += val
+
+    # Fallback if movements not created yet
+    if not used_movements:
+        for line in receipt.lines.select_related("product").all():
+            p = getattr(line, "product", None)
+            if not p or getattr(p, "type", None) != "Inventory":
+                continue
+
+            qty = Decimal(str(getattr(line, "qty", None) or "0"))
+            if qty <= 0:
+                continue
+
+            cogs_acc = getattr(p, "cogs_account", None)
+            inv_acc  = getattr(p, "inventory_asset_account", None)
+            if not cogs_acc or not inv_acc:
+                continue
+
+            unit_cost = Decimal(str(getattr(p, "avg_cost", None) or "0"))
+            val = (qty * unit_cost)
+
+            if val <= 0:
+                continue
+
+            cogs_by_acc[cogs_acc] += val
+            inv_by_acc[inv_acc]   += val
+
+    # Dr COGS
+    for acc, amt in cogs_by_acc.items():
+        if acc and amt > 0:
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=amt,
+                credit=Decimal("0.00"),
+                customer=None,
+                supplier=None,
+            )
+
+    # Cr Inventory Asset
+    for acc, amt in inv_by_acc.items():
+        if acc and amt > 0:
+            JournalLine.objects.create(
+                entry=entry,
+                account=acc,
+                debit=Decimal("0.00"),
+                credit=amt,
+                customer=None,
+                supplier=None,
+            )
 
 def _get_vat_payable_account() -> "Account":
     """
@@ -1341,11 +1436,65 @@ def add_class_ajax(request):
             "name": cls.class_name,
         })
     
-#  invoice list
+# invoice list
+import json
+from decimal import Decimal
+
+from django.db.models import Q, F, Value, Sum, DecimalField
+from django.db.models.functions import Coalesce, Cast
+from django.http import JsonResponse
+from django.shortcuts import render
+from django.views.decorators.http import require_POST
+
+DEFAULT_COLS = ["invoice_no","customer","created","due","email","billing","status","actions"]
+
+ALL_COLUMNS = [
+    ("invoice_no", "Invoice no."),
+    ("customer", "Customer Name"),
+    ("created", "Created date"),
+    ("due", "Due date"),
+    ("email", "Email"),
+    ("billing", "Billing address"),
+    ("status", "Status"),
+    ("actions", "Actions ▾"),
+]
+
+def _is_partial_status(s: str) -> bool:
+    return "partially paid" in (s or "").strip().lower()
+
+def _is_paid_status(s: str) -> bool:
+    s = (s or "").strip().lower()
+    # must NOT match partially paid
+    if "partially paid" in s:
+        return False
+    return s == "paid" or s.startswith("paid") or s == "deposited" or s.startswith("deposited")
+
+def _is_overdue_status(s: str) -> bool:
+    return "overdue" in (s or "").strip().lower()
+
+
 def invoice_list(request):
     q = (request.GET.get("q") or "").strip()
     status_filter = (request.GET.get("status") or "all").lower()
     is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
+
+    cols_payload = request.session.get("invoice_list_columns") or {}
+    visible_columns = cols_payload.get("visible") or DEFAULT_COLS
+    column_order = cols_payload.get("order") or DEFAULT_COLS
+
+    valid_keys = {k for k, _ in ALL_COLUMNS}
+
+    visible_columns = [c for c in visible_columns if c in valid_keys]
+    if not visible_columns:
+        visible_columns = DEFAULT_COLS[:]
+
+    cleaned_order = [c for c in column_order if c in valid_keys]
+    for c in DEFAULT_COLS:
+        if c not in cleaned_order:
+            cleaned_order.append(c)
+    column_order = cleaned_order
+
+    total_all = Newinvoice.objects.count()
 
     invoices_qs = (
         Newinvoice.objects
@@ -1354,13 +1503,13 @@ def invoice_list(request):
             total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
             total_paid=Coalesce(
                 Sum("payments_applied__amount_paid"),
-                Value(Decimal("0.00"))
-            )
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            ),
         )
         .order_by("-date_created", "-id")
     )
 
-    # ✅ SEARCH (FIXED)
     if q:
         search_q = (
             Q(customer__customer_name__icontains=q) |
@@ -1372,7 +1521,7 @@ def invoice_list(request):
         invoices_qs = invoices_qs.filter(search_q)
 
     invoices = []
-    counts = {"all": 0, "overdue": 0, "paid": 0, "partial": 0}
+    counts = {"overdue": 0, "paid": 0, "partial": 0}
 
     for inv in invoices_qs:
         total_due = inv.total_due_dec or Decimal("0")
@@ -1380,39 +1529,40 @@ def invoice_list(request):
         balance = max(total_due - total_paid, Decimal("0"))
 
         inv.status = status_for_invoice(inv, total_due, total_paid, balance)
-        s = inv.status.lower()
+        s = (inv.status or "").lower()
 
-        counts["all"] += 1
-        if "overdue" in s:
+        is_partial = _is_partial_status(s)
+        is_paid = _is_paid_status(s)
+        is_overdue = _is_overdue_status(s)
+
+        if is_overdue:
             counts["overdue"] += 1
-        if "paid" in s or "deposited" in s:
-            counts["paid"] += 1
-        if "partially paid" in s:
+        if is_partial:
             counts["partial"] += 1
+        elif is_paid:
+            counts["paid"] += 1
 
-        # status filter
         keep = (
             status_filter == "all" or
-            (status_filter == "overdue" and "overdue" in s) or
-            (status_filter == "paid" and ("paid" in s or "deposited" in s)) or
-            (status_filter == "partial" and "partially paid" in s)
+            (status_filter == "overdue" and is_overdue) or
+            (status_filter == "partial" and is_partial) or
+            (status_filter == "paid" and is_paid)
         )
 
         if keep:
             invoices.append(inv)
 
-    # ✅ AJAX RESPONSE (for live search)
     if is_ajax:
         rows = []
         for inv in invoices:
             rows.append({
                 "id": f"{inv.id:04d}",
-                "customer": inv.customer.customer_name,
-                "created": inv.date_created.strftime("%d/%m/%Y"),
+                "customer": inv.customer.customer_name if inv.customer else "—",
+                "created": inv.date_created.strftime("%d/%m/%Y") if inv.date_created else "—",
                 "due": inv.due_date.strftime("%d/%m/%Y") if inv.due_date else "—",
                 "email": inv.email or "—",
                 "billing": inv.billing_address or "—",
-                "status": inv.status,
+                "status": inv.status or "—",
                 "edit_url": f"/sales/invoices/{inv.id}/edit/",
                 "view_url": f"/sales/invoices/{inv.id}/",
                 "print_url": f"/sales/invoices/{inv.id}/print/",
@@ -1420,23 +1570,55 @@ def invoice_list(request):
         return JsonResponse({"rows": rows})
 
     customers = Newcustomer.objects.all()
+
     return render(request, "invoice_lists.html", {
         "invoices": invoices,
         "customers": customers,
         "q": q,
         "status_filter": status_filter,
         "counts": counts,
+        "total_all": total_all,
+
+        # Template needs lists (for headers)
+        "all_columns": ALL_COLUMNS,
+        "visible_columns": visible_columns,
+        "column_order": column_order,
+
+        # JS needs JSON
+        "visible_columns_json": json.dumps(visible_columns),
+        "column_order_json": json.dumps(column_order),
     })
 
-# ednd
-def full_invoice_details(request):
-    invoices=Newinvoice.objects.all()
-    customers=Newcustomer.objects.all()
-    return render(request, 'full_invoice_details.html',{
-        'invoices':invoices,
-        'customers':customers
-    })
-# edit and view  views 
+
+@require_POST
+def invoice_columns_save(request):
+    is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
+    if not is_ajax:
+        return JsonResponse({"ok": False, "error": "Invalid request"}, status=400)
+
+    cols = request.POST.getlist("columns[]")
+    order = request.POST.getlist("order[]")
+
+    valid_keys = {k for k, _ in ALL_COLUMNS}
+
+    cols = [c for c in cols if c in valid_keys]
+    if "actions" not in cols:
+        cols.append("actions")
+
+    cleaned_order = [c for c in order if c in valid_keys]
+    for c in DEFAULT_COLS:
+        if c not in cleaned_order:
+            cleaned_order.append(c)
+
+    request.session["invoice_list_columns"] = {
+        "visible": cols,
+        "order": cleaned_order
+    }
+    request.session.modified = True
+
+    return JsonResponse({"ok": True})
+
+# invoice detail
 
 def invoice_detail(request, pk: int):
     inv = get_object_or_404(
@@ -1456,21 +1638,32 @@ def invoice_detail(request, pk: int):
 
     total_due = agg["total_due_dec"] or Decimal("0")
     total_paid = agg["total_paid"] or Decimal("0")
-    balance   = max(total_due - total_paid, Decimal("0"))
+    balance = max(total_due - total_paid, Decimal("0"))
 
-    # status (same rules you already use in the list)
-    today = date.today()
-    overdue_days = (today - inv.due_date).days if inv.due_date and balance > 0 and today > inv.due_date else None
+    # FIX: normalize both sides to DATE
+    today = timezone.localdate()
+
+    due = inv.due_date
+    if isinstance(due, datetime):
+        # handle both naive/aware datetimes safely
+        try:
+            due = timezone.localtime(due).date()
+        except Exception:
+            due = due.date()
+
+    overdue_days = (today - due).days if due and balance > 0 and today > due else None
 
     deposited = False
     if total_due > 0 and balance == 0:
         aps = inv.payments_applied.select_related("payment__deposit_to").all()
         if aps:
             def is_bankish(acc):
-                if not acc: return False
+                if not acc:
+                    return False
                 at = (acc.account_type or "").lower()
                 dt = (acc.detail_type or "").lower()
                 return at in ("bank", "cash and cash equivalents", "cash_equiv", "cash & cash equivalents") or "bank" in dt
+
             deposited = all(is_bankish(pi.payment.deposit_to) for pi in aps if pi.payment)
 
     if total_due == 0:
@@ -1484,7 +1677,7 @@ def invoice_detail(request, pk: int):
                 status_text += f" — Partially paid now {balance:,.0f} remaining"
             else:
                 status_text += f" — {balance:,.0f} remaining"
-        elif inv.due_date and inv.due_date == today and balance > 0:
+        elif due and due == today and balance > 0:
             status_text = f"Due today — {balance:,.0f} remaining"
         else:
             status_text = f"Partially paid, {balance:,.0f} remaining" if total_paid > 0 else f"{balance:,.0f} remaining"
@@ -1498,7 +1691,7 @@ def invoice_detail(request, pk: int):
     )
 
     payment_rows = [{
-        "id":p.payment.id,
+        "id": p.payment.id,
         "date": p.payment.payment_date,
         "ref": p.payment.reference_no,
         "method": (p.payment.payment_method or "").replace("_", " ").title(),
@@ -1515,6 +1708,8 @@ def invoice_detail(request, pk: int):
         "balance": balance,
         "payment_rows": payment_rows,
     })
+
+
 # invoice print view
 def invoice_print(request, pk: int):
     inv = get_object_or_404(
@@ -1534,7 +1729,7 @@ def invoice_print(request, pk: int):
 
     total_due = agg["total_due_dec"] or Decimal("0")
     total_paid = agg["total_paid"] or Decimal("0")
-    balance   = max(total_due - total_paid, Decimal("0"))
+    balance = max(total_due - total_paid, Decimal("0"))
     status_text = status_for_invoice(inv, total_due, total_paid, balance)
 
     items = InvoiceItem.objects.filter(invoice=inv).select_related("product").order_by("id")
@@ -1553,7 +1748,7 @@ def invoice_print(request, pk: int):
         "amount": p.amount_paid,
     } for p in payments]
 
-    # Optional: company/org details (replace these with your real ones or pull from a Company model)
+    # Optional: company/org details
     org = {
         "name": "Sowa Accountants Ltd",
         "address": "Plot 123, Kampala Road, Kampala",
@@ -1573,7 +1768,6 @@ def invoice_print(request, pk: int):
         "payment_rows": payment_rows,
         "org": org,
     })
-
 # ------------------------------------------------------------
 # RECEIVE PAYMENT (CREATE)
 # ------------------------------------------------------------
@@ -1591,7 +1785,7 @@ def receive_payment_view(request):
         tags           = (request.POST.get("tags") or "").strip()
         memo           = (request.POST.get("memo") or "").strip()
 
-        # ✅ Amount received (from your HTML)
+        # Amount received (from your HTML)
         amount_received = _dec(request.POST.get("amount_received"), "0.00")
 
         # resolve deposit account (only allowed set)
@@ -1642,7 +1836,7 @@ def receive_payment_view(request):
             open_balance_manual = Decimal("0.00")
 
         # =====================================================================
-        # ✅ FIX: validate invoice allocations not exceeding their balances
+        # FIX: validate invoice allocations not exceeding their balances
         #    (force Decimal arithmetic in annotations)
         # =====================================================================
         if allocations:
@@ -1710,7 +1904,7 @@ def receive_payment_view(request):
 
         remaining_after_open_balance = remaining_after_invoices - open_balance_apply
 
-        # ✅ any remaining is customer credit (unapplied)
+        # any remaining is customer credit (unapplied)
         unapplied = remaining_after_open_balance if remaining_after_open_balance > 0 else Decimal("0.00")
 
         # must have something meaningful
@@ -1730,8 +1924,8 @@ def receive_payment_view(request):
             reference_no=reference_no,
             tags=tags,
             memo=memo,
-            amount_received=amount_received,  # ✅ stored
-            unapplied_amount=unapplied,       # ✅ stored
+            amount_received=amount_received,  # stored
+            unapplied_amount=unapplied,       # stored
         )
         apply_audit_fields(payment)
         payment.save()
@@ -1745,7 +1939,7 @@ def receive_payment_view(request):
         # save open balance line
         _save_payment_open_balance(payment, open_balance_apply)
 
-        # ✅ Post to GL (DR Bank, CR Customer AR) for full amount_received
+        # Post to GL (DR Bank, CR Customer AR) for full amount_received
         _post_payment_to_ledger(payment)
 
         return redirect(f"{request.path}?ok=1")
@@ -2156,7 +2350,25 @@ def payment_print(request, pk: int):
 # end
 
 # working on the receipt
+
 VAT_RATE = Decimal("0.18")
+def coerce_decimal(val, default="0.00") -> Decimal:
+    """
+    Safe decimal coercion.
+    - Handles None, "", " " -> default
+    - Handles commas e.g. "50,000" -> "50000"
+    - Never throws; returns Decimal(default) on bad input
+    """
+    if val is None:
+        return Decimal(default)
+    s = str(val).strip()
+    if s == "":
+        return Decimal(default)
+    s = s.replace(",", "")
+    try:
+        return Decimal(s)
+    except (InvalidOperation, ValueError):
+        return Decimal(default)
 
 
 @transaction.atomic
@@ -2184,13 +2396,19 @@ def sales_receipt_new(request):
         customer   = get_object_or_404(Newcustomer, pk=int(customer_id))
         deposit_to = get_object_or_404(accounts, pk=int(deposit_to_id))
 
-        subtotal        = _coerce_decimal(request.POST.get("subtotal"))
-        discount_amount = _coerce_decimal(request.POST.get("discount_amount"))
-        shipping_fee    = _coerce_decimal(request.POST.get("shipping_fee"))
-        total_amount    = _coerce_decimal(request.POST.get("total_amount"))
-        amount_paid     = _coerce_decimal(request.POST.get("amount_paid"))
+        subtotal        = coerce_decimal(request.POST.get("subtotal"))
+        discount_amount = coerce_decimal(request.POST.get("discount_amount"))
+        shipping_fee    = coerce_decimal(request.POST.get("shipping_fee"))
+        total_amount    = coerce_decimal(request.POST.get("total_amount"))
 
-        # ✅ balance: allow overpayment (balance becomes 0; excess handled in posting)
+        # ✅ FIX: if amount_paid missing/blank -> default to total_amount
+        raw_amount_paid = request.POST.get("amount_paid")
+        if raw_amount_paid is None or str(raw_amount_paid).strip() == "":
+            amount_paid = total_amount
+        else:
+            amount_paid = coerce_decimal(raw_amount_paid)
+
+        # allow overpayment; balance stored as 0 if negative (excess handled in posting)
         balance = total_amount - amount_paid
         if balance < 0:
             balance = Decimal("0.00")
@@ -2199,6 +2417,7 @@ def sales_receipt_new(request):
         if not (len(reference_no) == 8 and reference_no.isdigit()):
             reference_no = generate_unique_ref_no()
 
+        # If you use Payment uniqueness checks, keep your logic as-is:
         if Payment.objects.filter(reference_no=reference_no).exists() or \
            SalesReceipt.objects.filter(reference_no=reference_no).exists():
             reference_no = generate_unique_ref_no()
@@ -2213,7 +2432,7 @@ def sales_receipt_new(request):
             memo=memo,
             subtotal=subtotal,
             total_discount=discount_amount,
-            total_vat=Decimal("0.00"),   # set after lines
+            total_vat=Decimal("0.00"),
             shipping_fee=shipping_fee,
             total_amount=total_amount,
             amount_paid=amount_paid,
@@ -2237,14 +2456,13 @@ def sales_receipt_new(request):
             product = Product.objects.filter(pk=prod_id).first() if (prod_id and str(prod_id).isdigit()) else None
 
             desc = descriptions[i] if i < len(descriptions) else ""
-            qty  = _coerce_decimal(qtys[i] if i < len(qtys) else "0")
-            rate = _coerce_decimal(unit_prices[i] if i < len(unit_prices) else "0")
-            amt  = _coerce_decimal(line_totals[i] if i < len(line_totals) else "0")
+            qty  = coerce_decimal(qtys[i] if i < len(qtys) else "0")
+            rate = coerce_decimal(unit_prices[i] if i < len(unit_prices) else "0")
+            amt  = coerce_decimal(line_totals[i] if i < len(line_totals) else "0")
 
             if not (product or desc or (qty > 0) or (rate > 0) or (amt > 0)):
                 continue
 
-            # ✅ VAT per line (18% if taxable)
             line_vat = Decimal("0.00")
             if product and getattr(product, "taxable", False) and amt > 0:
                 line_vat = (amt * VAT_RATE).quantize(Decimal("0.01"))
@@ -2266,12 +2484,11 @@ def sales_receipt_new(request):
         if bulk:
             SalesReceiptLine.objects.bulk_create(bulk)
 
-        # ✅ sync header VAT
         receipt.total_vat = total_vat
         receipt.save(update_fields=["total_vat"])
 
-        # ✅ Post to GL (includes overpayment + inventory)
         _post_sales_receipt_to_ledger(receipt)
+        rebuild_movements_for_sales_receipt(receipt)
 
         action = request.POST.get("save_action")
         if action == "save":
@@ -2289,9 +2506,7 @@ def sales_receipt_new(request):
         "products": products,
         "reference_no": reference_no,
     })
-# Edit view
 
-VAT_RATE = Decimal("0.18")
 
 @transaction.atomic
 def sales_receipt_edit(request, pk: int):
@@ -2333,13 +2548,20 @@ def sales_receipt_edit(request, pk: int):
         receipt.tags           = tags
         receipt.memo           = memo
 
-        receipt.amount_paid    = _coerce_decimal(request.POST.get("amount_paid"))
-        receipt.subtotal       = _coerce_decimal(request.POST.get("subtotal"))
-        receipt.total_discount = _coerce_decimal(request.POST.get("discount_amount"))
-        receipt.shipping_fee   = _coerce_decimal(request.POST.get("shipping_fee"))
-        receipt.total_amount   = _coerce_decimal(request.POST.get("total_amount"))
+        # totals
+        receipt.subtotal       = coerce_decimal(request.POST.get("subtotal"))
+        receipt.total_discount = coerce_decimal(request.POST.get("discount_amount"))
+        receipt.shipping_fee   = coerce_decimal(request.POST.get("shipping_fee"))
+        receipt.total_amount   = coerce_decimal(request.POST.get("total_amount"))
 
-        # allow overpayment; balance cannot be negative
+        # ✅ FIX (edit too): if amount_paid blank -> default to total_amount
+        raw_amount_paid = request.POST.get("amount_paid")
+        if raw_amount_paid is None or str(raw_amount_paid).strip() == "":
+            receipt.amount_paid = receipt.total_amount
+        else:
+            receipt.amount_paid = coerce_decimal(raw_amount_paid)
+
+        # allow overpayment; balance stored as 0 if negative
         receipt.balance = receipt.total_amount - receipt.amount_paid
         if receipt.balance < 0:
             receipt.balance = Decimal("0.00")
@@ -2366,9 +2588,9 @@ def sales_receipt_edit(request, pk: int):
             product = Product.objects.filter(pk=prod_id).first() if (prod_id and str(prod_id).isdigit()) else None
 
             desc  = descriptions[i] if i < len(descriptions) else ""
-            qty   = _coerce_decimal(qtys[i] if i < len(qtys) else "0")
-            price = _coerce_decimal(unit_prices[i] if i < len(unit_prices) else "0")
-            amt   = _coerce_decimal(line_totals[i] if i < len(line_totals) else "0")
+            qty   = coerce_decimal(qtys[i] if i < len(qtys) else "0")
+            price = coerce_decimal(unit_prices[i] if i < len(unit_prices) else "0")
+            amt   = coerce_decimal(line_totals[i] if i < len(line_totals) else "0")
 
             if not product and not desc and qty == 0 and price == 0 and amt == 0:
                 continue
@@ -2397,9 +2619,8 @@ def sales_receipt_edit(request, pk: int):
         receipt.total_vat = total_vat
         receipt.save(update_fields=["total_vat"])
 
-        # repost GL (and reflect stock movement again)
         _post_sales_receipt_to_ledger(receipt)
-
+        rebuild_movements_for_sales_receipt(receipt)
         return redirect("sales:receipt-detail", pk=receipt.pk)
 
     return render(request, "receipt_form.html", {
@@ -2718,7 +2939,7 @@ def statement_new(request):
     preview_lines = []
     run = opening_balance
 
-    # ✅ Transaction + Balance Forward behave as you had
+    # Transaction + Balance Forward behave as you had
     if statement_type in (Statement.StatementType.TRANSACTION, Statement.StatementType.BAL_FWD):
         preview_lines.append({
             "date": start_date,
@@ -2730,7 +2951,7 @@ def statement_new(request):
         if statement_type == Statement.StatementType.BAL_FWD:
             run += opening_balance
 
-    # ✅ FIX: OPEN ITEM should not produce an empty statement when opening balance exists
+    # FIX: OPEN ITEM should not produce an empty statement when opening balance exists
     elif statement_type == Statement.StatementType.OPEN_ITEM:
         # Add Balance Forward line for context (QuickBooks-like)
         preview_lines.append({
@@ -2773,7 +2994,7 @@ def statement_new(request):
             memo=(request.POST.get("memo") or "").strip(),
         )
 
-        # ✅ Persist from preview_lines (so OPEN_ITEM gets a line too)
+        # Persist from preview_lines (so OPEN_ITEM gets a line too)
         run_save = opening_balance
 
         for pl in preview_lines:
@@ -2878,7 +3099,7 @@ def statement_detail(request, pk):
 
     return render(request, "statement_detail.html", {
         "st": st,
-        "lines": lines_live,       # ✅ template will use this
+        "lines": lines_live,       # template will use this
         "live_opening": live_opening,
         "live_closing": live_closing,
     })
@@ -3671,3 +3892,25 @@ def recurring_run_today(request):
         as_aware_datetime=as_aware_datetime,
     )
     return JsonResponse(result)
+
+from inventory.services import rebuild_inventory_movements
+
+def sync_sales_receipt_inventory(sr):
+    rows = []
+    for line in sr.lines.select_related("product"):
+        if not line.product:
+            continue
+        p = line.product
+        rows.append({
+            "product": p,
+            "qty_in": 0,
+            "qty_out": line.qty,
+            "unit_cost": p.avg_cost,   # cost at sale time
+        })
+
+    rebuild_inventory_movements(
+        "SALES_RECEIPT",
+        sr.id,
+        date=sr.receipt_date,
+        rows=rows
+    )

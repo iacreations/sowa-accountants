@@ -96,6 +96,22 @@
 
         <button class="btn run" type="submit">Run</button>
         <a class="btn clear" href="{% url 'accounts:report-pnl' %}">Clear</a>
+
+        {# --- Export buttons (same styles, keeps filters) --- #}
+        <a class="btn clear"
+           href="?{% if dfrom %}from={{ dfrom|date:'Y-m-d' }}&{% endif %}{% if dto %}to={{ dto|date:'Y-m-d' }}&{% endif %}basis={{ basis }}&export=csv">
+          Export CSV
+        </a>
+
+        <a class="btn clear"
+           href="?{% if dfrom %}from={{ dfrom|date:'Y-m-d' }}&{% endif %}{% if dto %}to={{ dto|date:'Y-m-d' }}&{% endif %}basis={{ basis }}&export=xlsx">
+          Export Excel
+        </a>
+
+        <a class="btn clear"
+           href="?{% if dfrom %}from={{ dfrom|date:'Y-m-d' }}&{% endif %}{% if dto %}to={{ dto|date:'Y-m-d' }}&{% endif %}basis={{ basis }}&export=pdf">
+          Export PDF
+        </a>
       </form>
     </div>
 

@@ -7,14 +7,14 @@ from sowaf.models import Newsupplier
 
 
 class Category(models.Model):
-    category_type = models.CharField(max_length=255)
+    category_type = models.CharField(max_length=255,null=True,blank=True)
 
     def __str__(self):
         return self.category_type
 
 
 class Pclass(models.Model):
-    class_name = models.CharField(max_length=255)
+    class_name = models.CharField(max_length=255,null=True,blank=True)
 
     def __str__(self):
         return self.class_name
@@ -43,15 +43,12 @@ class Product(models.Model):
     purchase_checkbox = models.BooleanField(default=False,blank=True, null=True)
 
     sales_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    purchase_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-
-    quantity = models.IntegerField(null=True, blank=True, default=0)
-
+    purchase_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)    
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    avg_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00")) 
     purchase_date = models.DateField(null=True, blank=True)
     taxable = models.BooleanField(default=False)
-
     supplier = models.ForeignKey(Newsupplier, on_delete=models.SET_NULL, null=True, blank=True)
-
     is_bundle = models.BooleanField(default=False,blank=True, null=True)
     display_bundle_contents = models.BooleanField(default=False,blank=True, null=True)
 

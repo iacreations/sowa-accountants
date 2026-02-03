@@ -143,8 +143,13 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 # Auth
-AUTH_USER_MODEL = 'sowaAuth.Newuser'
-LOGIN_URL = 'login'
-LOGIN_REDIRECT_URL = reverse_lazy('sowaf:home')
+AUTH_USER_MODEL = "sowaAuth.Newuser"
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",             # keep default
+    "sowaAuth.backends.UsernameEmailPhoneBackend",           # add this
+]
+
+LOGIN_URL = "sowaAuth:login"
+LOGIN_REDIRECT_URL = "sowaf:home"
+LOGOUT_REDIRECT_URL = "sowaAuth:login"

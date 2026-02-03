@@ -1,0 +1,290 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>YoAccountant | Auth</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: "Poppins", sans-serif;
+    }
+
+    .container {
+      width: 400px;
+      background: #fff;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      position: relative;
+    }
+
+    .logo {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .logo img {
+      width: 100px;
+    }
+
+    .tabs {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 20px;
+    }
+
+    .tabs span {
+      cursor: pointer;
+      font-weight: bold;
+      color: #777;
+      position: relative;
+    }
+
+    .tabs .active {
+      color: #39B54B;
+    }
+
+    .tabs .active::after {
+      content: '';
+      width: 100%;
+      height: 3px;
+      background: #39B54B;
+      position: absolute;
+      bottom: -5px;
+      left: 0;
+      border-radius: 2px;
+    }
+
+    .input-group {
+      display: flex;
+      align-items: center;
+      background: #e8f5e9;
+      border: 1px solid #ccc;
+      border-radius: 30px;
+      padding: 10px 15px;
+      margin-bottom: 15px;
+    }
+
+    .input-group i {
+      margin-right: 10px;
+      color: #333;
+    }
+
+    .input-group input {
+      border: none;
+      background: transparent;
+      outline: none;
+      flex: 1;
+    }
+
+    .checkbox {
+      display: flex;
+      align-items: center;
+      margin-bottom: 15px;
+      font-size: 12px;
+    }
+
+    .checkbox input { margin-right: 5px; }
+
+    .btn {
+      width: 150px;
+      background: #39B54B;
+      color: #fff;
+      padding: 10px;
+      border: none;
+      border-radius: 30px;
+      font-weight: bold;
+      cursor: pointer;
+      text-align: center;
+      font-size: 14px;
+      margin: 0 auto 10px auto;
+      display: block;
+    }
+
+    .divider {
+      text-align: center;
+      margin: 10px 0;
+      font-size: 12px;
+      color: #555;
+    }
+
+    .social-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .social-btn {
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 8px 14px;
+      border-radius: 30px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      font-size: 13px;
+      gap: 6px;
+    }
+
+    .footer-link {
+      text-align: center;
+      font-size: 12px;
+      margin-top: 15px;
+    }
+
+    .footer-link a {
+      color: #39B54B;
+      text-decoration: none;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="logo">
+      <img src="{% static 'sowaf/images/yo-logo.png' %}" alt="YoAccountant">
+    </div>
+
+    <div class="tabs">
+      <span id="login-tab" class="active">Login</span>
+      <span id="signup-tab">Sign up</span>
+    </div>
+
+    <!-- Login Form -->
+    <form id="login-form" action="{% url 'sowaAuth:do_login' %}" method="POST">
+      {% csrf_token %}
+      <div class="input-group">
+        <i class='bx bx-user'></i>
+        <input type="text" name="username" placeholder="Username, Email or Phone number" required>
+      </div>
+      <div class="input-group">
+        <i class='bx bx-lock-alt'></i>
+        <input type="password" name="password" placeholder="Password" required>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox"> Remember me
+      </div>
+      <button type="submit" class="btn">LOGIN</button>
+
+      <div class="footer-link">
+        <a href="{% url 'password_reset' %}">Forgot your password?</a>
+      </div>
+    </form>
+
+    <!-- Sign Up Form -->
+    <form id="signup-form" action="{% url 'sowaAuth:register' %}" method="POST" style="display: none;">
+      {% csrf_token %}
+      <div class="input-group">
+        <i class='bx bx-user'></i>
+        <input type="text" name="username" placeholder="Name" required>
+      </div>
+      <div class="input-group">
+        <i class='bx bx-envelope'></i>
+        <input type="email" name="email" placeholder="Email" required>
+      </div>
+      <div class="input-group">
+        <i class='bx bx-phone'></i>
+        <input type="tel" name="contact" placeholder="Phone Number" required>
+      </div>
+      <div class="input-group">
+        <i class='bx bx-lock-alt'></i>
+        <input type="password" name="password" placeholder="Password" required>
+      </div>
+      <div class="input-group">
+        <i class='bx bx-lock-alt'></i>
+        <input type="password" name="confirm_password" placeholder="Retype Password" required>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox"> I agree to the terms of service and&nbsp;
+        <a href="#" target="_blank" style="color: #39B54B; font-weight: bold;"> Privacy Policy</a>
+      </div>
+      <button type="submit" class="btn">SIGN UP</button>
+    </form>
+
+    <div class="divider">Or Sign in/up with</div>
+
+    <div class="social-buttons">
+      <div class="social-btn"><img src="https://img.icons8.com/color/16/000000/google-logo.png" /> Google</div>
+      <div class="social-btn"><img src="https://img.icons8.com/fluency/16/microsoft-outlook-2019.png" /> Outlook</div>
+      <div class="social-btn"><img src="https://img.icons8.com/color/16/yahoo.png" /> Yahoo</div>
+    </div>
+
+    {% if messages %}
+      <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+      <script>
+        {% for message in messages %}
+          Swal.fire({
+            icon: "{% if 'error' in message.tags %}error{% else %}success{% endif %}",
+            title: "{{ message.tags|capfirst }}",
+            text: "{{ message }}",
+            confirmButtonText: "OK",
+            background: "#f0fff5",
+            color: "#111",
+            iconColor: "{% if 'error' in message.tags %}#e63946{% else %}#39B54B{% endif %}",
+            customClass: { confirmButton: "swal-confirm-btn" }
+          });
+        {% endfor %}
+      </script>
+
+      <style>
+        .swal-confirm-btn {
+          background-color: #39B54B !important;
+          color: white !important;
+          border-radius: 8px !important;
+          padding: 10px 22px !important;
+          font-size: 16px !important;
+        }
+        .swal-confirm-btn:hover { background-color: #2da73e !important; }
+      </style>
+    {% endif %}
+
+  </div>
+
+  <script>
+    const loginTab = document.getElementById('login-tab');
+    const signupTab = document.getElementById('signup-tab');
+    const loginForm = document.getElementById('login-form');
+    const signupForm = document.getElementById('signup-form');
+
+    function showLogin(){
+      loginTab.classList.add('active');
+      signupTab.classList.remove('active');
+      loginForm.style.display = 'block';
+      signupForm.style.display = 'none';
+    }
+
+    function showSignup(){
+      signupTab.classList.add('active');
+      loginTab.classList.remove('active');
+      signupForm.style.display = 'block';
+      loginForm.style.display = 'none';
+    }
+
+    loginTab.onclick = showLogin;
+    signupTab.onclick = showSignup;
+
+    // Optional: if signup had an error message, open signup tab.
+    {% if messages %}
+      {% for message in messages %}
+        {% if 'error' in message.tags %}
+          // if you want: showSignup();
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+  </script>
+</body>
+</html>
