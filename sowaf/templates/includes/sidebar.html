@@ -184,6 +184,43 @@
         </ul>
 
 <!-- end -->
+
+<ul class="menu_items">
+          <div class="menu_title menu_dahsboard"></div>
+           <li class="item">
+            <div class="nav_link submenu_item">
+              <a href="#" class="nav_label_link">
+                 <span class="navlink_icon">
+                 <i class="bx bx-store"></i> 
+                 </span>
+                 <span class="navlink">Inventory</span>
+                </a>
+              <i class="bx bx-chevron-right arrow-left"></i>
+             </div>
+
+            <ul class="menu_items submenu">
+              <li class="item">
+                <a href="{% url 'inventory:products-list' %}" class="nav_link">
+                  <span class="navlink_icon">
+                    <i class="bx bx-package"></i>
+                  </span>
+                  <span class="navlink">Products and Services</span>
+                </a>
+              </li>  
+               <li class="item">
+                <a href="{% url 'inventory:movements-list' %}" class="nav_link">
+                  <span class="navlink_icon">
+                    <i class="bx bx-layer"></i> 
+                  </span>
+                  <span class="navlink">Inventory Management</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+<!-- end -->
+
+
         <ul class="menu_items">
           <div class="menu_title menu_editor"></div>
           <!-- duplicate these li tag if you want to add or remove navlink only -->

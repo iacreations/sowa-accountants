@@ -370,7 +370,7 @@ class ColumnPreference(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     table_name = models.CharField(max_length=80)  # "invoice_list"
     visible_columns = models.JSONField(default=list)
-    column_order = models.JSONField(default=list)  # ✅ NEW
+    column_order = models.JSONField(default=list)  #NEW
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

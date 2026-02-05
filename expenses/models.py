@@ -32,6 +32,15 @@ class Expense(models.Model):
 
     total_amount    = models.DecimalField(**DEC, default=Decimal("0.00"))
     created_at      = models.DateTimeField(auto_now_add=True)
+    journal_entry = models.OneToOneField(
+        "accounts.JournalEntry",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="expense_source",
+    )
+
+    is_posted = models.BooleanField(default=False)
+    posted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-payment_date", "-id"]
@@ -159,7 +168,8 @@ class Bill(models.Model):
     total_amount      = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
-
+    is_posted = models.BooleanField(default=False)
+    posted_at = models.DateTimeField(null=True, blank=True)
     # NEW: link bill to its JournalEntry (so edits don’t duplicate postings)
     journal_entry     = models.OneToOneField(
         "accounts.JournalEntry",  # adjust app label if different

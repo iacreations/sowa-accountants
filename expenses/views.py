@@ -1,7 +1,6 @@
 # Create your views here.
 from decimal import Decimal
 from urllib.parse import urlencode
-
 from django.db.models import Sum, Value, F, DecimalField, ExpressionWrapper
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse
@@ -34,7 +33,7 @@ from django.db import transaction
 from django.views.decorators.http import require_http_methods
 from inventory.models import Product,Pclass
 from .utils import (generate_unique_ref_no,_save_cheque_bill_allocations,bankish_q)
-from inventory.services import rebuild_movements_for_bill
+from inventory.services import rebuild_movements_for_bill, rebuild_movements_for_expense
 # Expenses view
 
 DEFAULT_ACCOUNTS_COL_PREFS = {
@@ -2109,6 +2108,7 @@ def save_column_prefs(request):
     prefs.preferences = cleaned
     prefs.save()
     return JsonResponse({"status": "ok"})
+
 # adding an expense
 def _dec(v, default="0.00"):
     try:
@@ -2126,15 +2126,15 @@ def add_expense(request):
                 expense_accounts_qs_ = expense_accounts_qs()  # only expense-type accounts
 
                 # ----- Header -----
-                payee_name      = request.POST.get("payee_name") or ""
-                supplier_id     = request.POST.get("payee_supplier") or ""
+                payee_name         = request.POST.get("payee_name") or ""
+                supplier_id        = request.POST.get("payee_supplier") or ""
                 payment_account_id = request.POST.get("payment_account") or ""
-                payment_date    = request.POST.get("payment_date") or timezone.localdate()
-                payment_method  = request.POST.get("payment_method") or "cash"
-                ref_no          = request.POST.get("ref_no") or ""
-                location        = request.POST.get("location") or ""
-                memo            = request.POST.get("memo") or ""
-                attachment      = request.FILES.get("attachments")
+                payment_date       = request.POST.get("payment_date") or timezone.localdate()
+                payment_method     = request.POST.get("payment_method") or "cash"
+                ref_no             = request.POST.get("ref_no") or ""
+                location           = request.POST.get("location") or ""
+                memo               = request.POST.get("memo") or ""
+                attachment         = request.FILES.get("attachments")
 
                 supplier = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
 
@@ -2144,7 +2144,6 @@ def add_expense(request):
                 # ensure we have a valid 8-digit numeric ref; if not, generate one
                 if not (len(ref_no) == 8 and ref_no.isdigit()):
                     ref_no = generate_unique_ref_no()
-                # guard against the (very rare) race where the same ref got used meanwhile
                 if Expense.objects.filter(ref_no=ref_no).exists():
                     ref_no = generate_unique_ref_no()
 
@@ -2173,36 +2172,36 @@ def add_expense(request):
                 for idx, cat_id in enumerate(cat_category_ids):
                     if not cat_id:
                         continue
-                    # Restrict to expense accounts set
+
                     category = expense_accounts_qs_.filter(pk=cat_id).first()
                     if not category:
                         continue
 
                     amt = _dec(cat_amounts[idx])
-                    if amt == 0:
+                    if amt <= 0:
                         continue
 
-                    is_bill = str(idx) in cat_billable
+                    is_bill  = str(idx) in cat_billable
                     customer = Newcustomer.objects.filter(pk=cat_customer_ids[idx] or None).first()
                     klass    = Pclass.objects.filter(pk=cat_class_ids[idx] or None).first()
 
                     ExpenseCategoryLine.objects.create(
                         expense=exp, category=category,
-                        description=cat_descs[idx],
+                        description=(cat_descs[idx] or ""),
                         amount=amt, is_billable=is_bill,
                         customer=customer, class_field=klass
                     )
                     total += amt
 
                 # -------- Item lines --------
-                item_product_ids = request.POST.getlist("item_product[]")
-                item_descs       = request.POST.getlist("item_desc[]")
-                item_qtys        = request.POST.getlist("item_qty[]")
-                item_rates       = request.POST.getlist("item_rate[]")
-                item_amounts     = request.POST.getlist("item_amount[]")
-                item_billable    = set(request.POST.getlist("item_billable[]"))
-                item_customer_ids= request.POST.getlist("item_customer[]")
-                item_class_ids   = request.POST.getlist("item_class[]")
+                item_product_ids  = request.POST.getlist("item_product[]")
+                item_descs        = request.POST.getlist("item_desc[]")
+                item_qtys         = request.POST.getlist("item_qty[]")
+                item_rates        = request.POST.getlist("item_rate[]")
+                item_amounts      = request.POST.getlist("item_amount[]")
+                item_billable     = set(request.POST.getlist("item_billable[]"))
+                item_customer_ids = request.POST.getlist("item_customer[]")
+                item_class_ids    = request.POST.getlist("item_class[]")
 
                 for idx, prod_id in enumerate(item_product_ids):
                     if not prod_id:
@@ -2213,25 +2212,34 @@ def add_expense(request):
 
                     qty  = _dec(item_qtys[idx], "0")
                     rate = _dec(item_rates[idx], "0")
-                    amt  = _dec(item_amounts[idx]) or (qty * rate)
+                    amt  = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
 
-                    is_bill = str(idx) in item_billable
+                    if amt <= 0:
+                        continue
+
+                    is_bill  = str(idx) in item_billable
                     customer = Newcustomer.objects.filter(pk=item_customer_ids[idx] or None).first()
                     klass    = Pclass.objects.filter(pk=item_class_ids[idx] or None).first()
 
                     ExpenseItemLine.objects.create(
                         expense=exp, product=product,
-                        description=item_descs[idx],
+                        description=(item_descs[idx] or ""),
                         qty=qty, rate=rate, amount=amt,
                         is_billable=is_bill, customer=customer, class_field=klass
                     )
                     total += amt
 
+                if total <= 0:
+                    exp.delete()
+                    messages.error(request, "Expense total must be greater than 0.")
+                    return redirect("expenses:add-expenses")
+
                 exp.total_amount = total
                 exp.save(update_fields=["total_amount"])
 
-                # ===== Post this expense into the General Ledger =====
+                # ✅ Post GL + ✅ Rebuild inventory movements (stock-in for inventory products)
                 _post_expense_to_ledger(exp)
+                rebuild_movements_for_expense(exp)
 
                 # redirect behaviour
                 action = request.POST.get("save_action") or "save"
@@ -2239,7 +2247,6 @@ def add_expense(request):
                     return redirect("expenses:expenses")
                 if action == "save&new":
                     return redirect("expenses:add-expenses")
-                # tweak ‘save&close’ destination as you wish:
                 return redirect("expenses:expenses")
 
         except Exception as e:
@@ -2248,10 +2255,7 @@ def add_expense(request):
     # GET: load form lists
     ref_no = generate_unique_ref_no()
     context = {
-        # Payment account → only Cash & Bank (deposit) accounts
         "accounts": deposit_accounts_qs(),
-
-        # Category dropdown → only expense-type accounts
         "expense_accounts": expense_accounts_qs(),
 
         "products": Product.objects.all().order_by("name"),
@@ -2262,26 +2266,8 @@ def add_expense(request):
         "payment_methods": Expense.PAYMENT_METHODS,
     }
     return render(request, "expenses_form.html", context)
-# expense list 
-def expense_list(request):
-    qs = (
-        Expense.objects
-        .select_related("payee_supplier", "payment_account")
-        .prefetch_related("cat_lines__category", "item_lines__product")
-        .order_by("-payment_date", "-id")
-    )
-    return render(request, "expenses_list.html", {"expenses": qs})
-# expense detail
-def expense_detail(request, pk: int):
-    exp = get_object_or_404(
-        Expense.objects
-        .select_related("payee_supplier", "payment_account")
-        .prefetch_related("cat_lines__category", "item_lines__product"),
-        pk=pk
-    )
-    return render(request, "expense_detail.html", {"e": exp,})
-# expense edit
 
+# edit expenses
 @transaction.atomic
 def expense_edit(request, pk: int):
     exp = get_object_or_404(
@@ -2294,7 +2280,7 @@ def expense_edit(request, pk: int):
     if request.method == "POST":
         try:
             with transaction.atomic():
-                # --- Allowed account sets (same as add_expense) ---
+                # --- Allowed account sets ---
                 payment_accounts_qs = deposit_accounts_qs()   # only cash/bank
                 expense_accounts_qs_ = expense_accounts_qs()  # only expense-type accounts
 
@@ -2302,22 +2288,16 @@ def expense_edit(request, pk: int):
                 exp.payee_name = request.POST.get("payee_name") or ""
 
                 supplier_id = request.POST.get("payee_supplier") or ""
-                exp.payee_supplier = (
-                    Newsupplier.objects.filter(pk=supplier_id).first()
-                    if supplier_id else None
-                )
+                exp.payee_supplier = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
 
                 payment_account_id = request.POST.get("payment_account") or ""
-                exp.payment_account = get_object_or_404(
-                    payment_accounts_qs,
-                    pk=payment_account_id
-                )
+                exp.payment_account = get_object_or_404(payment_accounts_qs, pk=payment_account_id)
 
-                exp.payment_date = request.POST.get("payment_date") or timezone.localdate()
+                exp.payment_date   = request.POST.get("payment_date") or timezone.localdate()
                 exp.payment_method = request.POST.get("payment_method") or "cash"
-                exp.ref_no = request.POST.get("ref_no") or exp.ref_no or ""
-                exp.location = request.POST.get("location") or ""
-                exp.memo = request.POST.get("memo") or ""
+                exp.ref_no         = request.POST.get("ref_no") or exp.ref_no or ""
+                exp.location       = request.POST.get("location") or ""
+                exp.memo           = request.POST.get("memo") or ""
 
                 if request.FILES.get("attachments"):
                     exp.attachments = request.FILES["attachments"]
@@ -2342,27 +2322,22 @@ def expense_edit(request, pk: int):
                     if not cat_id:
                         continue
 
-                    # restrict to expense accounts set
                     category = expense_accounts_qs_.filter(pk=cat_id).first()
                     if not category:
                         continue
 
                     amt = _dec(cat_amounts[idx])
-                    if amt == 0:
+                    if amt <= 0:
                         continue
 
-                    is_bill = str(idx) in cat_billable
-                    customer = Newcustomer.objects.filter(
-                        pk=cat_customer_ids[idx] or None
-                    ).first()
-                    klass = Pclass.objects.filter(
-                        pk=cat_class_ids[idx] or None
-                    ).first()
+                    is_bill  = str(idx) in cat_billable
+                    customer = Newcustomer.objects.filter(pk=cat_customer_ids[idx] or None).first()
+                    klass    = Pclass.objects.filter(pk=cat_class_ids[idx] or None).first()
 
                     ExpenseCategoryLine.objects.create(
                         expense=exp,
                         category=category,
-                        description=cat_descs[idx],
+                        description=(cat_descs[idx] or ""),
                         amount=amt,
                         is_billable=is_bill,
                         customer=customer,
@@ -2389,20 +2364,19 @@ def expense_edit(request, pk: int):
 
                     qty  = _dec(item_qtys[idx], "0")
                     rate = _dec(item_rates[idx], "0")
-                    amt  = _dec(item_amounts[idx]) or (qty * rate)
+                    amt  = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
 
-                    is_bill = str(idx) in item_billable
-                    customer = Newcustomer.objects.filter(
-                        pk=item_customer_ids[idx] or None
-                    ).first()
-                    klass = Pclass.objects.filter(
-                        pk=item_class_ids[idx] or None
-                    ).first()
+                    if amt <= 0:
+                        continue
+
+                    is_bill  = str(idx) in item_billable
+                    customer = Newcustomer.objects.filter(pk=item_customer_ids[idx] or None).first()
+                    klass    = Pclass.objects.filter(pk=item_class_ids[idx] or None).first()
 
                     ExpenseItemLine.objects.create(
                         expense=exp,
                         product=product,
-                        description=item_descs[idx],
+                        description=(item_descs[idx] or ""),
                         qty=qty,
                         rate=rate,
                         amount=amt,
@@ -2412,27 +2386,31 @@ def expense_edit(request, pk: int):
                     )
                     total += amt
 
-                # ---- Update total + post to GL ----
+                if total <= 0:
+                    messages.error(request, "Expense total must be greater than 0.")
+                    return redirect("expenses:expense-edit", pk=exp.pk)
+
+                # ---- Update total + post to GL + inventory ----
                 exp.total_amount = total
                 exp.save(update_fields=["total_amount"])
 
-                # ===== Post this expense into the General Ledger =====
                 _post_expense_to_ledger(exp)
+                rebuild_movements_for_expense(exp)
 
+                action = request.POST.get("save_action") or "save"
+                if action == "save&new":
+                    return redirect("expenses:add-expenses")
+                if action == "save":
+                    return redirect("expenses:expenses")
                 return redirect("expenses:expense-detail", pk=exp.pk)
 
-        except Exception:
-            # You can add messages.error here if you want
-            return redirect("expenses:add-expense")
+        except Exception as e:
+            messages.error(request, f"Could not update expense: {e}")
+            return redirect("expenses:expense-edit", pk=exp.pk)
 
-    # GET → prefill context
     context = {
         "expense": exp,
-
-        # Payment Account dropdown → only cash/bank accounts
         "accounts": deposit_accounts_qs(),
-
-        # Category dropdown → only expense-type accounts
         "expense_accounts": expense_accounts_qs(),
 
         "products": Product.objects.all().order_by("name"),
@@ -2440,19 +2418,32 @@ def expense_edit(request, pk: int):
         "suppliers": Newsupplier.objects.all().order_by("company_name"),
         "classes": Pclass.objects.all().order_by("class_name"),
 
-        # existing lines to loop in the form:
-        "cat_lines": exp.cat_lines.select_related(
-            "category", "customer", "class_field"
-        ).all(),
-        "item_lines": exp.item_lines.select_related(
-            "product", "customer", "class_field"
-        ).all(),
+        "cat_lines": exp.cat_lines.select_related("category", "customer", "class_field").all(),
+        "item_lines": exp.item_lines.select_related("product", "customer", "class_field").all(),
 
         "payment_methods": Expense.PAYMENT_METHODS,
     }
     return render(request, "expenses_form.html", context)
 
-# end
+# expense list 
+def expense_list(request):
+    qs = (
+        Expense.objects
+        .select_related("payee_supplier", "payment_account")
+        .prefetch_related("cat_lines__category", "item_lines__product")
+        .order_by("-payment_date", "-id")
+    )
+    return render(request, "expenses_list.html", {"expenses": qs})
+# expense detail
+def expense_detail(request, pk: int):
+    exp = get_object_or_404(
+        Expense.objects
+        .select_related("payee_supplier", "payment_account")
+        .prefetch_related("cat_lines__category", "item_lines__product"),
+        pk=pk
+    )
+    return render(request, "expense_detail.html", {"e": exp,})
+
 # bill views
 def _dec(v, default="0.00"):
     try:
@@ -2859,29 +2850,6 @@ def bill_detail(request, pk):
     return render(request, "bill_detail.html", context)
 
 # end
-
-
-
-
-def add_time_activity(request):
-   
-    return render(request, 'time_activity_form.html', {})
-
-def supplier_credit(request):
-   
-    return render(request, 'supplier_credit_form.html', {})
-
-def pay_down_credit(request):
-   
-    return render(request, 'pay_down_credit_form.html', {})
-
-def import_bills(request):
-   
-    return render(request, 'import_bills_form.html', {})
-def credit_card(request):
-   
-    return render(request, 'credit_card_credit_form.html', {})
-#
 
 # cheque view
 
@@ -4601,3 +4569,27 @@ def supplier_refund_new(request, supplier_id: int):
         "accounts": accounts,
         "max_refundable": max_refundable,
     })
+
+
+
+
+
+
+def add_time_activity(request):
+   
+    return render(request, 'time_activity_form.html', {})
+
+def supplier_credit(request):
+   
+    return render(request, 'supplier_credit_form.html', {})
+
+def pay_down_credit(request):
+   
+    return render(request, 'pay_down_credit_form.html', {})
+
+def import_bills(request):
+   
+    return render(request, 'import_bills_form.html', {})
+def credit_card(request):
+   
+    return render(request, 'credit_card_credit_form.html', {})

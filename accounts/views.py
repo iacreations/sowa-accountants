@@ -9,6 +9,7 @@ from io import BytesIO
 from openpyxl import Workbook
 import csv
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from datetime import datetime,date
 from django.db.models import Q, Sum
@@ -29,7 +30,7 @@ from .utils import income_accounts_qs, expense_accounts_qs, deposit_accounts_qs
 from .models import (Account, ColumnPreference, JournalEntry, JournalLine, AuditTrail)
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 
@@ -640,6 +641,7 @@ def get_entry_link(entry):
             return "#" 
 
 # @login_required
+
 def general_ledger(request):
     # -------- filters ----------
     account_id = request.GET.get("account_id")
@@ -652,8 +654,8 @@ def general_ledger(request):
     supplier_id = request.GET.get("supplier_id")
     customer_id = request.GET.get("customer_id")
 
-    include_children = request.GET.get("include_children")
-    include_children = True if str(include_children).lower() in ("1", "true", "yes", "on") else False
+    # include_children can be auto-enabled later when a parent is selected
+    include_children_raw = request.GET.get("include_children")
 
     # SANITIZE
     if not account_id or account_id in ("None", "null", ""):
@@ -691,6 +693,23 @@ def general_ledger(request):
             return running + (debit - credit)
         return running + (credit - debit)
 
+    def split_to_tb_columns(acc: Account, ending: Decimal):
+        """
+        Same logic as Trial Balance:
+        - Debit-normal: + => Debit, - => Credit
+        - Credit-normal: + => Credit, - => Debit
+        """
+        side = normal_side(acc)
+
+        if side == "debit":
+            if ending >= 0:
+                return ending, Decimal("0.00")
+            return Decimal("0.00"), -ending
+
+        if ending >= 0:
+            return Decimal("0.00"), ending
+        return -ending, Decimal("0.00")
+
     # =====================================================================
     # BUILD ACCOUNT TREE (needed to include children transactions)
     # =====================================================================
@@ -717,6 +736,18 @@ def general_ledger(request):
             for ch in children_by_parent.get(nid, []):
                 stack.append(ch.id)
         return out
+
+    # ---------------------------------------------------------------------
+    # Decide include_children:
+    # - If user explicitly passed include_children => honor it
+    # - Else if selected account has children => AUTO include children so GL matches TB rolled-up parents
+    # ---------------------------------------------------------------------
+    include_children = False
+    if include_children_raw is not None:
+        include_children = True if str(include_children_raw).lower() in ("1", "true", "yes", "on") else False
+    else:
+        if selected_account and children_by_parent.get(selected_account.id):
+            include_children = True
 
     # Decide which account ids should be included in the report
     selected_account_ids = None
@@ -871,7 +902,7 @@ def general_ledger(request):
             "query": query,
             "supplier_id": supplier_id,
             "customer_id": customer_id,
-            "include_children": include_children,   # keep in template links if you want
+            "include_children": include_children,
             "page_obj": page_obj,
             "summary_rows": page_obj.object_list,
             "total_balance": grand_total,
@@ -885,8 +916,10 @@ def general_ledger(request):
     paged_roots = list(page_obj.object_list)
 
     detail_rows = []
-    total_debit = Decimal("0.00")
-    total_credit = Decimal("0.00")
+
+    # Movement totals (transactions shown)
+    tx_total_debit = Decimal("0.00")
+    tx_total_credit = Decimal("0.00")
 
     def clean_desc(description: str):
         d = description or ""
@@ -958,7 +991,7 @@ def general_ledger(request):
         return running0
 
     def add_leaf_transactions(acc: Account, depth: int, depth_display: int, path: str):
-        nonlocal total_debit, total_credit
+        nonlocal tx_total_debit, tx_total_credit
 
         lines = lines_by_account.get(acc.id, [])
         if not lines:
@@ -992,8 +1025,9 @@ def general_ledger(request):
                 "customer_id": ln.customer_id,
             })
 
-            total_debit += debit
-            total_credit += credit
+            # these are MOVEMENT totals (not closing)
+            tx_total_debit += debit
+            tx_total_credit += credit
 
     def walk_tree(node: Account, depth: int, parent_path: str):
         if node.id not in visible_ids:
@@ -1026,7 +1060,19 @@ def general_ledger(request):
     for r in paged_roots:
         walk_tree(r, 0, "")
 
-    total_balance = total_debit - total_credit
+    # ---------------------------------------------------------------------
+    # TB-CONSISTENT TOTALS WHEN AN ACCOUNT IS SELECTED
+    # ---------------------------------------------------------------------
+    closing_total = None
+    closing_total_debit = Decimal("0.00")
+    closing_total_credit = Decimal("0.00")
+
+    if selected_account:
+        closing_total = rolled_up_closing(selected_account)
+        closing_total_debit, closing_total_credit = split_to_tb_columns(selected_account, closing_total)
+
+    # This one is still movement net (useful sometimes)
+    tx_total_balance = tx_total_debit - tx_total_credit
 
     if export == "excel":
         response = HttpResponse(content_type="text/csv")
@@ -1077,12 +1123,19 @@ def general_ledger(request):
         "query": query,
         "supplier_id": supplier_id,
         "customer_id": customer_id,
-        "include_children": include_children,   # keep
+        "include_children": include_children,
         "page_obj": page_obj,
         "detail_rows": detail_rows,
-        "total_debit": total_debit,
-        "total_credit": total_credit,
-        "total_balance": total_balance,
+
+        # Movement totals (transactions shown)
+        "total_debit": tx_total_debit,
+        "total_credit": tx_total_credit,
+        "total_balance": tx_total_balance,
+
+        # TB-consistent totals (closing) when an account is selected
+        "closing_total": closing_total,
+        "closing_total_debit": closing_total_debit,
+        "closing_total_credit": closing_total_credit,
     })
 
 
@@ -1512,7 +1565,7 @@ def report_trial_balance(request):
         walk_parent_only(r, 0)
 
     # =========================================================
-    # ✅ EXPORTS: CSV / EXCEL / PDF (without changing your styles)
+    # EXPORTS: CSV / EXCEL / PDF (without changing your styles)
     # =========================================================
     export = (request.GET.get("export") or "").strip().lower()
 
@@ -1633,7 +1686,7 @@ def report_trial_balance(request):
         return resp
 
     # =========================================================
-    # ✅ NORMAL PAGE RENDER
+    # NORMAL PAGE RENDER
     # =========================================================
     context = {
         "company_name": "YoAccountant",
@@ -1686,7 +1739,7 @@ def dec(x) -> Decimal:
 # Example placeholders — keep your real ones
 INCOME_TYPES = {"Income", "Other Income"}
 EXPENSE_TYPES = {"Expense", "Other Expense", "Cost of Goods Sold"}
-COGS_DETAIL_TYPES = {"costofgoodssold", "cogs"}  # keep your real set
+COGS_DETAIL_TYPES = {"cost of goods sold", "cogs"}  # keep your real set
 
 def report_pnl(request):
     # ---------- 1. Parse date filters ----------
@@ -1705,6 +1758,13 @@ def report_pnl(request):
         date_from = None
         date_to = None
 
+    # If no selected date, treat it as "As of today" for display (and to avoid "None to None")
+    today = timezone.localdate()
+    if not date_from and not date_to:
+        date_to = today
+    elif date_from and not date_to:
+        date_to = today
+
     # ---------- 2. Accounting basis toggle (cash/accrual) ----------
     basis = (request.GET.get("basis") or "accrual").lower()
     if basis not in {"cash", "accrual"}:
@@ -1719,7 +1779,6 @@ def report_pnl(request):
         jl = jl.filter(entry__date__lte=date_to)
 
     # ---------- 4. Cash basis filter (QB-like simplified) ----------
-    # Keep only entries that touch cash/bank, then P&L lines in those entries count.
     if basis == "cash":
         cash_bank_accounts = Account.objects.filter(is_active=True).filter(bankish_q())
 
@@ -1728,10 +1787,8 @@ def report_pnl(request):
               .values_list("entry_id", flat=True)
               .distinct()
         )
-
         jl = jl.filter(entry_id__in=cash_entry_ids)
 
-    # Only accounts that actually have postings in this period (after basis filtering)
     posted_accounts = (
         Account.objects
         .filter(journalline__in=jl)
@@ -1741,68 +1798,46 @@ def report_pnl(request):
 
     # ---------- 5. Helper: classify accounts into P&L buckets ----------
     def classify_account(acc: Account) -> str | None:
-        """
-        Returns 'income', 'cogs', 'expense', or None (ignore).
-        Uses COA codes first, then falls back to text matching.
-        """
         code = (acc.account_type or "").strip()
         detail = (getattr(acc, "detail_type", "") or "").strip().lower()
         name = (acc.account_name or "").strip().lower()
 
-        # Strong by code
         if code in INCOME_TYPES:
             return "income"
+
         if code in EXPENSE_TYPES:
-            # Some expenses are really COGS (optional split)
             if detail in COGS_DETAIL_TYPES or any(k in name for k in ["cogs", "cost of sales", "cost of goods"]):
                 return "cogs"
             return "expense"
 
-        # Fallback by text (in case some accounts were created with unexpected codes)
         text = f"{(acc.account_type or '').lower()} {detail} {name}"
-
         if "income" in text or "revenue" in text or "sales" in text:
             return "income"
         if "cogs" in text or "cost of goods" in text or "cost of sales" in text:
             return "cogs"
         if "expense" in text:
             return "expense"
-
         return None
 
     # ============================================================
     # PARENT-ONLY ROLLUP LIKE TRIAL BALANCE
     # ============================================================
 
-    # Build a lightweight tree map for ALL active accounts (needed for rollups)
     all_active = list(Account.objects.filter(is_active=True).select_related("parent"))
     children_by_parent = defaultdict(list)
-    acc_by_id = {}
 
     for a in all_active:
-        acc_by_id[a.id] = a
         if a.parent_id:
             children_by_parent[a.parent_id].append(a)
 
-    # helper: get top-most parent (root)
-    def get_top_parent(acc: Account) -> Account:
-        cur = acc
-        while cur and cur.parent_id:
-            cur = cur.parent
-        return cur or acc
-
-    # If you want to show NOT ONLY root-level but "first non-subaccount parent",
-    # use this instead:
     def get_display_parent(acc: Account) -> Account:
         cur = acc
         while cur and cur.parent_id and getattr(cur, "is_subaccount", False):
             cur = cur.parent
-        # if still subaccount, climb until non-subaccount
         while cur and getattr(cur, "is_subaccount", False) and cur.parent_id:
             cur = cur.parent
         return cur or acc
 
-    # collect all descendants (including itself)
     def collect_subtree_ids(root_id: int):
         out = []
         stack = [root_id]
@@ -1813,11 +1848,7 @@ def report_pnl(request):
                 stack.append(ch.id)
         return out
 
-    # Pre-aggregate debit/credit per account_id ONCE (fast)
-    agg_map = (
-        jl.values("account_id")
-          .annotate(debit=Sum("debit"), credit=Sum("credit"))
-    )
+    agg_map = jl.values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
     debit_by_id = defaultdict(lambda: Decimal("0.00"))
     credit_by_id = defaultdict(lambda: Decimal("0.00"))
 
@@ -1826,15 +1857,12 @@ def report_pnl(request):
         debit_by_id[aid] = dec(row["debit"])
         credit_by_id[aid] = dec(row["credit"])
 
-    # Find which parent accounts should be displayed (parent-only)
     display_parents = {}
     for acc in posted_accounts:
-        parent = get_display_parent(acc)   # this is what hides subaccounts
-        if not parent:
-            continue
-        display_parents[parent.id] = parent
+        parent = get_display_parent(acc)
+        if parent:
+            display_parents[parent.id] = parent
 
-    # ---------- 6. Build buckets (parent-only) ----------
     buckets = {"income": [], "cogs": [], "expense": []}
     totals = {
         "income": Decimal("0.00"),
@@ -1842,7 +1870,6 @@ def report_pnl(request):
         "expense": Decimal("0.00"),
     }
 
-    # Sort parents by name for stable display
     parent_list = sorted(display_parents.values(), key=lambda x: (x.account_name or "").lower())
 
     for parent_acc in parent_list:
@@ -1851,13 +1878,9 @@ def report_pnl(request):
             continue
 
         subtree_ids = collect_subtree_ids(parent_acc.id)
-
-        # Roll up debit/credit from all descendants that have postings
         debit = sum((debit_by_id[aid] for aid in subtree_ids), Decimal("0.00"))
         credit = sum((credit_by_id[aid] for aid in subtree_ids), Decimal("0.00"))
 
-        # Income accounts: normally credit balance → credit - debit
-        # Expense / COGS: normally debit balance → debit - credit
         if bucket == "income":
             amount = credit - debit
         else:
@@ -1878,32 +1901,39 @@ def report_pnl(request):
     operating_profit = gross_profit - totals["expense"]
     net_profit = operating_profit
 
-    # ---------- 8. Export (CSV / Excel / PDF) ----------
+    # ---------- 8. Period text (nice display) ----------
+    def _period_text(dfrom, dto, basis):
+        if dfrom and dto:
+            return f"For the period {dfrom.strftime('%d/%m/%Y')} – {dto.strftime('%d/%m/%Y')} ({basis})"
+        if (not dfrom) and dto:
+            return f"As of {dto.strftime('%d/%m/%Y')} ({basis})"
+        return f"As of {timezone.localdate().strftime('%d/%m/%Y')} ({basis})"
+
+    period_text = _period_text(date_from, date_to, basis)
+
+    # ---------- 9. Export (CSV / Excel / PDF) ----------
     export = (request.GET.get("export") or "").lower().strip()
     if export in {"csv", "xlsx", "pdf"}:
-        # file-friendly period text
-        period_text = f"{date_from or 'None'} to {date_to or 'None'} ({basis})"
 
         # -------- CSV --------
         if export == "csv":
             response = HttpResponse(content_type="text/csv")
             response["Content-Disposition"] = 'attachment; filename="profit_and_loss.csv"'
-
             writer = csv.writer(response)
+
             writer.writerow(["Statement of Profit or Loss"])
             writer.writerow(["Company", "YoAccountant"])
             writer.writerow(["Period", period_text])
+            writer.writerow(["Reporting Currency", "UGX"])
             writer.writerow([])
             writer.writerow(["Section", "Account", "Amount"])
 
-            # Revenue
             writer.writerow(["Revenue", "", ""])
             for r in buckets["income"]:
                 writer.writerow(["Revenue", r["account"], f"{r['amount']:.2f}"])
             writer.writerow(["", "Total revenue", f"{totals['income']:.2f}"])
             writer.writerow([])
 
-            # COGS
             writer.writerow(["Cost of goods sold", "", ""])
             for r in buckets["cogs"]:
                 writer.writerow(["COGS", r["account"], f"{r['amount']:.2f}"])
@@ -1913,7 +1943,6 @@ def report_pnl(request):
             writer.writerow(["", "Gross profit", f"{gross_profit:.2f}"])
             writer.writerow([])
 
-            # Expenses
             writer.writerow(["Operating expenses", "", ""])
             for r in buckets["expense"]:
                 writer.writerow(["Expense", r["account"], f"{r['amount']:.2f}"])
@@ -1933,6 +1962,7 @@ def report_pnl(request):
             ws.append(["Statement of Profit or Loss"])
             ws.append(["Company", "YoAccountant"])
             ws.append(["Period", period_text])
+            ws.append(["Reporting Currency", "UGX"])
             ws.append([])
             ws.append(["Section", "Account", "Amount"])
 
@@ -1971,67 +2001,156 @@ def report_pnl(request):
             response["Content-Disposition"] = 'attachment; filename="profit_and_loss.xlsx"'
             return response
 
-        # -------- PDF --------
+        # -------- PDF (STRUCTURED + PROFESSIONAL + NO "Account/Amount" LABELS) --------
         if export == "pdf":
             buffer = BytesIO()
-            p = canvas.Canvas(buffer, pagesize=A4)
-            width, height = A4
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=A4,
+                leftMargin=18 * mm,
+                rightMargin=18 * mm,
+                topMargin=16 * mm,
+                bottomMargin=16 * mm,
+                title="Statement of Profit or Loss",
+            )
 
-            y = height - 50
-            line = 16
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                "title_style",
+                parent=styles["Title"],
+                fontName="Helvetica-Bold",
+                fontSize=16,
+                leading=20,
+                textColor=colors.HexColor("#39B54B"),
+                alignment=1,  # center
+                spaceAfter=6,
+            )
+            meta_style = ParagraphStyle(
+                "meta_style",
+                parent=styles["Normal"],
+                fontName="Helvetica",
+                fontSize=10,
+                leading=12,
+                textColor=colors.HexColor("#475569"),
+                alignment=1,  # center
+                spaceAfter=2,
+            )
+            section_style = ParagraphStyle(
+                "section_style",
+                parent=styles["Heading3"],
+                fontName="Helvetica-Bold",
+                fontSize=11,
+                textColor=colors.HexColor("#0f5132"),
+                spaceBefore=10,
+                spaceAfter=6,
+            )
 
-            def draw(text, bold=False):
-                nonlocal y
-                if y < 60:
-                    p.showPage()
-                    y = height - 50
-                p.setFont("Helvetica-Bold" if bold else "Helvetica", 10 if not bold else 11)
-                p.drawString(50, y, text)
-                y -= line
+            story = []
+            story.append(Paragraph("Statement of Profit or Loss", title_style))
+            story.append(Paragraph("YoAccountant", meta_style))
+            story.append(Paragraph(period_text, meta_style))
+            story.append(Paragraph("Reporting Currency: UGX", meta_style))
+            story.append(Spacer(1, 10))
 
-            draw("Statement of Profit or Loss", bold=True)
-            draw("Company: YoAccountant")
-            draw(f"Period: {period_text}")
-            draw("")
+            def _fmt(x: Decimal) -> str:
+                return f"{x:,.2f}"
 
-            draw("Revenue", bold=True)
-            for r in buckets["income"]:
-                draw(f"  {r['account']}: {r['amount']:.2f}")
-            draw(f"Total revenue: {totals['income']:.2f}", bold=True)
-            draw("")
+            def add_section(title, rows, total_label, total_value, extra_totals=None):
+                """
+             NO COLUMN HEADERS (Account/Amount) — professional statement layout
+                rows: list of dicts with keys: account, amount
+                extra_totals: list of tuples (label, value) shown after total (bold)
+                """
+                story.append(Paragraph(title, section_style))
 
-            draw("Cost of goods sold", bold=True)
-            for r in buckets["cogs"]:
-                draw(f"  {r['account']}: {r['amount']:.2f}")
-            draw(f"Total COGS: {totals['cogs']:.2f}", bold=True)
-            draw("")
+                data = []
+                for r in rows:
+                    data.append([r["account"], _fmt(r["amount"])])
 
-            draw(f"Gross profit: {gross_profit:.2f}", bold=True)
-            draw("")
+                # total row
+                data.append([total_label, _fmt(total_value)])
 
-            draw("Operating expenses", bold=True)
-            for r in buckets["expense"]:
-                draw(f"  {r['account']}: {r['amount']:.2f}")
-            draw(f"Total operating expenses: {totals['expense']:.2f}", bold=True)
-            draw("")
+                t = Table(data, colWidths=[120 * mm, 50 * mm])
+                t.setStyle(TableStyle([
+                    ("FONTNAME", (0, 0), (-1, -2), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -2), 10),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e7e7e7")),
+                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
 
-            draw(f"Operating profit: {operating_profit:.2f}", bold=True)
-            draw(f"Net profit: {net_profit:.2f}", bold=True)
+                    # Total row styling
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F8FFF9")),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ]))
 
-            p.showPage()
-            p.save()
+                story.append(t)
+
+                if extra_totals:
+                    story.append(Spacer(1, 6))
+                    data2 = []
+                    for lbl, val in extra_totals:
+                        data2.append([lbl, _fmt(val)])
+
+                    t2 = Table(data2, colWidths=[120 * mm, 50 * mm])
+                    t2.setStyle(TableStyle([
+                        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 10),
+                        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                        ("TOPPADDING", (0, 0), (-1, -1), 7),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e7e7e7")),
+                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FAFDFB")),
+                    ]))
+                    story.append(t2)
+
+                story.append(Spacer(1, 10))
+
+            # Revenue
+            add_section(
+                "Revenue",
+                buckets["income"],
+                "Total revenue",
+                totals["income"],
+            )
+
+            # COGS
+            add_section(
+                "Cost of goods sold",
+                buckets["cogs"],
+                "Total COGS",
+                totals["cogs"],
+                extra_totals=[("Gross profit", gross_profit)]
+            )
+
+            # Expenses
+            add_section(
+                "Operating expenses",
+                buckets["expense"],
+                "Total operating expenses",
+                totals["expense"],
+                extra_totals=[
+                    ("Operating profit", operating_profit),
+                    ("Net profit", net_profit),
+                ]
+            )
+
+            doc.build(story)
 
             buffer.seek(0)
             response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
             response["Content-Disposition"] = 'attachment; filename="profit_and_loss.pdf"'
             return response
 
-    # ---------- 9. Normal HTML render ----------
+    # ---------- 10. Normal HTML render ----------
     context = {
         "company_name": "YoAccountant",
         "reporting_currency": "UGX",
-
-        "basis": basis,  # send to template
+        "basis": basis,
 
         "buckets": buckets,
         "totals": totals,
@@ -2048,7 +2167,6 @@ def report_pnl(request):
     return render(request, "pnl.html", context)
 
 # balance sheet
-
 def report_balance_sheet(request):
     """
     Balance sheet 'as of' a single date, grouped into
@@ -2301,7 +2419,7 @@ def report_balance_sheet(request):
     method_label = "Cash basis" if method == "cash" else "Accrual basis"
 
     # =========================================================
-    # ✅ EXPORTS: CSV / EXCEL / PDF
+    # EXPORTS: CSV / EXCEL / PDF
     # =========================================================
     export = (request.GET.get("export") or "").strip().lower()
     reporting_currency = "UGX"
@@ -2414,6 +2532,7 @@ def report_balance_sheet(request):
         resp["Content-Disposition"] = f'attachment; filename="{filename_base}.xlsx"'
         return resp
 
+    # UPDATED: totals label + amount bold in PDF
     if export == "pdf":
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
@@ -2435,7 +2554,8 @@ def report_balance_sheet(request):
         data.append(["Check Balanced", "YES" if check_ok else "NO"])
 
         table = Table(data, colWidths=[360, 140])
-        table.setStyle(TableStyle([
+
+        ts = [
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9fbef")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f5132")),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -2446,8 +2566,19 @@ def report_balance_sheet(request):
             ("ALIGN", (1, 1), (1, -1), "RIGHT"),
             ("BACKGROUND", (0, 1), (-1, -1), colors.white),
 
+            # (keeps the very last row bold like before)
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ]))
+        ]
+
+        # Make Subtotal/Total rows bold on BOTH columns
+        # data row index: 0 is header, export_rows start at 1
+        for i, (label, amt) in enumerate(export_rows, start=1):
+            label_txt = (label or "").strip().lower()
+            if label_txt.startswith("subtotal") or label_txt.startswith("total"):
+                ts.append(("FONTNAME", (0, i), (1, i), "Helvetica-Bold"))
+                ts.append(("BACKGROUND", (0, i), (1, i), colors.HexColor("#F8FFF9")))
+
+        table.setStyle(TableStyle(ts))
         story.append(table)
         doc.build(story)
 
@@ -2489,16 +2620,26 @@ def report_balance_sheet(request):
     return render(request, "balance_sheet.html", context)
 
 
-
 # cash flow
-# ------------------------------------------------------------
-# Helpers (full code)
-# ------------------------------------------------------------
+
+# =========================================================
+# DETAIL TYPES 
+# =========================================================
+DEPOSIT_DETAIL_TYPES = [
+    "Cash and Cash equivalents",
+    "Bank",
+]
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
 def _to_decimal(x) -> Decimal:
     try:
         return Decimal(str(x or "0")).quantize(Decimal("0.01"))
     except Exception:
         return Decimal("0.00")
+
 
 def _parse_date_or_none(s):
     if not s:
@@ -2508,10 +2649,12 @@ def _parse_date_or_none(s):
     except Exception:
         return None
 
+
 def _normal_side(acc) -> str:
     if getattr(acc, "level1_group", None) in ["Assets", "Expenses"]:
         return "debit"
     return "credit"
+
 
 def _apply_movement(acc, running: Decimal, debit: Decimal, credit: Decimal) -> Decimal:
     side = _normal_side(acc)
@@ -2519,7 +2662,11 @@ def _apply_movement(acc, running: Decimal, debit: Decimal, credit: Decimal) -> D
         return running + (debit - credit)
     return running + (credit - debit)
 
+
 def _collect_subtree_ids(root_ids):
+    """
+    Expand a set of account IDs to include all descendant subaccounts.
+    """
     from accounts.models import Account
 
     all_active = list(Account.objects.filter(is_active=True).only("id", "parent_id"))
@@ -2540,13 +2687,18 @@ def _collect_subtree_ids(root_ids):
                 stack.append(ch)
     return list(out)
 
+
 def _balance_for_account_ids(account_ids, as_of_date, strict_lt=False) -> Decimal:
+    """
+    Journal-only balance for a group of accounts, using normal-side rules.
+    """
     from accounts.models import JournalLine
 
     if not account_ids:
         return Decimal("0.00")
 
     qs = JournalLine.objects.select_related("entry", "account").filter(account_id__in=account_ids)
+
     if strict_lt:
         qs = qs.filter(entry__date__lt=as_of_date)
     else:
@@ -2566,21 +2718,25 @@ def _balance_for_account_ids(account_ids, as_of_date, strict_lt=False) -> Decima
 
     return total.quantize(Decimal("0.01"))
 
+
 def _period_net_profit(dfrom, dto) -> Decimal:
+    """
+    Net profit from journal:
+    Income = credits - debits
+    Expenses = debits - credits
+    """
     from accounts.models import JournalLine
 
-    period_lines = JournalLine.objects.select_related("entry", "account").all()
+    qs = JournalLine.objects.select_related("entry", "account").all()
     if dfrom:
-        period_lines = period_lines.filter(entry__date__gte=dfrom)
-    period_lines = period_lines.filter(entry__date__lte=dto)
+        qs = qs.filter(entry__date__gte=dfrom)
+    qs = qs.filter(entry__date__lte=dto)
 
-    income_lines = period_lines.filter(
-        account__account_type__in=["OPERATING_INCOME", "INVESTING_INCOME"]
-    )
-    expense_lines = period_lines.filter(
+    income_lines = qs.filter(account__account_type__in=["OPERATING_INCOME", "INVESTING_INCOME"])
+    expense_lines = qs.filter(
         account__account_type__in=[
             "OPERATING_EXPENSE", "INVESTING_EXPENSE",
-            "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"
+            "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE",
         ]
     )
 
@@ -2592,17 +2748,53 @@ def _period_net_profit(dfrom, dto) -> Decimal:
 
     return (income_total - expense_total).quantize(Decimal("0.01"))
 
+
+def _period_depreciation(dfrom, dto) -> Decimal:
+    """
+    Depreciation add-back:
+    match depreciation expense accounts by name/detail_type.
+    """
+    from accounts.models import JournalLine
+
+    qs = JournalLine.objects.select_related("entry", "account").filter(
+        account__account_type__in=[
+            "OPERATING_EXPENSE", "INVESTING_EXPENSE",
+            "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE",
+        ]
+    ).filter(
+        Q(account__detail_type__icontains="depreciation") |
+        Q(account__account_name__icontains="depreciation")
+    )
+
+    if dfrom:
+        qs = qs.filter(entry__date__gte=dfrom)
+    qs = qs.filter(entry__date__lte=dto)
+
+    agg = qs.aggregate(d=Sum("debit"), c=Sum("credit"))
+    dep = _to_decimal(agg["d"]) - _to_decimal(agg["c"])  # debit-normal expenses
+    return dep.quantize(Decimal("0.01"))
+
+
 def _first_id_or_none(qs):
     first = qs.first()
     return first.id if first else None
 
 
+# -----------------------------
+# MAIN CASHFLOW VIEW
+# -----------------------------
 def report_cashflow(request):
     """
-    Statement of cash flows (simplified, indirect method),
-    recalculated live from JournalLines (updated data).
-    """
+    SAME HTML variable names.
+    Better cash/bank detection using your exact COA detail types.
 
+    Output keys unchanged for your cashflow.html:
+      net_profit, delta_ar, delta_inv, delta_ap, delta_fa, delta_loans, delta_equity,
+      cash_from_ops, cash_from_investing, cash_from_financing,
+      cash_start, cash_end, net_change, recon_ok,
+      cash_account_id, ar_account_id, inv_account_id, ap_account_id,
+      fa_account_id, loans_account_id, equity_account_id
+    """
     from_str = request.GET.get("from")
     to_str = request.GET.get("to")
     export = (request.GET.get("export") or "").strip().lower()
@@ -2616,31 +2808,33 @@ def report_cashflow(request):
 
     start_date = dfrom
 
-    # --------------------------------------------------------
-    # Account buckets
-    # --------------------------------------------------------
-    from accounts.models import Account
-
+    # =========================================================
+    # CASH & CASH EQUIVALENTS (your exact detail types)
+    # include subaccounts where parent is cash/bank too
+    # =========================================================
     cash_roots = Account.objects.filter(
         is_active=True,
         account_type="CURRENT_ASSET",
     ).filter(
-        Q(detail_type__icontains="bank") |
-        Q(detail_type__icontains="cash") |
-        Q(account_name__icontains="bank") |
-        Q(account_name__icontains="cash")
+        Q(detail_type__in=DEPOSIT_DETAIL_TYPES) |
+        Q(parent__detail_type__in=DEPOSIT_DETAIL_TYPES)
     )
 
+    cash_ids = _collect_subtree_ids(list(cash_roots.values_list("id", flat=True)))
+    cash_account_id = _first_id_or_none(cash_roots)
+
+    # =========================================================
+    # ISAAC FOUNDATION BUCKETS (but keep your HTML row names)
+    # =========================================================
+
+    # "Change in Accounts Receivable" row:
+    # Isaac wants: CURRENT ASSETS EXCLUDING cash/bank.
     ar_roots = Account.objects.filter(
         is_active=True,
-        account_type="CURRENT_ASSET"
-    ).filter(
-        Q(detail_type__icontains="receivable") |
-        Q(account_name__icontains="receivable") |
-        Q(detail_type__icontains="a/r") |
-        Q(account_name__icontains="a/r")
-    )
+        account_type="CURRENT_ASSET",
+    ).exclude(id__in=cash_ids)
 
+    # "Change in Inventory" row (keep inventory separate)
     inv_roots = Account.objects.filter(
         is_active=True,
         account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
@@ -2649,104 +2843,104 @@ def report_cashflow(request):
         Q(account_name__icontains="inventory")
     )
 
+    # "Change in Accounts Payable" row:
+    # Isaac wants: CURRENT LIABILITIES EXCLUDING overdrafts
     ap_roots = Account.objects.filter(
         is_active=True,
-        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"]
-    ).filter(
-        Q(detail_type__icontains="payable") |
-        Q(account_name__icontains="payable") |
-        Q(detail_type__icontains="a/p") |
-        Q(account_name__icontains="a/p")
+        account_type="CURRENT_LIABILITY",
+    ).exclude(
+        Q(detail_type__icontains="overdraft") |
+        Q(account_name__icontains="overdraft")
     )
 
+    # "Change in Fixed/Other Assets" row:
+    # Isaac wants: NON CURRENT ASSETS
     fa_roots = Account.objects.filter(
         is_active=True,
         account_type="NON_CURRENT_ASSET"
-    ).filter(
-        Q(detail_type__icontains="fixed") |
-        Q(detail_type__icontains="property") |
-        Q(detail_type__icontains="equipment") |
-        Q(account_name__icontains="fixed") |
-        Q(account_name__icontains="property") |
-        Q(account_name__icontains="equipment")
     )
 
+    # "Change in Loans" row:
+    # Isaac wants: NON CURRENT LIABILITIES
     loan_roots = Account.objects.filter(
         is_active=True,
-        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"]
-    ).filter(
-        Q(detail_type__icontains="loan") |
-        Q(account_name__icontains="loan")
+        account_type="NON_CURRENT_LIABILITY"
     )
 
+    # "Change in Equity" row:
     equity_roots = Account.objects.filter(
         is_active=True,
         account_type="OWNER_EQUITY"
     )
 
-    # --------------------------------------------------------
-    # Subtree expansion (include children)
-    # --------------------------------------------------------
-    cash_ids = _collect_subtree_ids(list(cash_roots.values_list("id", flat=True)))
-    ar_ids   = _collect_subtree_ids(list(ar_roots.values_list("id", flat=True)))
-    inv_ids  = _collect_subtree_ids(list(inv_roots.values_list("id", flat=True)))
-    ap_ids   = _collect_subtree_ids(list(ap_roots.values_list("id", flat=True)))
-    fa_ids   = _collect_subtree_ids(list(fa_roots.values_list("id", flat=True)))
+    # Expand subtrees (include children)
+    ar_ids = _collect_subtree_ids(list(ar_roots.values_list("id", flat=True)))
+    inv_ids = _collect_subtree_ids(list(inv_roots.values_list("id", flat=True)))
+    ap_ids = _collect_subtree_ids(list(ap_roots.values_list("id", flat=True)))
+    fa_ids = _collect_subtree_ids(list(fa_roots.values_list("id", flat=True)))
     loan_ids = _collect_subtree_ids(list(loan_roots.values_list("id", flat=True)))
-    eq_ids   = _collect_subtree_ids(list(equity_roots.values_list("id", flat=True)))
+    eq_ids = _collect_subtree_ids(list(equity_roots.values_list("id", flat=True)))
 
-    cash_account_id   = _first_id_or_none(cash_roots)
-    ar_account_id     = _first_id_or_none(ar_roots)
-    inv_account_id    = _first_id_or_none(inv_roots)
-    ap_account_id     = _first_id_or_none(ap_roots)
-    fa_account_id     = _first_id_or_none(fa_roots)
-    loans_account_id  = _first_id_or_none(loan_roots)
+    # IDs for GL drill links (your HTML expects these)
+    ar_account_id = _first_id_or_none(ar_roots)
+    inv_account_id = _first_id_or_none(inv_roots)
+    ap_account_id = _first_id_or_none(ap_roots)
+    fa_account_id = _first_id_or_none(fa_roots)
+    loans_account_id = _first_id_or_none(loan_roots)
     equity_account_id = _first_id_or_none(equity_roots)
 
-    # --------------------------------------------------------
-    # Net profit
-    # --------------------------------------------------------
+    # =========================================================
+    # PROFIT + DEPRECIATION
+    # =========================================================
     net_profit = _period_net_profit(dfrom, dto)
+    depreciation = _period_depreciation(dfrom, dto)
 
-    # --------------------------------------------------------
-    # Opening balances (strictly before start_date)
-    # --------------------------------------------------------
+    # =========================================================
+    # OPENING BALANCES (strictly before start_date)
+    # =========================================================
     if start_date:
-        cash_start   = _balance_for_account_ids(cash_ids, start_date, strict_lt=True)
-        ar_start     = _balance_for_account_ids(ar_ids, start_date, strict_lt=True)
-        inv_start    = _balance_for_account_ids(inv_ids, start_date, strict_lt=True)
-        ap_start     = _balance_for_account_ids(ap_ids, start_date, strict_lt=True)
-        fa_start     = _balance_for_account_ids(fa_ids, start_date, strict_lt=True)
-        loans_start  = _balance_for_account_ids(loan_ids, start_date, strict_lt=True)
+        cash_start = _balance_for_account_ids(cash_ids, start_date, strict_lt=True)
+        ar_start = _balance_for_account_ids(ar_ids, start_date, strict_lt=True)
+        inv_start = _balance_for_account_ids(inv_ids, start_date, strict_lt=True)
+        ap_start = _balance_for_account_ids(ap_ids, start_date, strict_lt=True)
+        fa_start = _balance_for_account_ids(fa_ids, start_date, strict_lt=True)
+        loans_start = _balance_for_account_ids(loan_ids, start_date, strict_lt=True)
         equity_start = _balance_for_account_ids(eq_ids, start_date, strict_lt=True)
     else:
         cash_start = ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = Decimal("0.00")
 
-    # --------------------------------------------------------
-    # Closing balances (<= dto)
-    # --------------------------------------------------------
-    cash_end   = _balance_for_account_ids(cash_ids, dto)
-    ar_end     = _balance_for_account_ids(ar_ids, dto)
-    inv_end    = _balance_for_account_ids(inv_ids, dto)
-    ap_end     = _balance_for_account_ids(ap_ids, dto)
-    fa_end     = _balance_for_account_ids(fa_ids, dto)
-    loans_end  = _balance_for_account_ids(loan_ids, dto)
+    # =========================================================
+    # CLOSING BALANCES (<= dto)
+    # =========================================================
+    cash_end = _balance_for_account_ids(cash_ids, dto)
+    ar_end = _balance_for_account_ids(ar_ids, dto)
+    inv_end = _balance_for_account_ids(inv_ids, dto)
+    ap_end = _balance_for_account_ids(ap_ids, dto)
+    fa_end = _balance_for_account_ids(fa_ids, dto)
+    loans_end = _balance_for_account_ids(loan_ids, dto)
     equity_end = _balance_for_account_ids(eq_ids, dto)
 
-    # --------------------------------------------------------
-    # Deltas (end - start)
-    # --------------------------------------------------------
-    delta_ar     = (ar_end - ar_start).quantize(Decimal("0.01"))
-    delta_inv    = (inv_end - inv_start).quantize(Decimal("0.01"))
-    delta_ap     = (ap_end - ap_start).quantize(Decimal("0.01"))
-    delta_fa     = (fa_end - fa_start).quantize(Decimal("0.01"))
-    delta_loans  = (loans_end - loans_start).quantize(Decimal("0.01"))
+    # =========================================================
+    # DELTAS (end - start)
+    # =========================================================
+    delta_ar = (ar_end - ar_start).quantize(Decimal("0.01"))
+    delta_inv = (inv_end - inv_start).quantize(Decimal("0.01"))
+    delta_ap = (ap_end - ap_start).quantize(Decimal("0.01"))
+    delta_fa = (fa_end - fa_start).quantize(Decimal("0.01"))
+    delta_loans = (loans_end - loans_start).quantize(Decimal("0.01"))
     delta_equity = (equity_end - equity_start).quantize(Decimal("0.01"))
 
-    # --------------------------------------------------------
-    # Indirect cash flows (unchanged)
-    # --------------------------------------------------------
-    cash_from_ops       = (net_profit - delta_ar - delta_inv + delta_ap).quantize(Decimal("0.01"))
+    # =========================================================
+    # CASHFLOW (INDIRECT METHOD)
+    # =========================================================
+    cash_from_ops = (
+        net_profit
+        + depreciation
+        - delta_ar
+        - delta_inv
+        + delta_ap
+    ).quantize(Decimal("0.01"))
+
     cash_from_investing = (-delta_fa).quantize(Decimal("0.01"))
     cash_from_financing = (delta_loans + delta_equity).quantize(Decimal("0.01"))
 
@@ -2757,51 +2951,71 @@ def report_cashflow(request):
     reporting_currency = "UGX"
 
     # =========================================================
-    # ✅ EXPORTS (CSV / EXCEL / PDF) — NO CHANGE TO CALCULATIONS
+    # EXPORT ROWS
+    # - Keep structure, but REMOVE:
+    #   1) "Line" / "Amount" header labels
+    #   2) currency labels appended to amounts (UGX)
     # =========================================================
-    period_label = f"{dfrom.strftime('%Y-%m-%d') if dfrom else 'None'}_to_{dto.strftime('%Y-%m-%d') if dto else 'None'}"
+    period_label = f"{dfrom.strftime('%Y-%m-%d') if dfrom else 'As of date'}_to_{dto.strftime('%Y-%m-%d') if dto else 'As of date'}"
 
     export_rows = [
         ("Cash Flows from Operating Activities", "", ""),
-        ("Net Profit", reporting_currency, net_profit),
-        ("Change in Accounts Receivable", reporting_currency, delta_ar),
-        ("Change in Inventory", reporting_currency, delta_inv),
-        ("Change in Accounts Payable", reporting_currency, delta_ap),
-        ("Net Cash from Operating Activities", reporting_currency, cash_from_ops),
+        ("Net Profit", "", net_profit),
+        ("Depreciation", "", depreciation),
+        ("Change in Accounts Receivable", "", delta_ar),
+        ("Change in Inventory", "", delta_inv),
+        ("Change in Accounts Payable", "", delta_ap),
+        ("Net Cash from Operating Activities", "", cash_from_ops),
         ("", "", ""),
 
         ("Cash Flows from Investing Activities", "", ""),
-        ("Change in Fixed/Other Assets", reporting_currency, delta_fa),
-        ("Net Cash from Investing Activities", reporting_currency, cash_from_investing),
+        ("Change in Fixed/Other Assets", "", delta_fa),
+        ("Net Cash from Investing Activities", "", cash_from_investing),
         ("", "", ""),
 
         ("Cash Flows from Financing Activities", "", ""),
-        ("Change in Loans", reporting_currency, delta_loans),
-        ("Change in Equity", reporting_currency, delta_equity),
-        ("Net Cash from Financing Activities", reporting_currency, cash_from_financing),
+        ("Change in Loans", "", delta_loans),
+        ("Change in Equity", "", delta_equity),
+        ("Net Cash from Financing Activities", "", cash_from_financing),
         ("", "", ""),
 
         ("Net Change in Cash", "", ""),
-        ("Cash at Start", reporting_currency, cash_start),
-        ("Net Change in Cash", reporting_currency, net_change),
-        ("Cash at End", reporting_currency, cash_end),
+        ("Cash at Start", "", cash_start),
+        ("Net Change in Cash", "", net_change),
+        ("Cash at End", "", cash_end),
         ("Reconciliation OK", "", "YES" if recon_ok else "NO"),
     ]
 
+    def _amt_to_str(x):
+        if isinstance(x, Decimal):
+            return f"{x:,.2f}"
+        if x is None:
+            return ""
+        return str(x)
+
+    # -----------------------------
+    # Exports (CSV / Excel / PDF)
+    # -----------------------------
     if export == "csv":
         resp = HttpResponse(content_type="text/csv")
         resp["Content-Disposition"] = f'attachment; filename="cashflow_{period_label}.csv"'
         w = csv.writer(resp)
+
         w.writerow(["Statement of Cash Flows", company_name])
-        w.writerow(["Period", f"{dfrom.strftime('%d/%m/%Y') if dfrom else 'None'} - {dto.strftime('%d/%m/%Y') if dto else 'None'}"])
+        w.writerow(["Period", f"{dfrom.strftime('%d/%m/%Y') if dfrom else 'As of date'} – {dto.strftime('%d/%m/%Y') if dto else 'As of date'}"])
         w.writerow(["Reporting Currency", reporting_currency])
         w.writerow([])
-        w.writerow(["Line", "Currency", "Amount"])
-        for label, cur, amt in export_rows:
-            if label == "" and cur == "" and amt == "":
+
+        # no header labels ("Line", "Amount"), and no per-row currency
+        for label, _cur, amt in export_rows:
+            if label == "" and _cur == "" and amt == "":
                 w.writerow([])
             else:
-                w.writerow([label, cur, str(amt)])
+                if _cur == "" and (amt == "" or isinstance(amt, str)):
+                    # section heading
+                    w.writerow([label, ""])
+                else:
+                    w.writerow([label, _amt_to_str(amt)])
         return resp
 
     if export == "excel":
@@ -2810,16 +3024,20 @@ def report_cashflow(request):
         ws.title = "Cashflow"
 
         ws.append(["Statement of Cash Flows", company_name])
-        ws.append(["Period", f"{dfrom.strftime('%d/%m/%Y') if dfrom else 'None'} - {dto.strftime('%d/%m/%Y') if dto else 'None'}"])
+        ws.append(["Period", f"{dfrom.strftime('%d/%m/%Y') if dfrom else 'As of date'} – {dto.strftime('%d/%m/%Y') if dto else 'As of date'}"])
         ws.append(["Reporting Currency", reporting_currency])
         ws.append([])
-        ws.append(["Line", "Currency", "Amount"])
 
-        for label, cur, amt in export_rows:
-            if label == "" and cur == "" and amt == "":
+        # no header labels, and no currency column
+        for label, _cur, amt in export_rows:
+            if label == "" and _cur == "" and amt == "":
                 ws.append([])
             else:
-                ws.append([label, cur, float(amt) if isinstance(amt, Decimal) else amt])
+                if _cur == "" and (amt == "" or isinstance(amt, str)):
+                    ws.append([label, ""])
+                else:
+                    # keep numeric where possible
+                    ws.append([label, float(amt) if isinstance(amt, Decimal) else _amt_to_str(amt)])
 
         bio = BytesIO()
         wb.save(bio)
@@ -2845,47 +3063,46 @@ def report_cashflow(request):
         c.setFont("Helvetica", 10)
         c.drawString(50, y, f"Company: {company_name}")
         y -= 14
-        c.drawString(50, y, f"Period: {dfrom.strftime('%d/%m/%Y') if dfrom else 'None'} – {dto.strftime('%d/%m/%Y') if dto else 'None'}")
+        c.drawString(50, y, f"Period: {dfrom.strftime('%d/%m/%Y') if dfrom else 'As of date'} – {dto.strftime('%d/%m/%Y') if dto else 'As of date'}")
         y -= 14
         c.drawString(50, y, f"Reporting Currency: {reporting_currency}")
-        y -= 20
+        y -= 16
 
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(50, y, "Line")
-        c.drawString(360, y, "Amount")
-        y -= 10
+        # removed the "Line" and "Amount" header labels + line
+        y -= 6
         c.line(50, y, width - 50, y)
-        y -= 14
+        y -= 16
 
-        c.setFont("Helvetica", 10)
-
-        for label, cur, amt in export_rows:
-            if label == "" and cur == "" and amt == "":
+        for label, _cur, amt in export_rows:
+            if label == "" and _cur == "" and amt == "":
                 y -= 10
                 continue
 
             if y < 60:
                 c.showPage()
                 y = height - 60
-                c.setFont("Helvetica-Bold", 10)
-                c.drawString(50, y, "Line")
-                c.drawString(360, y, "Amount")
-                y -= 10
-                c.line(50, y, width - 50, y)
-                y -= 14
                 c.setFont("Helvetica", 10)
+                c.line(50, y, width - 50, y)
+                y -= 16
 
-            if cur == "" and (amt == "" or isinstance(amt, str)):
-                # section header
+            # Section heading
+            if _cur == "" and (amt == "" or isinstance(amt, str) and label and amt == ""):
+                c.setFont("Helvetica-Bold", 10)
+                c.drawString(50, y, str(label))
+                c.setFont("Helvetica", 10)
+            elif _cur == "" and isinstance(amt, str) and label == "Reconciliation OK":
+                # YES/NO row
+                c.setFont("Helvetica", 10)
+                c.drawString(50, y, str(label))
+                c.drawRightString(width - 50, y, _amt_to_str(amt))
+            elif _cur == "" and (amt == "" or isinstance(amt, str)):
                 c.setFont("Helvetica-Bold", 10)
                 c.drawString(50, y, str(label))
                 c.setFont("Helvetica", 10)
             else:
                 c.drawString(50, y, str(label))
-                amt_str = str(amt)
-                if cur:
-                    amt_str = f"{amt_str} {cur}"
-                c.drawRightString(width - 50, y, amt_str)
+                # amount WITHOUT currency suffix
+                c.drawRightString(width - 50, y, _amt_to_str(amt))
 
             y -= 14
 
@@ -2896,9 +3113,9 @@ def report_cashflow(request):
         resp["Content-Disposition"] = f'attachment; filename="cashflow_{period_label}.pdf"'
         return resp
 
-    # --------------------------------------------------------
-    # Normal render
-    # --------------------------------------------------------
+    # -----------------------------
+    # Render (your cashflow.html unchanged)
+    # -----------------------------
     context = {
         "company_name": company_name,
         "reporting_currency": reporting_currency,
@@ -3048,7 +3265,7 @@ def aging_report(request):
     rows = list(rows_map.values())
     rows.sort(key=lambda r: (r["customer"].customer_name or "").lower())
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         headers = ["Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total"]
@@ -3149,7 +3366,7 @@ def aging_report_detail(request):
     for r in rows:
         totals["total"] += r["balance"]
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         headers = ["Customer", "Invoice #", "Invoice Date", "Due Date", "Bucket", "Days", "Total", "Paid", "Balance"]
@@ -3278,7 +3495,7 @@ def aging_report_customer(request, customer_id: int):
             "balance": bal,
         })
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         # 1) Summary block
@@ -3397,7 +3614,7 @@ def open_invoices_report(request):
         })
         totals["total"] += bal
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         headers = ["Customer", "Invoice #", "Invoice Date", "Due Date", "Bucket", "Days", "Total", "Paid", "Balance"]
@@ -3499,7 +3716,7 @@ def customer_balances_report(request):
     rows = list(cust_map.values())
     rows.sort(key=lambda r: (getattr(r["customer"], "customer_name", "") or "").lower())
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         headers = ["Customer", "Current", "Overdue", "Total"]
@@ -3585,7 +3802,7 @@ def invoice_list_report(request):
             "status": "PAID" if is_paid else ("OVERDUE" if is_overdue else "OPEN"),
         })
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         headers = ["Customer", "Invoice #", "Invoice Date", "Due Date", "Status", "Total", "Paid", "Balance"]
@@ -3680,7 +3897,7 @@ def collections_report(request):
         totals["applied"] += applied
         totals["unapplied"] += unapplied
 
-    # ✅ EXPORT
+    # EXPORT
     exp = _export_wants(request)
     if exp in ("excel", "pdf"):
         headers = ["Customer", "Payment Date", "Reference", "Method", "Received", "Applied", "Unapplied"]

@@ -55,7 +55,6 @@ def ensure_default_accounts():
 
 
 
-
 def get_ar_account():
     """
     Locate the control Accounts Receivable account.
@@ -116,10 +115,10 @@ def _as_date(d):
 
 
 def status_for_invoice(inv, total_due: Decimal, total_paid: Decimal, balance: Decimal) -> str:
-    # ✅ timezone-safe today
+    # timezone-safe today
     today = timezone.localdate()
 
-    # ✅ normalize due_date (DateTimeField can return datetime)
+    # normalize due_date (DateTimeField can return datetime)
     due = _as_date(getattr(inv, "due_date", None))
 
     overdue_days = None

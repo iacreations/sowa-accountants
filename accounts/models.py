@@ -199,7 +199,6 @@ class JournalLine(models.Model):
     def __str__(self):
         return f"{self.account} DR {self.debit} CR {self.credit}"
 
-
 # audit trail
 
 class AuditTrail(models.Model):

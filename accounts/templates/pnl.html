@@ -67,11 +67,16 @@
     <div class="text-center mb-3">
       <div class="sub">{{ company_name }}</div>
       <h1>Statement of Profit or Loss</h1>
+
+      {# ✅ Period display: if no "from" selected, show "As of dto" #}
       <div class="sub">
-        For the period
-        {% if dfrom %}{{ dfrom|date:"d/m/Y" }}{% else %}None{% endif %}
-        – {% if dto %}{{ dto|date:"d/m/Y" }}{% else %}None{% endif %}
+        {% if dfrom %}
+          For the period {{ dfrom|date:"d/m/Y" }} – {{ dto|date:"d/m/Y" }}
+        {% else %}
+          As of {{ dto|date:"d/m/Y" }}
+        {% endif %}
       </div>
+
       <div class="sub">
         Reporting Currency: {{ reporting_currency }}
       </div>
@@ -79,9 +84,11 @@
 
     <div class="filters d-flex">
       <span class="sub">
-        Period:
-        {% if dfrom %}{{ dfrom|date:"M j, Y" }}{% else %}None{% endif %}
-        – {% if dto %}{{ dto|date:"M j, Y" }}{% else %}None{% endif %}
+        {% if dfrom %}
+          Period: {{ dfrom|date:"M j, Y" }} – {{ dto|date:"M j, Y" }}
+        {% else %}
+          As of: {{ dto|date:"M j, Y" }}
+        {% endif %}
       </span>
       <br><br>
 
@@ -97,7 +104,7 @@
         <button class="btn run" type="submit">Run</button>
         <a class="btn clear" href="{% url 'accounts:report-pnl' %}">Clear</a>
 
-        {# --- Export buttons (same styles, keeps filters) --- #}
+        {# ✅ Export buttons (keeps current filters) #}
         <a class="btn clear"
            href="?{% if dfrom %}from={{ dfrom|date:'Y-m-d' }}&{% endif %}{% if dto %}to={{ dto|date:'Y-m-d' }}&{% endif %}basis={{ basis }}&export=csv">
           Export CSV

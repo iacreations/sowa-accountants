@@ -19,7 +19,6 @@ class Pclass(models.Model):
     def __str__(self):
         return self.class_name
 
-
 class Product(models.Model):
     PRODUCT_TYPES = [
         ("Inventory", "Inventory"),
@@ -28,31 +27,35 @@ class Product(models.Model):
         ("Bundle", "Bundle"),
     ]
 
-    type = models.CharField(max_length=20, choices=PRODUCT_TYPES,blank=True, null=True)
-    name = models.CharField(max_length=255,blank=True, null=True)
+    type = models.CharField(max_length=20, choices=PRODUCT_TYPES, blank=True, null=True)
+    name = models.CharField(max_length=255, blank=True, null=True)
 
     sku = models.CharField(max_length=100, blank=True, null=True)
 
-    category = models.ForeignKey(Category, on_delete=models.CASCADE,blank=True, null=True)
-    class_field = models.ForeignKey(Pclass, on_delete=models.CASCADE,blank=True, null=True)
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, blank=True, null=True)
+    class_field = models.ForeignKey(Pclass, on_delete=models.CASCADE, blank=True, null=True)
 
     sales_description = models.TextField(blank=True, null=True)
     purchase_description = models.TextField(blank=True, null=True)
 
-    sell_checkbox = models.BooleanField(default=False,blank=True, null=True)
-    purchase_checkbox = models.BooleanField(default=False,blank=True, null=True)
+    sell_checkbox = models.BooleanField(default=False, blank=True, null=True)
+    purchase_checkbox = models.BooleanField(default=False, blank=True, null=True)
 
     sales_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    purchase_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)    
+    purchase_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
-    avg_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00")) 
+    avg_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
     purchase_date = models.DateField(null=True, blank=True)
     taxable = models.BooleanField(default=False)
-    supplier = models.ForeignKey(Newsupplier, on_delete=models.SET_NULL, null=True, blank=True)
-    is_bundle = models.BooleanField(default=False,blank=True, null=True)
-    display_bundle_contents = models.BooleanField(default=False,blank=True, null=True)
 
-    #Link to CoA using YOUR account_type codes (not "Income"/"Cost of Sales")
+    supplier = models.ForeignKey(Newsupplier, on_delete=models.SET_NULL, null=True, blank=True)
+
+    is_bundle = models.BooleanField(default=False, blank=True, null=True)
+    display_bundle_contents = models.BooleanField(default=False, blank=True, null=True)
+
+    # Link to CoA using YOUR account_type codes (not "Income"/"Cost of Sales")
     income_account = models.ForeignKey(
         Account,
         on_delete=models.SET_NULL,
@@ -67,31 +70,45 @@ class Product(models.Model):
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="expense_products",
-        limit_choices_to={"account_type__in": ["OPERATING_EXPENSE", "INVESTING_EXPENSE", "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"]},
+        limit_choices_to={
+            "account_type__in": [
+                "OPERATING_EXPENSE",
+                "INVESTING_EXPENSE",
+                "FINANCING_EXPENSE",
+                "INCOME_TAX_EXPENSE",
+            ]
+        },
     )
 
-    # Inventory accounting fields (for real stock + GL)
+    # ✅ Inventory accounting fields (for real stock + GL)
+    # FIX: Removed the CURRENT_ASSET restriction so your 3-level COA can choose any account if needed.
     inventory_asset_account = models.ForeignKey(
         Account,
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="inventory_products",
-        limit_choices_to={"account_type": "CURRENT_ASSET"},
         help_text="Where inventory value sits (Inventory Asset). Only needed for Inventory items.",
     )
 
+    # Keep COGS limited to expenses (still correct)
     cogs_account = models.ForeignKey(
         Account,
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="cogs_products",
-        limit_choices_to={"account_type__in": ["OPERATING_EXPENSE", "INVESTING_EXPENSE", "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE"]},
+        limit_choices_to={
+            "account_type__in": [
+                "OPERATING_EXPENSE",
+                "INVESTING_EXPENSE",
+                "FINANCING_EXPENSE",
+                "INCOME_TAX_EXPENSE",
+            ]
+        },
         help_text="Cost of Goods Sold account for Inventory items.",
     )
 
     def __str__(self):
-        return self.name
-
+        return self.name or "Product"
 
 class BundleItem(models.Model):
     bundle = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="bundle_items")

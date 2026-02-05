@@ -297,6 +297,7 @@
           action="{% if edit_mode %}{% url 'sales:edit-invoice' inv.id %}{% else %}{% url 'sales:add-invoice' %}{% endif %}"
           enctype="multipart/form-data">
       {% csrf_token %}
+      <input type="hidden" name="submission_token" value="{{ submission_token }}">
 
       <!-- Customer / Header -->
       <div class="section-title" style="color:#39B54B; font-weight:600; margin:16px 0 8px;">Customer Details</div>

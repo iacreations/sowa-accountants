@@ -30,8 +30,7 @@ urlpatterns = [
 # Recurring invoices
  path("sales/recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
     path("sales/recurring-invoices/new/", views.recurring_invoice_new, name="recurring-invoice-new"),
-    path("recurring-invoices/", views.recurring_invoice_list, name="recurring-invoices"),
-    path("recurring-invoices/new/", views.recurring_invoice_new, name="recurring-invoice-new"),
+    
     path("sales/recurring-invoices/run-today/", views.recurring_run_today, name="recurring-run-today"),
 
     # adding receipt urls

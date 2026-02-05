@@ -1,0 +1,160 @@
+{% load static humanize %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Inventory Movements • Ledger</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+
+  <style>
+    :root{
+      --brand:#39B54B; --ink:#0b3d22;
+      --bg:#f4f6f8; --panel:#fff; --line:#e8e8e8;
+      --muted:#667085; --ok:#16a34a; --warn:#f59e0b; --bad:#ef4444; --chip:#e8f5e9;
+    }
+    *{box-sizing:border-box}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px}
+    .wrap{width:83%;margin-top: 5%;margin-left: 18.3%;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--line)}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .sub{color:#64748b;font-size:13px;font-weight:600;margin-top:2px}
+    .chip{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;color:#0f172a}
+    .body{padding:18px}
+    .sec{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}
+    .sec h4{margin:0 0 10px 0; font-size:14px; color:#111827; font-weight:800}
+    .filters{display:grid;grid-template-columns:1.2fr 1fr auto;gap:10px;align-items:end}
+    @media (max-width: 900px){ .filters{grid-template-columns:1fr} }
+    label{display:block;font-size:12px;font-weight:800;color:#334155;margin-bottom:6px}
+    select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fff;font-weight:700;color:#0f172a}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .btn{
+      background:var(--brand);color:#fff;border:0;border-radius:10px;
+      padding:10px 14px;font-weight:800;text-decoration:none;display:inline-flex;align-items:center;gap:8px;
+      cursor:pointer
+    }
+    .btn.alt{background:#d8f5e0;color:#14532d}
+    .btn.gray{background:#e2e8f0;color:#0f172a}
+    table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+    thead th{background:#f8fafc;color:#0f172a;padding:10px;text-align:left;font-weight:800;font-size:13px}
+    tbody td{padding:10px;border-top:1px solid var(--line);font-size:13px}
+    a.link{color:#0b3d22;font-weight:800;text-decoration:none}
+    a.link:hover{text-decoration:underline}
+    .footer-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:900}
+    .badge.in{background:#eafff0;color:#166534;border:1px solid #bbf7d0}
+    .badge.out{background:#fff7e5;color:#92400e;border:1px solid #fde68a}
+  </style>
+</head>
+<body>
+  {% include 'includes/navbar.html' %}
+  {% include 'includes/sidebar.html' %}
+
+  <div class="wrap">
+    <div class="head">
+      <div class>
+        <div class="title">Inventory Movements</div>
+        <div class="sub">Track stock in/out by document source (Bill, Expense, Invoice, etc.)</div>
+      </div>
+      <div class="chip">
+        Showing {{ movements|length }} rows
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="sec" style="margin-bottom:12px;">
+        <h4>Filters</h4>
+
+        <form method="get" class="filters">
+          <div>
+            <label>Product</label>
+            <select name="product_id">
+              <option value="">-- Filter by Product --</option>
+              {% for p in products %}
+                <option value="{{ p.id }}" {% if selected_product_id == p.id|stringformat:"s" %}selected{% endif %}>
+                  {{ p.name }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div>
+            <label>Source Type</label>
+            <select name="source_type">
+              <option value="">-- Filter by Source --</option>
+              <option value="BILL" {% if selected_source_type == "BILL" %}selected{% endif %}>BILL</option>
+              <option value="EXPENSE" {% if selected_source_type == "EXPENSE" %}selected{% endif %}>EXPENSE</option>
+              <option value="CHEQUE" {% if selected_source_type == "CHEQUE" %}selected{% endif %}>CHEQUE</option>
+              <option value="INVOICE" {% if selected_source_type == "INVOICE" %}selected{% endif %}>INVOICE</option>
+              <option value="SALES_RECEIPT" {% if selected_source_type == "SALES_RECEIPT" %}selected{% endif %}>SALES RECEIPT</option>
+            </select>
+          </div>
+
+          <div class="actions">
+            <button class="btn button" type="submit"><i class='bx bx-filter'></i> Apply</button>
+            <a class="btn button" href="{% url 'inventory:movements-list' %}"><i class='bx bx-refresh'></i> Reset</a>
+          </div>
+        </form>
+      </div>
+
+      <div class="sec">
+        <h4>Movements</h4>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width:120px;">Date</th>
+              <th>Product</th>
+              <th style="width:90px;">In</th>
+              <th style="width:90px;">Out</th>
+              <th style="width:140px;">Unit Cost</th>
+              <th style="width:140px;">Value</th>
+              <th style="width:180px;">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in movements %}
+              <tr>
+                <td>{{ m.date|date:"M d, Y" }}</td>
+                <td>
+                  <a class="link" href="{% url 'inventory:product-detail' m.product.id %}">
+                    {{ m.product.name }}
+                  </a>
+                </td>
+                <td>
+                  {% if m.qty_in and m.qty_in > 0 %}
+                    <span class="badge in">{{ m.qty_in|floatformat:2 }}</span>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>
+                  {% if m.qty_out and m.qty_out > 0 %}
+                    <span class="badge out">{{ m.qty_out|floatformat:2 }}</span>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>{{ m.unit_cost|floatformat:2|intcomma }}</td>
+                <td>{{ m.value|floatformat:2|intcomma }}</td>
+                <td>{{ m.source_type }} #{{ m.source_id }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7">No movements found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="footer-actions">
+          <a class="btn alt" href="{% url 'inventory:products-list' %}">
+            <i class='bx bx-left-arrow-alt'></i> Back to Products
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% include 'includes/footer.html' %}
+</body>
+</html>

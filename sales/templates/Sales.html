@@ -5,7 +5,7 @@
   /* new */
   .num{text-align:right}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:12px;color:#fff}
-  .pill-brown{ color: #185a2e;}
+  .pill-brown{ color: #185a2e;}r
   .pill-orange{ color: #185a2e;}
   .pill-blue{ color: #185a2e;}
   .status-chip{display:inline-block;color: #185a2e;padding:3px 8px;border-radius:999px;font-weight:700;font-size:12px}
@@ -175,6 +175,10 @@
 
           <a class="sa-item" href="{% url 'sales:recurring-invoice-new' %}">
             <i class='bx bx-refresh'></i>Add a Recurring invoice
+          </a>
+
+          <a class="sa-item" href="{% url 'sales:recurring-invoices' %}">
+            <i class='bx bx-refresh'></i>View recurring invoice
           </a>
 
           <a class="sa-item" href="{% url 'sales:add-receipt' %}">

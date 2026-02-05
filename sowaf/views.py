@@ -687,25 +687,44 @@ def home(request):
     }
 
     return render(request, "Home.html", context)
-  # assets view
+# working on the assets
+
 def assets(request):
     assets = Newasset.objects.all()
-      
-    return render(request, 'Assets.html', {'assets':assets})
-# assets form 
+    return render(request, 'Assets.html', {'assets': assets})
+
+# adding an asset
+
 def add_assests(request):
-    if request.method=='POST':
-            # getting the supplier by id since its a foreign key
+    if request.method == 'POST':
+        # supplier
         supplier_id = request.POST.get('supplier')
-        supplier=None
+        supplier = None
         if supplier_id:
             try:
                 supplier = Newsupplier.objects.get(pk=supplier_id)
             except Newsupplier.DoesNotExist:
-                supplier=None
-        
-        
-        
+                supplier = None
+
+        # FK: asset account
+        asset_account_id = request.POST.get("asset_account")
+        asset_account = None
+        if asset_account_id:
+            try:
+                asset_account = Account.objects.get(pk=asset_account_id)
+            except Account.DoesNotExist:
+                asset_account = None
+
+        # FK: payment account (cash/bank)
+        payment_account_id = request.POST.get("payment_account")
+        payment_account = None
+        if payment_account_id:
+            try:
+                payment_account = Account.objects.get(pk=payment_account_id)
+            except Account.DoesNotExist:
+                payment_account = None
+
+        # normal fields
         asset_name = request.POST.get('asset_name')
         asset_tag = request.POST.get('asset_tag')
         asset_category = request.POST.get('asset_category')
@@ -719,119 +738,182 @@ def add_assests(request):
         life_span = request.POST.get('life_span')
         depreciation_method = request.POST.get('depreciation_method')
         residual_value = request.POST.get('residual_value')
-        accumulated_depreciation = request.POST.get('accumulated_depreciation')
-        remaining_value = request.POST.get('remaining_value')
-        asset_account = request.POST.get('asset_account')
-        capitalization_date = request.POST.get('capitalization_date')
+
         cost_center = request.POST.get('cost_center')
         asset_condition = request.POST.get('asset_condition')
         maintenance_schedule = request.POST.get('maintenance_schedule')
         insurance_details = request.POST.get('insurance_details')
         notes = request.POST.get('notes')
-        asset_attachments =request.FILES.get('asset_attachments')
-# handling the date 
-        capitalization_date_str = request.POST.get('capitalization_date')
+        asset_attachments = request.FILES.get('asset_attachments')
+
+        # dates: dd/mm/YYYY
         capitalization_date = None
+        capitalization_date_str = request.POST.get('capitalization_date')
         if capitalization_date_str:
             try:
-                capitalization_date = datetime.strptime(capitalization_date_str, '%d/%m/%Y')
+                capitalization_date = datetime.strptime(capitalization_date_str, '%d/%m/%Y').date()
             except ValueError:
-                capitalization_date = None  # Or handle error
-# purchase date
-        purchase_date_str = request.POST.get('purchase_date')
+                capitalization_date = None
+
         purchase_date = None
+        purchase_date_str = request.POST.get('purchase_date')
         if purchase_date_str:
             try:
-                purchase_date = datetime.strptime(purchase_date_str, '%d/%m/%Y')
+                purchase_date = datetime.strptime(purchase_date_str, '%d/%m/%Y').date()
             except ValueError:
-                purchase_date = None 
+                purchase_date = None
 
-    # waranty date
-        warranty_str = request.POST.get('warranty')
         warranty = None
+        warranty_str = request.POST.get('warranty')
         if warranty_str:
             try:
-                warranty = datetime.strptime(warranty_str, '%d/%m/%Y')
+                warranty = datetime.strptime(warranty_str, '%d/%m/%Y').date()
             except ValueError:
-                warranty = None 
+                warranty = None
 
-    # saving the assets
-        asset = Newasset(asset_name=asset_name,asset_tag=asset_tag,asset_category=asset_category,asset_description=asset_description,department=department,custodian=custodian,asset_status=asset_status,purchase_price=purchase_price,purchase_date=purchase_date,supplier=supplier,warranty=warranty,funding_source=funding_source,life_span=life_span,depreciation_method=depreciation_method,residual_value=residual_value,accumulated_depreciation=accumulated_depreciation,remaining_value=remaining_value,asset_account=asset_account,capitalization_date=capitalization_date,cost_center=cost_center,asset_condition=asset_condition,maintenance_schedule=maintenance_schedule,insurance_details=insurance_details,notes=notes,asset_attachments=asset_attachments,)
+        asset = Newasset(
+            asset_name=asset_name,
+            asset_tag=asset_tag,
+            asset_category=asset_category,
+            asset_description=asset_description,
+            department=department,
+            custodian=custodian,
+            asset_status=asset_status,
+            purchase_price=purchase_price,
+            purchase_date=purchase_date,
+            supplier=supplier,
+            warranty=warranty,
+            funding_source=funding_source,
+            life_span=life_span,
+            depreciation_method=depreciation_method,
+            residual_value=residual_value,
+            capitalization_date=capitalization_date,
+            cost_center=cost_center,
+            asset_condition=asset_condition,
+            maintenance_schedule=maintenance_schedule,
+            insurance_details=insurance_details,
+            notes=notes,
+            asset_attachments=asset_attachments,
+
+            # ✅ foreign keys
+            asset_account=asset_account,
+            payment_account=payment_account,
+        )
 
         asset.save()
-        # adding button save actions
+
         save_action = request.POST.get('save_action')
         if save_action == 'save&new':
             return redirect('add-asset')
-        elif save_action == 'save&close':
-            return redirect('assets')
-    suppliers = Newsupplier.objects.all()
-    return render(request, 'assets_form.html', {'suppliers':suppliers})
-# editing assets
-def edit_asset(request, pk):
-    asset = get_object_or_404(Newasset,pk=pk)
-    if request.method=='POST':
-        asset.asset_name = request.POST.get('asset_name',asset.asset_name)
-        asset.asset_tag = request.POST.get('asset_tag',asset.asset_tag)
-        asset.asset_category = request.POST.get('asset_category',asset.asset_category)
-        asset.asset_description = request.POST.get('asset_description',asset.asset_description)
-        asset.department = request.POST.get('department',asset.department)
-        asset.custodian = request.POST.get('custodian',asset.custodian)
-        asset.asset_status = request.POST.get('asset_status',asset.asset_status)
-        asset.purchase_price = request.POST.get('purchase_price',asset.purchase_price)
-        asset.purchase_date = request.POST.get('purchase_date',asset.purchase_date)
+        return redirect('assets')
 
-        asset.funding_source = request.POST.get('funding_source',asset.funding_source)
-        asset.life_span = request.POST.get('life_span',asset.life_span) 
-        asset.depreciation_method = request.POST.get('depreciation_method',asset.depreciation_method)
-        asset.residual_value = request.POST.get('residual_value',asset.residual_value)
-        asset.accumulated_depreciation = request.POST.get('accumulated_depreciation',asset.accumulated_depreciation)
-        asset.remaining_value = request.POST.get('remaining_value',asset.remaining_value)
-        asset.asset_account = request.POST.get('asset_account',asset.asset_account)
-        asset.cost_center = request.POST.get('cost_center',asset.cost_center)
-        asset.asset_condition = request.POST.get('asset_condition',asset.asset_condition)
-        asset.maintenance_schedule = request.POST.get('maintenance_schedule',asset.maintenance_schedule)
-        asset.insurance_details = request.POST.get('insurance_details',asset.insurance_details)
-        asset.notes = request.POST.get('notes',asset.notes)
-        
-        # Handle ForeignKey (supplier)
+    suppliers = Newsupplier.objects.all()
+
+    # dropdowns
+    asset_accounts = Account.objects.filter(
+        is_active=True, account_type="NON_CURRENT_ASSET"
+    ).order_by("account_name", "account_number")
+
+    payment_accounts = deposit_accounts_qs()
+
+    return render(request, 'assets_form.html', {
+        'suppliers': suppliers,
+        'asset_accounts': asset_accounts,
+        'payment_accounts': payment_accounts,
+    })
+
+# asset edit
+def edit_asset(request, pk):
+    asset = get_object_or_404(Newasset, pk=pk)
+
+    if request.method == 'POST':
+        asset.asset_name = request.POST.get('asset_name', asset.asset_name)
+        asset.asset_tag = request.POST.get('asset_tag', asset.asset_tag)
+        asset.asset_category = request.POST.get('asset_category', asset.asset_category)
+        asset.asset_description = request.POST.get('asset_description', asset.asset_description)
+        asset.department = request.POST.get('department', asset.department)
+        asset.custodian = request.POST.get('custodian', asset.custodian)
+        asset.asset_status = request.POST.get('asset_status', asset.asset_status)
+        asset.purchase_price = request.POST.get('purchase_price', asset.purchase_price)
+
+        asset.funding_source = request.POST.get('funding_source', asset.funding_source)
+        asset.life_span = request.POST.get('life_span', asset.life_span)
+        asset.depreciation_method = request.POST.get('depreciation_method', asset.depreciation_method)
+        asset.residual_value = request.POST.get('residual_value', asset.residual_value)
+
+        asset.cost_center = request.POST.get('cost_center', asset.cost_center)
+        asset.asset_condition = request.POST.get('asset_condition', asset.asset_condition)
+        asset.maintenance_schedule = request.POST.get('maintenance_schedule', asset.maintenance_schedule)
+        asset.insurance_details = request.POST.get('insurance_details', asset.insurance_details)
+        asset.notes = request.POST.get('notes', asset.notes)
+
+        # supplier FK
         supplier_id = request.POST.get('supplier')
         if supplier_id:
             try:
                 asset.supplier = Newsupplier.objects.get(pk=supplier_id)
             except Newsupplier.DoesNotExist:
-                asset.supplier = None
-        # handling the date 
+                pass
+
+        # asset account FK
+        asset_account_id = request.POST.get("asset_account")
+        if asset_account_id:
+            try:
+                asset.asset_account = Account.objects.get(pk=asset_account_id)
+            except Account.DoesNotExist:
+                pass
+
+        # payment account FK
+        payment_account_id = request.POST.get("payment_account")
+        if payment_account_id:
+            try:
+                asset.payment_account = Account.objects.get(pk=payment_account_id)
+            except Account.DoesNotExist:
+                pass
+
+        # dates
         capitalization_date_str = request.POST.get('capitalization_date')
         if capitalization_date_str:
-            
             try:
-                asset.capitalization_date = datetime.strptime(capitalization_date_str, '%d/%m/%Y')
+                asset.capitalization_date = datetime.strptime(capitalization_date_str, '%d/%m/%Y').date()
             except ValueError:
-                pass  # Keep the original value or handle error
+                pass
 
         purchase_date_str = request.POST.get('purchase_date')
         if purchase_date_str:
             try:
-                asset.purchase_date = datetime.strptime(purchase_date_str, '%d/%m/%Y')
+                asset.purchase_date = datetime.strptime(purchase_date_str, '%d/%m/%Y').date()
             except ValueError:
-                pass  # Keep the original value or handle error
+                pass
 
         warranty_str = request.POST.get('warranty')
         if warranty_str:
             try:
-                asset.warranty = datetime.strptime(warranty_str, '%d/%m/%Y')
+                asset.warranty = datetime.strptime(warranty_str, '%d/%m/%Y').date()
             except ValueError:
-                pass  
-                
-# working on the files
+                pass
+
+        # file
         if 'asset_attachments' in request.FILES:
             asset.asset_attachments = request.FILES['asset_attachments']
-        asset.save()
 
+        asset.save()
         return redirect('sowaf:assets')
+
     suppliers = Newsupplier.objects.all()
-    return render(request, 'assets_form.html', {'asset': asset,'suppliers': suppliers})
+    asset_accounts = Account.objects.filter(
+        is_active=True, account_type="NON_CURRENT_ASSET"
+    ).order_by("account_name", "account_number")
+
+    payment_accounts = deposit_accounts_qs()
+
+    return render(request, 'assets_form.html', {
+        'asset': asset,
+        'suppliers': suppliers,
+        'asset_accounts': asset_accounts,
+        'payment_accounts': payment_accounts,
+    })
+
 # deleting an asset
 def delete_asset(request, pk):
     customer = get_object_or_404(Newasset, pk=pk)

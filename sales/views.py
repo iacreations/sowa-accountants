@@ -402,7 +402,7 @@ def _post_customer_refund_to_ledger(refund: CustomerRefund):
         customer=refund.customer, supplier=None,
     )
 
-
+# posting sales to ledger
 def _post_invoice_to_ledger(invoice: Newinvoice):
     """
     INVOICE posting:
@@ -499,7 +499,6 @@ def _post_invoice_to_ledger(invoice: Newinvoice):
             customer=None,
             supplier=None,
         )
-
 def _post_payment_to_ledger(payment: Payment):
     """
     Customer payment posting:
@@ -2401,7 +2400,7 @@ def sales_receipt_new(request):
         shipping_fee    = coerce_decimal(request.POST.get("shipping_fee"))
         total_amount    = coerce_decimal(request.POST.get("total_amount"))
 
-        # ✅ FIX: if amount_paid missing/blank -> default to total_amount
+        # FIX: if amount_paid missing/blank -> default to total_amount
         raw_amount_paid = request.POST.get("amount_paid")
         if raw_amount_paid is None or str(raw_amount_paid).strip() == "":
             amount_paid = total_amount
@@ -2554,7 +2553,7 @@ def sales_receipt_edit(request, pk: int):
         receipt.shipping_fee   = coerce_decimal(request.POST.get("shipping_fee"))
         receipt.total_amount   = coerce_decimal(request.POST.get("total_amount"))
 
-        # ✅ FIX (edit too): if amount_paid blank -> default to total_amount
+        # FIX (edit too): if amount_paid blank -> default to total_amount
         raw_amount_paid = request.POST.get("amount_paid")
         if raw_amount_paid is None or str(raw_amount_paid).strip() == "":
             receipt.amount_paid = receipt.total_amount
