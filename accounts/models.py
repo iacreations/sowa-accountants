@@ -201,34 +201,34 @@ class JournalLine(models.Model):
 
 # audit trail
 
-class AuditTrail(models.Model):
-    ACTION_CHOICES = (
-        ("CREATE", "Create"),
-        ("UPDATE", "Update"),
-        ("DELETE", "Delete"),
-        ("LOGIN", "Login"),
-        ("LOGOUT", "Logout"),
-    )
+# class AuditTrail(models.Model):
+#     ACTION_CHOICES = (
+#         ("CREATE", "Create"),
+#         ("UPDATE", "Update"),
+#         ("DELETE", "Delete"),
+#         ("LOGIN", "Login"),
+#         ("LOGOUT", "Logout"),
+#     )
 
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, 
-        null=True, blank=True, 
-        on_delete=models.SET_NULL
-    )
+#     user = models.ForeignKey(
+#         settings.AUTH_USER_MODEL, 
+#         null=True, blank=True, 
+#         on_delete=models.SET_NULL
+#     )
 
-    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
-    model_name = models.CharField(max_length=100)
-    object_id = models.PositiveIntegerField(null=True, blank=True)
-    description = models.TextField()
+#     action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+#     model_name = models.CharField(max_length=100)
+#     object_id = models.PositiveIntegerField(null=True, blank=True)
+#     description = models.TextField()
 
-    old_data = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
-    new_data = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
+#     old_data = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
+#     new_data = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
 
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    timestamp = models.DateTimeField(default=timezone.now)
+#     ip_address = models.GenericIPAddressField(null=True, blank=True)
+#     timestamp = models.DateTimeField(default=timezone.now)
 
-    class Meta:
-        ordering = ["-timestamp"]
+#     class Meta:
+#         ordering = ["-timestamp"]
 
-    def __str__(self):
-        return f"{self.action} {self.model_name} ({self.object_id})"
+#     def __str__(self):
+#         return f"{self.action} {self.model_name} ({self.object_id})"
