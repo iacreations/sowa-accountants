@@ -35,6 +35,6 @@ urlpatterns = [
     # to save the customized columns
     path("save-prefs/", views.save_column_prefs, name="save_column_prefs"),
 
-    # path("audit-trail/", views.audit_trail, name="audit-trail"),
+    path("audit-trail/", views.audit_trail, name="audit-trail"),
 
 ]
