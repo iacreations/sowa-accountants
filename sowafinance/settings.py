@@ -15,6 +15,7 @@ import os
 import dj_database_url
 from django.urls import reverse_lazy
 from dotenv import load_dotenv
+
 load_dotenv()  # Load .env file for local development
 
 
@@ -34,7 +35,6 @@ DEBUG = os.environ.get("DEBUG", "False") == "True"
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost 127.0.0.1").split()
 
 
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -45,7 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.humanize',
-    'inventory.apps.InventoryConfig', 
+    'inventory.apps.InventoryConfig',
     'sowaf',
     'accounts',
     'expenses',
@@ -56,7 +56,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', #for static files
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # for static files
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -139,8 +139,10 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
+
 
 # Auth
 AUTH_USER_MODEL = "sowaAuth.Newuser"
@@ -153,3 +155,28 @@ AUTHENTICATION_BACKENDS = [
 LOGIN_URL = "sowaAuth:login"
 LOGIN_REDIRECT_URL = "sowaf:home"
 LOGOUT_REDIRECT_URL = "sowaAuth:login"
+
+
+# =========================
+# Production Security (only when DEBUG=False)
+# =========================
+if not DEBUG:
+    # Tell Django it's behind Render's proxy (so it correctly detects HTTPS)
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+    # Force HTTPS
+    SECURE_SSL_REDIRECT = True
+
+    # Secure cookies (session + CSRF)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    # Basic browser hardening
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+
+    # Prevent clickjacking
+    X_FRAME_OPTIONS = "DENY"
+
+    # Good for finance systems: logout when browser closes
+    SESSION_EXPIRE_AT_BROWSER_CLOSE = True
