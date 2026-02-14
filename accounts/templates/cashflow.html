@@ -26,6 +26,7 @@
     th,td{padding:10px 12px;border-top:1px solid #f1f1f1}
     th{text-align:left;color:#0f5132;background:#fafdfb}
     .num{text-align:right;white-space:nowrap}
+    .num a{ text-decoration: none; color: #000;}
     .tot{font-weight:900;background:#f8fff9}
     .muted{color:#64748b}
     .recon{margin-top:8px;color:#64748b}
@@ -59,7 +60,6 @@
       <button class="btn" type="submit">Run</button>
       <a class="btn ghost" href="?">Clear</a>
 
-      <!-- ✅ Export Buttons (no style change, using your existing btn styles) -->
       <a class="btn ghost"
          href="?{% if dfrom %}from={{ dfrom|date:'Y-m-d' }}&{% endif %}{% if dto %}to={{ dto|date:'Y-m-d' }}&{% endif %}export=excel">
         Export Excel
@@ -244,21 +244,7 @@
       <h3>Net Change in Cash</h3>
       <table>
         <tbody>
-          <tr>
-            <td>Cash at Start</td>
-            <td class="num">
-              {% if cash_account_id and dfrom %}
-                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}&include_children=1&date_to={{ dfrom|date:'Y-m-d' }}">
-                  {{ cash_start|floatformat:2|intcomma }}
-                </a>
-              {% else %}
-                <a href="{% url 'accounts:general-ledger' %}?view=summary{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
-                  {{ cash_start|floatformat:2|intcomma }}
-                </a>
-              {% endif %}
-            </td>
-          </tr>
-
+          
           <tr>
             <td>Net Change in Cash</td>
             <td class="num">
@@ -273,7 +259,20 @@
               {% endif %}
             </td>
           </tr>
-
+<tr>
+            <td>Cash at Start</td>
+            <td class="num">
+              {% if cash_account_id and dfrom %}
+                <a href="{% url 'accounts:general-ledger' %}?account_id={{ cash_account_id }}&include_children=1&date_to={{ dfrom|date:'Y-m-d' }}">
+                  {{ cash_start|floatformat:2|intcomma }}
+                </a>
+              {% else %}
+                <a href="{% url 'accounts:general-ledger' %}?view=summary{% if dfrom %}&date_from={{ dfrom|date:'Y-m-d' }}{% endif %}{% if dto %}&date_to={{ dto|date:'Y-m-d' }}{% endif %}">
+                  {{ cash_start|floatformat:2|intcomma }}
+                </a>
+              {% endif %}
+            </td>
+          </tr>
           <tr class="tot">
             <td>Cash at End</td>
             <td class="num">

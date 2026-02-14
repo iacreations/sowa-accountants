@@ -9,6 +9,7 @@ from io import BytesIO
 from openpyxl import Workbook
 import csv
 from reportlab.lib.pagesizes import A4
+from openpyxl.styles import Font
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from datetime import datetime,date
@@ -2725,8 +2726,6 @@ def _period_net_profit(dfrom, dto) -> Decimal:
     Income = credits - debits
     Expenses = debits - credits
     """
-    from accounts.models import JournalLine
-
     qs = JournalLine.objects.select_related("entry", "account").all()
     if dfrom:
         qs = qs.filter(entry__date__gte=dfrom)
@@ -2783,18 +2782,8 @@ def _first_id_or_none(qs):
 # -----------------------------
 # MAIN CASHFLOW VIEW
 # -----------------------------
-def report_cashflow(request):
-    """
-    SAME HTML variable names.
-    Better cash/bank detection using your exact COA detail types.
 
-    Output keys unchanged for your cashflow.html:
-      net_profit, delta_ar, delta_inv, delta_ap, delta_fa, delta_loans, delta_equity,
-      cash_from_ops, cash_from_investing, cash_from_financing,
-      cash_start, cash_end, net_change, recon_ok,
-      cash_account_id, ar_account_id, inv_account_id, ap_account_id,
-      fa_account_id, loans_account_id, equity_account_id
-    """
+def report_cashflow(request):
     from_str = request.GET.get("from")
     to_str = request.GET.get("to")
     export = (request.GET.get("export") or "").strip().lower()
@@ -2824,17 +2813,17 @@ def report_cashflow(request):
     cash_account_id = _first_id_or_none(cash_roots)
 
     # =========================================================
-    # ISAAC FOUNDATION BUCKETS (but keep your HTML row names)
+    # BUCKETS (keep your HTML row names)
     # =========================================================
 
-    # "Change in Accounts Receivable" row:
-    # Isaac wants: CURRENT ASSETS EXCLUDING cash/bank.
+    # "Change in Accounts Receivable":
+    # CURRENT ASSETS excluding cash/bank
     ar_roots = Account.objects.filter(
         is_active=True,
         account_type="CURRENT_ASSET",
     ).exclude(id__in=cash_ids)
 
-    # "Change in Inventory" row (keep inventory separate)
+    # "Change in Inventory"
     inv_roots = Account.objects.filter(
         is_active=True,
         account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
@@ -2843,8 +2832,8 @@ def report_cashflow(request):
         Q(account_name__icontains="inventory")
     )
 
-    # "Change in Accounts Payable" row:
-    # Isaac wants: CURRENT LIABILITIES EXCLUDING overdrafts
+    # "Change in Accounts Payable":
+    # CURRENT LIABILITIES excluding overdrafts
     ap_roots = Account.objects.filter(
         is_active=True,
         account_type="CURRENT_LIABILITY",
@@ -2853,21 +2842,19 @@ def report_cashflow(request):
         Q(account_name__icontains="overdraft")
     )
 
-    # "Change in Fixed/Other Assets" row:
-    # Isaac wants: NON CURRENT ASSETS
+    # "Change in Fixed/Other Assets":
     fa_roots = Account.objects.filter(
         is_active=True,
         account_type="NON_CURRENT_ASSET"
     )
 
-    # "Change in Loans" row:
-    # Isaac wants: NON CURRENT LIABILITIES
+    # "Change in Loans":
     loan_roots = Account.objects.filter(
         is_active=True,
         account_type="NON_CURRENT_LIABILITY"
     )
 
-    # "Change in Equity" row:
+    # "Change in Equity":
     equity_roots = Account.objects.filter(
         is_active=True,
         account_type="OWNER_EQUITY"
@@ -2900,6 +2887,7 @@ def report_cashflow(request):
     # =========================================================
     if start_date:
         cash_start = _balance_for_account_ids(cash_ids, start_date, strict_lt=True)
+
         ar_start = _balance_for_account_ids(ar_ids, start_date, strict_lt=True)
         inv_start = _balance_for_account_ids(inv_ids, start_date, strict_lt=True)
         ap_start = _balance_for_account_ids(ap_ids, start_date, strict_lt=True)
@@ -2907,12 +2895,14 @@ def report_cashflow(request):
         loans_start = _balance_for_account_ids(loan_ids, start_date, strict_lt=True)
         equity_start = _balance_for_account_ids(eq_ids, start_date, strict_lt=True)
     else:
-        cash_start = ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = Decimal("0.00")
+        cash_start = Decimal("0.00")
+        ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = Decimal("0.00")
 
     # =========================================================
     # CLOSING BALANCES (<= dto)
     # =========================================================
     cash_end = _balance_for_account_ids(cash_ids, dto)
+
     ar_end = _balance_for_account_ids(ar_ids, dto)
     inv_end = _balance_for_account_ids(inv_ids, dto)
     ap_end = _balance_for_account_ids(ap_ids, dto)
@@ -2921,14 +2911,27 @@ def report_cashflow(request):
     equity_end = _balance_for_account_ids(eq_ids, dto)
 
     # =========================================================
-    # DELTAS (end - start)
+    # RAW DELTAS (end - start)
     # =========================================================
-    delta_ar = (ar_end - ar_start).quantize(Decimal("0.01"))
-    delta_inv = (inv_end - inv_start).quantize(Decimal("0.01"))
-    delta_ap = (ap_end - ap_start).quantize(Decimal("0.01"))
-    delta_fa = (fa_end - fa_start).quantize(Decimal("0.01"))
-    delta_loans = (loans_end - loans_start).quantize(Decimal("0.01"))
-    delta_equity = (equity_end - equity_start).quantize(Decimal("0.01"))
+    raw_delta_ar = (ar_end - ar_start).quantize(Decimal("0.01"))
+    raw_delta_inv = (inv_end - inv_start).quantize(Decimal("0.01"))
+    raw_delta_ap = (ap_end - ap_start).quantize(Decimal("0.01"))
+    raw_delta_fa = (fa_end - fa_start).quantize(Decimal("0.01"))
+    raw_delta_loans = (loans_end - loans_start).quantize(Decimal("0.01"))
+    raw_delta_equity = (equity_end - equity_start).quantize(Decimal("0.01"))
+
+    # =========================================================
+    # CASHFLOW PRESENTATION SIGN RULES (client requirement)
+    # Assets: increase negative, decrease positive
+    # Liabilities/Equity: increase positive, decrease negative
+    # =========================================================
+    delta_ar = (-raw_delta_ar).quantize(Decimal("0.01"))        # asset
+    delta_inv = (-raw_delta_inv).quantize(Decimal("0.01"))      # asset
+    delta_fa = (-raw_delta_fa).quantize(Decimal("0.01"))        # asset
+
+    delta_ap = (raw_delta_ap).quantize(Decimal("0.01"))         # liability
+    delta_loans = (raw_delta_loans).quantize(Decimal("0.01"))   # liability
+    delta_equity = (raw_delta_equity).quantize(Decimal("0.01")) # equity
 
     # =========================================================
     # CASHFLOW (INDIRECT METHOD)
@@ -2936,12 +2939,12 @@ def report_cashflow(request):
     cash_from_ops = (
         net_profit
         + depreciation
-        - delta_ar
-        - delta_inv
+        + delta_ar
+        + delta_inv
         + delta_ap
     ).quantize(Decimal("0.01"))
 
-    cash_from_investing = (-delta_fa).quantize(Decimal("0.01"))
+    cash_from_investing = (delta_fa).quantize(Decimal("0.01"))
     cash_from_financing = (delta_loans + delta_equity).quantize(Decimal("0.01"))
 
     net_change = (cash_from_ops + cash_from_investing + cash_from_financing).quantize(Decimal("0.01"))
@@ -2951,12 +2954,17 @@ def report_cashflow(request):
     reporting_currency = "UGX"
 
     # =========================================================
-    # EXPORT ROWS
-    # - Keep structure, but REMOVE:
-    #   1) "Line" / "Amount" header labels
-    #   2) currency labels appended to amounts (UGX)
+    # EXPORT ROWS + BOLD ROWS LIST
     # =========================================================
-    period_label = f"{dfrom.strftime('%Y-%m-%d') if dfrom else 'As of date'}_to_{dto.strftime('%Y-%m-%d') if dto else 'As of date'}"
+    period_label = f"{dfrom.strftime('%Y-%m-%d') if dfrom else 'As_of_date'}_to_{dto.strftime('%Y-%m-%d') if dto else 'As_of_date'}"
+
+    # rows whose LABEL must be bold
+    BOLD_LABELS = {
+        "Net Cash from Operating Activities",
+        "Net Cash from Investing Activities",
+        "Net Cash from Financing Activities",
+        "Net Change in Cash",
+    }
 
     export_rows = [
         ("Cash Flows from Operating Activities", "", ""),
@@ -2980,8 +2988,8 @@ def report_cashflow(request):
         ("", "", ""),
 
         ("Net Change in Cash", "", ""),
-        ("Cash at Start", "", cash_start),
         ("Net Change in Cash", "", net_change),
+        ("Cash at Start", "", cash_start),
         ("Cash at End", "", cash_end),
         ("Reconciliation OK", "", "YES" if recon_ok else "NO"),
     ]
@@ -3006,15 +3014,14 @@ def report_cashflow(request):
         w.writerow(["Reporting Currency", reporting_currency])
         w.writerow([])
 
-        # no header labels ("Line", "Amount"), and no per-row currency
         for label, _cur, amt in export_rows:
             if label == "" and _cur == "" and amt == "":
                 w.writerow([])
             else:
                 if _cur == "" and (amt == "" or isinstance(amt, str)):
-                    # section heading
                     w.writerow([label, ""])
                 else:
+                    # CSV can't bold, but it keeps the same labels and signs
                     w.writerow([label, _amt_to_str(amt)])
         return resp
 
@@ -3028,16 +3035,28 @@ def report_cashflow(request):
         ws.append(["Reporting Currency", reporting_currency])
         ws.append([])
 
-        # no header labels, and no currency column
+        bold_font = Font(bold=True)
+
         for label, _cur, amt in export_rows:
             if label == "" and _cur == "" and amt == "":
                 ws.append([])
-            else:
-                if _cur == "" and (amt == "" or isinstance(amt, str)):
-                    ws.append([label, ""])
-                else:
-                    # keep numeric where possible
-                    ws.append([label, float(amt) if isinstance(amt, Decimal) else _amt_to_str(amt)])
+                continue
+
+            # headings
+            if _cur == "" and (amt == "" or isinstance(amt, str)):
+                row = ws.max_row + 1
+                ws.append([label, ""])
+                ws.cell(row=row, column=1).font = bold_font
+                continue
+
+            # normal numeric rows
+            row = ws.max_row + 1
+            ws.append([label, float(amt) if isinstance(amt, Decimal) else _amt_to_str(amt)])
+
+            # bold subtotal lines
+            if label in BOLD_LABELS:
+                ws.cell(row=row, column=1).font = bold_font
+                ws.cell(row=row, column=2).font = bold_font
 
         bio = BytesIO()
         wb.save(bio)
@@ -3068,7 +3087,6 @@ def report_cashflow(request):
         c.drawString(50, y, f"Reporting Currency: {reporting_currency}")
         y -= 16
 
-        # removed the "Line" and "Amount" header labels + line
         y -= 6
         c.line(50, y, width - 50, y)
         y -= 16
@@ -3085,24 +3103,32 @@ def report_cashflow(request):
                 c.line(50, y, width - 50, y)
                 y -= 16
 
-            # Section heading
+            # SECTION HEADINGS
             if _cur == "" and (amt == "" or isinstance(amt, str) and label and amt == ""):
                 c.setFont("Helvetica-Bold", 10)
                 c.drawString(50, y, str(label))
                 c.setFont("Helvetica", 10)
-            elif _cur == "" and isinstance(amt, str) and label == "Reconciliation OK":
-                # YES/NO row
+                y -= 14
+                continue
+
+            # YES/NO row
+            if isinstance(amt, str) and label == "Reconciliation OK":
                 c.setFont("Helvetica", 10)
                 c.drawString(50, y, str(label))
                 c.drawRightString(width - 50, y, _amt_to_str(amt))
-            elif _cur == "" and (amt == "" or isinstance(amt, str)):
-                c.setFont("Helvetica-Bold", 10)
-                c.drawString(50, y, str(label))
+                y -= 14
+                continue
+
+            # NORMAL OR SUBTOTAL ROW
+            is_bold = label in BOLD_LABELS
+            c.setFont("Helvetica-Bold" if is_bold else "Helvetica", 10)
+
+            c.drawString(50, y, str(label))
+            c.drawRightString(width - 50, y, _amt_to_str(amt))
+
+            # reset
+            if is_bold:
                 c.setFont("Helvetica", 10)
-            else:
-                c.drawString(50, y, str(label))
-                # amount WITHOUT currency suffix
-                c.drawRightString(width - 50, y, _amt_to_str(amt))
 
             y -= 14
 
