@@ -2,13 +2,15 @@
 
 import json
 import datetime
+import sys
 from decimal import Decimal
 
-from django.conf import settings
+from django.db import connection
+from django.db.utils import ProgrammingError, OperationalError
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models.fields.files import FieldFile
-from django.contrib.sessions.models import Session  #  NEW: skip sessions
+from django.contrib.sessions.models import Session  # NEW: skip sessions
 
 from .models import AuditTrail
 
@@ -61,17 +63,53 @@ def _safe_int_pk(pk):
         return None
 
 
+def _is_running_migrations():
+    """
+    If Django is running migrate/makemigrations, skip audit logging.
+    """
+    return any(cmd in sys.argv for cmd in ["migrate", "makemigrations"])
+
+
+def _audit_table_exists():
+    """
+    Check whether the audit table exists in the DB.
+    During early migration steps, the DB/table may not exist yet.
+    """
+    try:
+        return "accounts_audittrail" in connection.introspection.table_names()
+    except (ProgrammingError, OperationalError):
+        return False
+
+
+def _should_skip_audit(sender):
+    """
+    Central place for all skip conditions.
+    """
+    # Don't log while running migrations (tables may not exist yet)
+    if _is_running_migrations():
+        return True
+
+    # Don't log the audit model itself
+    if sender is AuditTrail:
+        return True
+
+    # Don't log session writes (pk is string)
+    if sender is Session:
+        return True
+
+    # If audit table isn't ready yet, skip (prevents Render migrate crash)
+    if not _audit_table_exists():
+        return True
+
+    return False
+
+
 @receiver(post_save)
 def log_save(sender, instance, created, **kwargs):
-    #  don’t log the audit model itself
-    if sender is AuditTrail:
+    if _should_skip_audit(sender):
         return
 
-    #  IMPORTANT: don't log session saves (pk is a string)
-    if sender is Session:
-        return
-
-    #  ensure object_id is an int (skip if not)
+    # Ensure object_id is an int (skip if not)
     obj_id = _safe_int_pk(getattr(instance, "pk", None))
     if obj_id is None:
         return
@@ -82,7 +120,7 @@ def log_save(sender, instance, created, **kwargs):
         user=getattr(instance, "_audit_user", None),
         action="CREATE" if created else "UPDATE",
         model_name=sender.__name__,
-        object_id=obj_id,  #  FIXED
+        object_id=obj_id,
         description=f"{'CREATE' if created else 'UPDATE'} {sender.__name__}",
         old_data=None,
         new_data=changes_dict,
@@ -92,14 +130,10 @@ def log_save(sender, instance, created, **kwargs):
 
 @receiver(post_delete)
 def log_delete(sender, instance, **kwargs):
-    if sender is AuditTrail:
+    if _should_skip_audit(sender):
         return
 
-    #  don't log session deletes
-    if sender is Session:
-        return
-
-    #  ensure object_id is an int (skip if not)
+    # Ensure object_id is an int (skip if not)
     obj_id = _safe_int_pk(getattr(instance, "pk", None))
     if obj_id is None:
         return
@@ -108,7 +142,7 @@ def log_delete(sender, instance, **kwargs):
         user=getattr(instance, "_audit_user", None),
         action="DELETE",
         model_name=sender.__name__,
-        object_id=obj_id,  #  FIXED
+        object_id=obj_id,
         description=f"DELETE {sender.__name__}",
         old_data=build_changes_dict(instance),
         new_data=None,

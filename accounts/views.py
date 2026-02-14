@@ -28,7 +28,7 @@ from sales.models import Newinvoice,Payment
 from django.db.models import ExpressionWrapper
 from sowaf.models import Newcustomer
 from .utils import income_accounts_qs, expense_accounts_qs, deposit_accounts_qs
-from .models import (Account, ColumnPreference, JournalEntry, JournalLine)
+from .models import (Account, ColumnPreference, JournalEntry, JournalLine,AuditTrail)
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -245,12 +245,12 @@ def accounts(request):
 
 
 # audit trail view
-# def audit_trail(request):
-#     logs = AuditTrail.objects.select_related("user").all()
+def audit_trail(request):
+    logs = AuditTrail.objects.select_related("user").all()
 
-#     return render(request, "audit_trail.html", {
-#         "logs": logs
-#     })
+    return render(request, "audit_trail.html", {
+        "logs": logs
+    })
 
 # @login_required
 def save_column_prefs(request):
