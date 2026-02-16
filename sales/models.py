@@ -20,7 +20,7 @@ class Newinvoice(models.Model):
     shipping_address = models.CharField(max_length=255, null=True, blank=True)
     terms = models.CharField(max_length=255, null=True, blank=True)
     sales_rep = models.CharField(max_length=255, null=True, blank=True)
-    class_field = models.ForeignKey(Pclass, on_delete=models.CASCADE)
+    class_field = models.ForeignKey(Pclass, on_delete=models.CASCADE,blank=True,null=True)
     tags = models.CharField(max_length=255, null=True, blank=True)
     po_num = models.PositiveIntegerField(null=True, blank=True)
     memo = models.CharField(max_length=255, null=True, blank=True)

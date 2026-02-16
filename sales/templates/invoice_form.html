@@ -405,7 +405,7 @@
 
         <div class="form-group">
           <label>PO Number</label>
-          <input type="text" name="po_number" value="{% if edit_mode %}{{ inv.po_num }}{% endif %}">
+          <input type="number" name="po_number" min="0" value="{% if edit_mode %}{{ inv.po_num }}{% endif %}">
         </div>
       </div>
 

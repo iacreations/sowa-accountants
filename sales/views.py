@@ -1147,6 +1147,26 @@ def parse_date_flexible(s):
             continue
     return None  # if nothing matched
 
+from decimal import Decimal
+from datetime import timedelta
+from django.shortcuts import render, redirect, get_object_or_404
+from django.db import transaction
+
+
+
+
+# Helpers
+def to_pos_int_or_none(val):
+    """
+    Converts an input to positive int or None.
+    - '' / None / spaces -> None
+    - '123' -> 123
+    - anything else -> None (prevents ValueError for integer fields)
+    """
+    val = (val or "").strip()
+    return int(val) if val.isdigit() else None
+
+# add new invoice
 @transaction.atomic
 def add_invoice(request):
     if request.method == "POST":
@@ -1176,7 +1196,10 @@ def add_invoice(request):
                 class_field = None
 
         tags          = request.POST.get("tags")
-        po_num        = request.POST.get("po_number")  #FIX: your form uses po_number
+
+        # convert empty PO to None (so PositiveIntegerField doesn't crash)
+        po_num = to_pos_int_or_none(request.POST.get("po_number"))
+
         memo          = request.POST.get("memo")
         customs_notes = request.POST.get("customs_notes")
 
@@ -1202,7 +1225,7 @@ def add_invoice(request):
             terms=terms,
             sales_rep=sales_rep,
             tags=tags,
-            po_num=po_num,
+            po_num=po_num,  # now safe (int or None)
             memo=memo,
             customs_notes=customs_notes,
             subtotal=subtotal,
@@ -1285,6 +1308,7 @@ def add_invoice(request):
         "products": products,
         "next_invoice_id": next_invoice_id,
     })
+
 # edit invoice
 
 def edit_invoice(request, pk: int):
@@ -1308,7 +1332,10 @@ def edit_invoice(request, pk: int):
         sales_rep     = request.POST.get("sales_rep")
         class_id      = request.POST.get("class_field")
         tags          = request.POST.get("tags")
-        po_num        = request.POST.get("po_number") or request.POST.get("po_num")
+
+        # ✅ FIX: safe int conversion or None
+        po_num = to_pos_int_or_none(request.POST.get("po_number") or request.POST.get("po_num"))
+
         memo          = request.POST.get("memo")
         customs_notes = request.POST.get("customs_notes")
 
@@ -1353,7 +1380,7 @@ def edit_invoice(request, pk: int):
             line_amount = (qty * rate).quantize(Decimal("0.01"))
             line_discount_amt = (line_amount * dpc / Decimal("100")).quantize(Decimal("0.01"))
 
-            # VAT on pre-discount amount (same as your comment)
+            # VAT on pre-discount amount
             if getattr(product, "taxable", False):
                 line_vat = (line_amount * Decimal("0.18")).quantize(Decimal("0.01"))
             else:
@@ -1378,18 +1405,18 @@ def edit_invoice(request, pk: int):
         if line_rows:
             InvoiceItem.objects.bulk_create(line_rows)
 
-        #Save header fields (FIX: store aware datetime into DateTimeFields)
+        # Save header fields
         inv.customer         = customer
         inv.email            = email
-        inv.date_created     = as_aware_datetime(created_dt)  #FIX
-        inv.due_date         = as_aware_datetime(due_dt)      #FIX
+        inv.date_created     = as_aware_datetime(created_dt)
+        inv.due_date         = as_aware_datetime(due_dt)
         inv.billing_address  = billing_addr
         inv.shipping_address = shipping_addr
         inv.class_field      = class_field
         inv.terms            = terms
         inv.sales_rep        = sales_rep
         inv.tags             = tags
-        inv.po_num           = po_num
+        inv.po_num           = po_num  # ✅ safe
         inv.memo             = memo
         inv.customs_notes    = customs_notes
 
@@ -1422,6 +1449,7 @@ def edit_invoice(request, pk: int):
         "classes": classes,
         "next_invoice_id": f"{inv.id:03d}",
     })
+
 def add_class_ajax(request):
     if request.method == "POST":
         name = request.POST.get("name")
@@ -1436,15 +1464,6 @@ def add_class_ajax(request):
         })
     
 # invoice list
-import json
-from decimal import Decimal
-
-from django.db.models import Q, F, Value, Sum, DecimalField
-from django.db.models.functions import Coalesce, Cast
-from django.http import JsonResponse
-from django.shortcuts import render
-from django.views.decorators.http import require_POST
-
 DEFAULT_COLS = ["invoice_no","customer","created","due","email","billing","status","actions"]
 
 ALL_COLUMNS = [
