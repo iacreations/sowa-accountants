@@ -472,7 +472,7 @@ def _to_decimal_number(x) -> Decimal:
 # ===========================
 # HOME VIEW
 # ===========================
-
+@login_required
 def home(request):
     today = timezone.localdate()
 
