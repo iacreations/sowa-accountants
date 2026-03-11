@@ -13,4 +13,11 @@ urlpatterns = [
     path("products/<int:pk>/edit/", views.product_edit, name="product-edit"),
     path("add-category-ajax/", views.add_category_ajax, name="add_category_ajax"),
     path("add-class-ajax/", views.add_class_ajax, name="add_class_ajax"),
+    # stock movement
+    path("stock-transfers/", views.stock_transfer_list, name="stock-transfer-list"),
+    path("stock-transfers/new/", views.add_stock_transfer, name="add-stock-transfer"),
+    path("stock-transfers/<int:pk>/", views.stock_transfer_detail, name="stock-transfer-detail"),
+    path("locations/", views.locations_list_json, name="locations-list-json"),
+    path("locations/create/", views.location_create_json, name="location-create-json"),
+    path("locations/add-ajax/", views.add_location_ajax, name="add_location_ajax"),
 ]

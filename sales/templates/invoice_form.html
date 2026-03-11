@@ -175,7 +175,6 @@
      color: white;
     }
 
-    /* TABLE: make columns wider (lengthy) + reduce height */
     .table-scroll-x{
       width: 100%;
       overflow-x: auto;
@@ -210,34 +209,30 @@
       width: 100%;
     }
 
-    /* Column widths */
     .invoice-table th:nth-child(1),
-    .invoice-table td:nth-child(1){ min-width: 280px; } /* Product */
+    .invoice-table td:nth-child(1){ min-width: 280px; }
     .invoice-table th:nth-child(2),
-    .invoice-table td:nth-child(2){ min-width: 380px; } /* Description */
+    .invoice-table td:nth-child(2){ min-width: 380px; }
     .invoice-table th:nth-child(3),
-    .invoice-table td:nth-child(3){ min-width: 130px; text-align:right; } /* Qty */
+    .invoice-table td:nth-child(3){ min-width: 130px; text-align:right; }
 
-    /* Rate like Amount */
     .invoice-table th:nth-child(4),
-    .invoice-table td:nth-child(4){ min-width: 190px; text-align:right; } /* Rate */
+    .invoice-table td:nth-child(4){ min-width: 190px; text-align:right; }
     .invoice-table th:nth-child(5),
-    .invoice-table td:nth-child(5){ min-width: 190px; text-align:right; } /* Amount */
+    .invoice-table td:nth-child(5){ min-width: 190px; text-align:right; }
     .invoice-table th:nth-child(6),
-    .invoice-table td:nth-child(6){ min-width: 190px; text-align:right; } /* VAT */
+    .invoice-table td:nth-child(6){ min-width: 190px; text-align:right; }
     .invoice-table th:nth-child(7),
-    .invoice-table td:nth-child(7){ min-width: 190px; text-align:right; } /* Discount % */
+    .invoice-table td:nth-child(7){ min-width: 190px; text-align:right; }
     .invoice-table th:nth-child(8),
-    .invoice-table td:nth-child(8){ min-width: 220px; text-align:right; } /* Discount Amount */
+    .invoice-table td:nth-child(8){ min-width: 220px; text-align:right; }
     .invoice-table th:nth-child(9),
-    .invoice-table td:nth-child(9){ min-width: 110px; text-align:center; } /* Action */
+    .invoice-table td:nth-child(9){ min-width: 110px; text-align:center; }
 
-    /* Ensure rate input stretches like amount input (override earlier 80px rule) */
     td input.rate{
       width: 100% !important;
     }
 
-    /* Laptops & small desktops */
     @media only screen and (min-width: 1024px) and (max-width: 1600px) {
       #container{
         width: 100%;
@@ -369,6 +364,21 @@
         <div class="form-group">
           <label>Sales Rep</label>
           <input type="text" name="sales_rep" value="{% if edit_mode %}{{ inv.sales_rep }}{% endif %}">
+        </div>
+
+        <!-- ✅ NEW: LOCATION (FK) + Add New -->
+        <div class="form-group">
+          <label>Location</label>
+          <select name="location" id="locationSelect" class="form-control">
+            <option value="">Select Location</option>
+            {% for loc in locations %}
+              <option value="{{ loc.id }}"
+                {% if edit_mode and inv.location_id == loc.id %}selected{% endif %}>
+                {{ loc.name }}
+              </option>
+            {% endfor %}
+            <option value="add_new">➕ Add New</option>
+          </select>
         </div>
 
         <!-- CLASS with + Add (AJAX) -->
@@ -568,13 +578,15 @@
       }
     })();
 
+    // ✅ NEW: Location AJAX endpoint
+    const ADD_LOCATION_AJAX_URL = "{% url 'inventory:add_location_ajax' %}";
+
     // Product details URL template (pk injected in JS)
     const PRODUCT_DETAILS_URL_TEMPLATE = "{% url 'sales:product-details' 0 %}";
     function productDetailsUrl(pk){
       return PRODUCT_DETAILS_URL_TEMPLATE.replace("/0/", "/" + pk + "/");
     }
 
-    // Product: open add product page OR load details via AJAX
     function handleProductSelect(select){
       if(select.value === "add_new"){
         window.open("{% url 'inventory:add-products' %}", "_blank", "noopener");
@@ -719,6 +731,54 @@
       })
       .catch(() => alert("Network error. Try again."));
     }
+
+    // ✅ NEW: Add Location inline (AJAX)
+    function addNewLocationInline(selectEl){
+      const name = (prompt("Enter new location name:") || "").trim();
+      if(!name){ selectEl.value = ""; return; }
+
+      fetch(ADD_LOCATION_AJAX_URL, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCookie("csrftoken"),
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "name=" + encodeURIComponent(name)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data && data.success){
+          const opt = document.createElement("option");
+          opt.value = data.id;
+          opt.textContent = data.name;
+          opt.selected = true;
+
+          const addNewOpt = selectEl.querySelector('option[value="add_new"]');
+          if (addNewOpt) selectEl.insertBefore(opt, addNewOpt);
+          else selectEl.appendChild(opt);
+
+          selectEl.value = String(data.id);
+        } else {
+          alert((data && data.error) ? data.error : "Failed to add location");
+          selectEl.value = "";
+        }
+      })
+      .catch(() => {
+        alert("Network error. Try again.");
+        selectEl.value = "";
+      });
+    }
+
+    // ✅ NEW: handle location add_new
+    (function(){
+      const sel = document.getElementById("locationSelect");
+      if(!sel) return;
+      sel.addEventListener("change", function(){
+        if(this.value === "add_new"){
+          addNewLocationInline(this);
+        }
+      });
+    })();
 
     function addDaysISO(isoDate, days){
       if(!isoDate) return "";

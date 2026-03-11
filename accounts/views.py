@@ -7,32 +7,37 @@ import json
 import io
 from io import BytesIO
 from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
 import csv
 from reportlab.lib.pagesizes import A4
 from openpyxl.styles import Font
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
-from datetime import datetime,date
+from datetime import datetime, date
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
 from django.db.models import Sum, Value, DecimalField, F
 from django.db.models.functions import Coalesce, Cast
 from django.urls import reverse
-from django.http import HttpResponse,Http404
+from django.http import HttpResponse, Http404
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.db import transaction
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
-from sales.models import Newinvoice,Payment
+from sales.models import Newinvoice, Payment
 from django.db.models import ExpressionWrapper
 from sowaf.models import Newcustomer
 from .utils import income_accounts_qs, expense_accounts_qs, deposit_accounts_qs
-from .models import (Account, ColumnPreference, JournalEntry, JournalLine,AuditTrail)
+from .models import (Account, ColumnPreference, JournalEntry, JournalLine, AuditTrail)
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+
+# ✅ tenancy decorators (same pattern as sales)
+from tenancy.permissions import company_required, module_required
 
 
 # default visible columns (match the checkboxes in the template)
@@ -45,18 +50,31 @@ DEFAULT_ACCOUNTS_COL_PREFS = {
     "description": True,
     "actions": True,
 }
+
+
 # accounts/views.py
+@login_required
+@company_required
+@module_required("accounts")
 def accounts_dropdown_data(request):
     """
     Returns latest income & expense accounts for Product form dropdowns.
     """
-    income = income_accounts_qs().values("id", "account_name")
-    expense = expense_accounts_qs().values("id", "account_name")
+    company = request.company
+
+    # keep your logic but scope tenant
+    try:
+        income = income_accounts_qs(company=company).values("id", "account_name")
+        expense = expense_accounts_qs(company=company).values("id", "account_name")
+    except TypeError:
+        income = income_accounts_qs().filter(company=company).values("id", "account_name")
+        expense = expense_accounts_qs().filter(company=company).values("id", "account_name")
 
     return JsonResponse({
         "income_accounts": list(income),
         "expense_accounts": list(expense),
     })
+
 
 # fixed 5 Level-1 sections
 LEVEL1_ORDER = [
@@ -74,19 +92,26 @@ CASH_DETAIL_TYPES = [
     # "Bank current account",
     # "Mobile Money",
 ]
+
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-# import your Account model + the same queryset function you already use
-# from .models import Account
-# from .queries import deposit_accounts_qs
 
 @require_GET
+@login_required
+@company_required
+@module_required("accounts")
 def deposit_accounts_api(request):
     """
     Returns deposit accounts for dropdown refresh.
     """
-    qs = deposit_accounts_qs().order_by("account_name")
+    company = request.company
+
+    # keep your same queryset function but scope by company
+    try:
+        qs = deposit_accounts_qs(company=company).order_by("account_name")
+    except TypeError:
+        qs = deposit_accounts_qs().filter(company=company).order_by("account_name")
 
     data = []
     for a in qs:
@@ -108,11 +133,16 @@ def deposit_accounts_api(request):
 
     return JsonResponse({"results": data})
 
-# @login_required
+
+@login_required
+@company_required
+@module_required("accounts")
 def accounts(request):
     status = request.GET.get("status", "active")  # default is active
+    company = request.company
 
-    base_qs = Account.objects.all()
+    # tenant base qs
+    base_qs = Account.objects.for_company(company)
 
     # status filter
     if status == "inactive":
@@ -163,10 +193,10 @@ def accounts(request):
             return running + (debit - credit)
         return running + (credit - debit)
 
-    # pull all journal lines for these accounts
+    # pull all journal lines for these accounts (TENANT SAFE via entry__company)
     lines = (
         JournalLine.objects
-        .filter(account_id__in=acc_by_id.keys())
+        .filter(account_id__in=acc_by_id.keys(), entry__company=company)
         .select_related("account", "entry")
         .order_by("entry__date", "id")
     )
@@ -218,9 +248,10 @@ def accounts(request):
     inactive_count = base_qs.filter(is_active=False).count()
     all_count = base_qs.count()
 
-    # Column preferences
+    # Column preferences (TENANT SAFE)
     if request.user.is_authenticated:
         prefs, _ = ColumnPreference.objects.get_or_create(
+            company=company,
             user=request.user,
             table_name="accounts",
             defaults={"preferences": DEFAULT_ACCOUNTS_COL_PREFS},
@@ -239,25 +270,37 @@ def accounts(request):
             "inactive_count": inactive_count,
             "all_count": all_count,
             "level1_sections": level1_sections,
-            "coas": all_accounts,  #
+            "coas": all_accounts,
         },
     )
 
 
 # audit trail view
+@login_required
+@company_required
+@module_required("accounts")
 def audit_trail(request):
+    company = request.company
+
     logs = AuditTrail.objects.select_related("user").all()
+    if hasattr(AuditTrail, "company_id"):
+        logs = logs.filter(company=company)
 
     return render(request, "audit_trail.html", {
         "logs": logs
     })
 
-# @login_required
+
+@login_required
+@company_required
+@module_required("accounts")
 def save_column_prefs(request):
     if request.method != "POST":
         return JsonResponse(
             {"status": "error", "detail": "POST required"}, status=400
         )
+
+    company = request.company
 
     try:
         data = json.loads(request.body or "{}")
@@ -266,12 +309,12 @@ def save_column_prefs(request):
         return JsonResponse({"status": "error", "detail": "Bad JSON"}, status=400)
 
     prefs, _ = ColumnPreference.objects.get_or_create(
+        company=company,
         user=request.user,
         table_name="accounts",
         defaults={"preferences": DEFAULT_ACCOUNTS_COL_PREFS},
     )
 
-    # ensure only known keys are saved
     cleaned = {
         k: bool(preferences.get(k, True)) for k in DEFAULT_ACCOUNTS_COL_PREFS.keys()
     }
@@ -280,22 +323,28 @@ def save_column_prefs(request):
     prefs.save()
     return JsonResponse({"status": "ok"})
 
+
 # ading an account in the coa
-# @login_required
 @transaction.atomic
+@login_required
+@company_required
+@module_required("accounts")
 def add_account(request):
+    company = request.company
+
     if request.method == "POST":
-        account_name   = request.POST.get("account_name")
+        account_name = request.POST.get("account_name")
         account_number = request.POST.get("account_number")
-        account_type   = request.POST.get("account_type")  # code from select
-        detail_type    = request.POST.get("detail_type")
-        tax_category   = request.POST.get("tax_category")
-        is_subaccount  = request.POST.get("is_subaccount") == "on"
+        account_type = request.POST.get("account_type")  # code from select
+        detail_type = request.POST.get("detail_type")
+        tax_category = request.POST.get("tax_category")
+        is_subaccount = request.POST.get("is_subaccount") == "on"
 
         parent = None
         parent_id = request.POST.get("parent")
         if is_subaccount and parent_id:
-            parent = Account.objects.filter(id=parent_id).first()
+            # tenant-safe parent
+            parent = Account.objects.for_company(company).filter(id=parent_id).first()
 
         opening_balance_str = request.POST.get("opening_balance") or "0"
         try:
@@ -308,8 +357,9 @@ def add_account(request):
 
         description = request.POST.get("description")
 
-        # 1) Save the account
+        # 1) Save the account (tenant-safe)
         new_account = Account(
+            company=company,
             account_name=account_name,
             account_number=account_number,
             account_type=account_type,
@@ -328,16 +378,23 @@ def add_account(request):
             level1 = new_account.level1_group  # Assets / Liabilities / Equity / Income / Expenses
 
             if level1 in ["Assets", "Liabilities", "Equity"]:
-                opening_equity_acct, _ = Account.objects.get_or_create(
+                oe_qs = Account.objects.for_company(company).filter(
                     account_name="Opening Balance Equity",
                     account_type="OWNER_EQUITY",
-                    defaults={
-                        "detail_type": "Opening balances",
-                        "is_active": True,
-                    },
                 )
+                opening_equity_acct = oe_qs.first()
+
+                if not opening_equity_acct:
+                    opening_equity_acct = Account.objects.create(
+                        company=company,
+                        account_name="Opening Balance Equity",
+                        account_type="OWNER_EQUITY",
+                        detail_type="Opening balances",
+                        is_active=True,
+                    )
 
                 je = JournalEntry.objects.create(
+                    company=company,
                     date=as_of,
                     description=f"Opening balance for {new_account.account_name}",
                     source_type="OPENING_BALANCE",
@@ -347,7 +404,6 @@ def add_account(request):
                 amount = abs(opening_balance)
 
                 if level1 == "Assets":
-                    # Debit the asset account, Credit Opening Balance Equity
                     JournalLine.objects.create(
                         entry=je,
                         account=new_account,
@@ -361,7 +417,6 @@ def add_account(request):
                         credit=amount,
                     )
                 else:
-                    # Liabilities & Equity: Credit account, Debit Opening Balance Equity
                     JournalLine.objects.create(
                         entry=je,
                         account=new_account,
@@ -385,32 +440,42 @@ def add_account(request):
         return redirect("accounts:accounts")
 
     # GET
-    parents = Account.objects.all()
+    parents = Account.objects.for_company(company)
+
     return render(request, "coa_form.html", {
         "parents": parents,
         "account": None,      # important so template knows this is ADD mode
     })
 
 
+# Editing an account
 @transaction.atomic
+@login_required
+@company_required
+@module_required("accounts")
 def edit_account(request, pk):
     """
     Edit an existing Account including its opening balance journal entry.
+    TENANT SAFE: only edits accounts in the current company.
     """
-    account = get_object_or_404(Account, pk=pk)
+    company = request.company
+
+    # tenant-safe fetch
+    account = get_object_or_404(Account.objects.for_company(company), pk=pk)
 
     if request.method == "POST":
-        account_name   = request.POST.get("account_name")
+        account_name = request.POST.get("account_name")
         account_number = request.POST.get("account_number")
-        account_type   = request.POST.get("account_type")
-        detail_type    = request.POST.get("detail_type")
-        tax_category   = request.POST.get("tax_category")
-        is_subaccount  = request.POST.get("is_subaccount") == "on"
+        account_type = request.POST.get("account_type")
+        detail_type = request.POST.get("detail_type")
+        tax_category = request.POST.get("tax_category")
+        is_subaccount = request.POST.get("is_subaccount") == "on"
 
         parent = None
         parent_id = request.POST.get("parent")
         if is_subaccount and parent_id:
-            parent = Account.objects.filter(id=parent_id).first()
+            # tenant-safe parent selection
+            parent = Account.objects.for_company(company).filter(id=parent_id).first()
 
         opening_balance_str = request.POST.get("opening_balance") or "0"
         try:
@@ -424,25 +489,28 @@ def edit_account(request, pk):
         description = request.POST.get("description")
 
         # ---- update account fields ----
-        account.account_name   = account_name
+        account.account_name = account_name
         account.account_number = account_number
-        account.account_type   = account_type
-        account.detail_type    = detail_type
-        account.tax_category   = tax_category
-        account.is_subaccount  = is_subaccount
-        account.parent         = parent
+        account.account_type = account_type
+        account.detail_type = detail_type
+        account.tax_category = tax_category
+        account.is_subaccount = is_subaccount
+        account.parent = parent
         account.opening_balance = new_opening_balance
-        account.as_of          = as_of
-        account.description    = description
+        account.as_of = as_of
+        account.description = description
         account.save()
 
         # ---- update opening balance journal entry ----
         # Only for balance-sheet accounts
         level1 = account.level1_group
-        je = JournalEntry.objects.filter(
+
+        je_qs = JournalEntry.objects.filter(
+            company=company,
             source_type="OPENING_BALANCE",
             source_id=account.id
-        ).first()
+        )
+        je = je_qs.first()
 
         if level1 not in ["Assets", "Liabilities", "Equity"]:
             # Not a balance-sheet account: remove any OB entry
@@ -454,20 +522,27 @@ def edit_account(request, pk):
                 if je:
                     je.delete()
             else:
-                # Ensure Opening Balance Equity exists
-                opening_equity_acct, _ = Account.objects.get_or_create(
+                # Ensure Opening Balance Equity exists (tenant-safe)
+                obe_qs = Account.objects.for_company(company).filter(
                     account_name="Opening Balance Equity",
                     account_type="OWNER_EQUITY",
-                    defaults={
-                        "detail_type": "Opening balances",
-                        "is_active": True,
-                    },
                 )
+
+                opening_equity_acct = obe_qs.first()
+                if not opening_equity_acct:
+                    opening_equity_acct = Account.objects.create(
+                        company=company,
+                        account_name="Opening Balance Equity",
+                        account_type="OWNER_EQUITY",
+                        detail_type="Opening balances",
+                        is_active=True,
+                    )
 
                 amount = abs(new_opening_balance)
 
                 if not je:
                     je = JournalEntry.objects.create(
+                        company=company,
                         date=as_of,
                         description=f"Opening balance for {account.account_name}",
                         source_type="OPENING_BALANCE",
@@ -518,31 +593,38 @@ def edit_account(request, pk):
 
         return redirect("accounts:accounts")
 
-    # GET: show form with existing values
-    parents = Account.objects.exclude(pk=account.pk)
+    # GET: show form with existing values (tenant-safe)
+    parents = Account.objects.for_company(company).exclude(pk=account.pk)
+
     return render(request, "coa_form.html", {
         "parents": parents,
         "account": account,
     })
-# working on the activate and make inactive 
-# @login_required
+
+
+# working on the activate and make inactive
+@login_required
+@company_required
+@module_required("accounts")
 def deactivate_account(request, pk):
-    coa = get_object_or_404(Account, pk=pk)
+    company = request.company
+    coa = get_object_or_404(Account.objects.for_company(company), pk=pk)
     coa.is_active = False
     coa.save()
     return redirect("accounts:accounts")
 
 
-# @login_required
+@login_required
+@company_required
+@module_required("accounts")
 def activate_account(request, pk):
-    coa = get_object_or_404(Account, pk=pk)
+    company = request.company
+    coa = get_object_or_404(Account.objects.for_company(company), pk=pk)
     coa.is_active = True
     coa.save()
     return redirect("accounts:accounts")
 
 # the general ledger logic
-# making the general ledger rows linkable
-
 def get_entry_link(entry):
     """
     Map a JournalEntry to the EDIT page of the original transaction.
@@ -560,11 +642,10 @@ def get_entry_link(entry):
             return reverse("accounts:edit-account", args=[sid])
         # fallback if somehow source_id is missing
         return reverse("accounts:accounts")
-    
-        # ---- CUSTOMER OPENING BALANCE ---------------------------------------
+
+    # ---- CUSTOMER OPENING BALANCE ---------------------------------------
     if st == "CUSTOMER_OPENING_BALANCE" and sid:
         return reverse("sowaf:edit-customer", args=[sid])
-
 
     # ---- SALES / INVOICES -------------------------------------------------
     if st == "INVOICE" and sid:
@@ -574,17 +655,19 @@ def get_entry_link(entry):
         except Exception:
             # fall back to the detail view you already had wired
             return reverse("sales:invoice-detail", args=[sid])
-# ---- SALES / PAYMENTS -------------------------------------------------
+
+    # ---- SALES / PAYMENTS -------------------------------------------------
     if st == "PAYMENT" and sid:
-        # if you have an payment-edit view, prefer that:
+        # if you have a payment-edit view, prefer that:
         try:
             return reverse("sales:payment-edit", args=[sid])
         except Exception:
             # fall back to the detail view you already had wired
             return reverse("sales:payment-detail", args=[sid])
-# ---- SALES / RECEIPTS -------------------------------------------------
+
+    # ---- SALES / RECEIPTS -------------------------------------------------
     if st == "SALES_RECEIPT" and sid:
-        # if you have an receipt-edit view, prefer that:
+        # if you have a receipt-edit view, prefer that:
         try:
             return reverse("sales:receipt-edit", args=[sid])
         except Exception:
@@ -619,6 +702,7 @@ def get_entry_link(entry):
     # Credit Card Credit
     if st == "CREDIT_CARD_CREDIT" and sid:
         return reverse("expenses:credit-card-credit-edit", args=[sid])
+
     if st == "CUSTOMER_REFUND" and sid:
         return reverse("sales:customer-refund-edit", args=[sid])
 
@@ -627,6 +711,7 @@ def get_entry_link(entry):
 
     if st == "SALES_RECEIPT" and sid:
         return reverse("sales:receipt-edit", args=[sid])
+
     # ---- FALLBACK: MANUAL JOURNALS ---------------------------------------
     # If we get here, either source_type is empty/unknown,
     # or we couldn't reverse a URL above.
@@ -639,32 +724,52 @@ def get_entry_link(entry):
             return reverse("accounts:journal-entry-detail", args=[entry.id])
         except Exception:
             # last resort – no link, but don't break the GL page
-            return "#" 
+            return "#"
 
-# @login_required
 
+# Working on the gl
+@login_required
+@company_required
+@module_required("accounts")
 def general_ledger(request):
+    company = request.company
+
+    # -----------------------------
+    # Helpers
+    # -----------------------------
+    def parse_ymd(s):
+        if not s or s in ("None", "null", ""):
+            return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def truthy(v):
+        return str(v).lower() in ("1", "true", "yes", "on")
+
+    def _dec(v):
+        try:
+            return Decimal(str(v or "0.00"))
+        except Exception:
+            return Decimal("0.00")
+
     # -------- filters ----------
     account_id = request.GET.get("account_id")
-    query      = request.GET.get("search", "")
-    date_from  = request.GET.get("date_from")
-    date_to    = request.GET.get("date_to")
-    export     = request.GET.get("export")
-    page_num   = request.GET.get("page", 1)
+    query = request.GET.get("search", "")
+    date_from = parse_ymd(request.GET.get("date_from"))
+    date_to = parse_ymd(request.GET.get("date_to"))
+    export = (request.GET.get("export") or "").strip().lower()
+    page_num = request.GET.get("page", 1)
 
     supplier_id = request.GET.get("supplier_id")
     customer_id = request.GET.get("customer_id")
 
-    # include_children can be auto-enabled later when a parent is selected
     include_children_raw = request.GET.get("include_children")
 
-    # SANITIZE
+    # SANITIZE ids
     if not account_id or account_id in ("None", "null", ""):
         account_id = None
-    if not date_from or date_from in ("None", "null", ""):
-        date_from = None
-    if not date_to or date_to in ("None", "null", ""):
-        date_to = None
     if not supplier_id or supplier_id in ("None", "null", ""):
         supplier_id = None
     if not customer_id or customer_id in ("None", "null", ""):
@@ -674,15 +779,29 @@ def general_ledger(request):
     if view_mode not in ["summary", "detail"]:
         view_mode = "detail"
 
-    accounts = Account.objects.filter(is_active=True).order_by("account_name")
+    # ---------------------------------------------------------
+    # Tenant-safe accounts list for datalist dropdown
+    # ---------------------------------------------------------
+    accounts = Account.objects.for_company(company).filter(is_active=True).order_by("account_name")
 
+    # ---------------------------------------------------------
+    # Selected account (tenant-safe)
+    # ---------------------------------------------------------
     account_label = None
     selected_account = None
     if account_id:
-        selected_account = Account.objects.filter(pk=account_id).select_related("parent").first()
+        selected_account = (
+            Account.objects.for_company(company)
+            .select_related("parent")
+            .filter(pk=account_id)
+            .first()
+        )
         if selected_account:
             account_label = selected_account.account_name
 
+    # -----------------------------
+    # Accounting logic (unchanged)
+    # -----------------------------
     def normal_side(acc: Account):
         if acc.level1_group in ["Assets", "Expenses"]:
             return "debit"
@@ -695,11 +814,6 @@ def general_ledger(request):
         return running + (credit - debit)
 
     def split_to_tb_columns(acc: Account, ending: Decimal):
-        """
-        Same logic as Trial Balance:
-        - Debit-normal: + => Debit, - => Credit
-        - Credit-normal: + => Credit, - => Debit
-        """
         side = normal_side(acc)
 
         if side == "debit":
@@ -712,9 +826,13 @@ def general_ledger(request):
         return -ending, Decimal("0.00")
 
     # =====================================================================
-    # BUILD ACCOUNT TREE (needed to include children transactions)
+    # BUILD ACCOUNT TREE (tenant-safe)
     # =====================================================================
-    all_active_accounts = list(Account.objects.filter(is_active=True).select_related("parent"))
+    all_active_accounts = list(
+        Account.objects.for_company(company)
+        .filter(is_active=True)
+        .select_related("parent")
+    )
     acc_by_id = {a.id: a for a in all_active_accounts}
 
     children_by_parent = defaultdict(list)
@@ -728,7 +846,11 @@ def general_ledger(request):
     for pid in list(children_by_parent.keys()):
         children_by_parent[pid].sort(key=sort_key)
 
+    subtree_cache = {}
+
     def collect_subtree_ids(root_id: int):
+        if root_id in subtree_cache:
+            return subtree_cache[root_id]
         out = []
         stack = [root_id]
         while stack:
@@ -736,26 +858,23 @@ def general_ledger(request):
             out.append(nid)
             for ch in children_by_parent.get(nid, []):
                 stack.append(ch.id)
+        subtree_cache[root_id] = out
         return out
 
     # ---------------------------------------------------------------------
-    # Decide include_children:
-    # - If user explicitly passed include_children => honor it
-    # - Else if selected account has children => AUTO include children so GL matches TB rolled-up parents
+    # Decide include_children (same behavior as you had)
     # ---------------------------------------------------------------------
     include_children = False
     if include_children_raw is not None:
-        include_children = True if str(include_children_raw).lower() in ("1", "true", "yes", "on") else False
+        include_children = truthy(include_children_raw)
     else:
         if selected_account and children_by_parent.get(selected_account.id):
             include_children = True
 
-    # Decide which account ids should be included in the report
     selected_account_ids = None
     if selected_account:
         selected_account_ids = [selected_account.id]
 
-        # If user requested include_children OR if this is AR/AP parent header -> auto include subtree
         ARAP_PARENT_DETAIL_TYPES = {"Accounts Receivable (A/R)", "Accounts Payable (A/P)"}
         dt = (selected_account.detail_type or "").strip()
         nm = (selected_account.account_name or "").strip().lower()
@@ -765,25 +884,46 @@ def general_ledger(request):
             selected_account_ids = collect_subtree_ids(selected_account.id)
 
     # =====================================================================
-    # BASE QUERYSETS
+    # BASE QUERYSETS (TENANT SAFE)
     # =====================================================================
-    base_qs = JournalLine.objects.select_related("entry", "account").order_by("entry__date", "id")
+    base_qs = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(entry__company=company)
+        .order_by("entry__date", "id")
+    )
 
     if supplier_id:
         base_qs = base_qs.filter(supplier_id=supplier_id)
     if customer_id:
         base_qs = base_qs.filter(customer_id=customer_id)
 
-    # filter by selected account OR subtree
     if selected_account_ids:
         base_qs = base_qs.filter(account_id__in=selected_account_ids)
 
-    # balance_qs: for computing balances (ignores query)
+    # -----------------------------
+    # balance_qs: for closing balances (as-of date_to)
+    # -----------------------------
     balance_qs = base_qs
     if date_to:
         balance_qs = balance_qs.filter(entry__date__lte=date_to)
 
-    # display_qs: for showing rows (respects query + date range)
+    # -----------------------------
+    # opening balances (STRICTLY before date_from)
+    # IMPORTANT: this replaces per-account queries, safer + faster
+    # -----------------------------
+    opening_by_account_id = defaultdict(lambda: Decimal("0.00"))
+    if date_from:
+        opening_qs = base_qs.filter(entry__date__lt=date_from)
+        for ln in opening_qs.iterator():
+            acc = ln.account
+            d = _dec(ln.debit)
+            c = _dec(ln.credit)
+            opening_by_account_id[acc.id] = apply_movement(acc, opening_by_account_id[acc.id], d, c)
+
+    # -----------------------------
+    # display_qs: rows shown (respects date range + query)
+    # -----------------------------
     display_qs = base_qs
     if date_from:
         display_qs = display_qs.filter(entry__date__gte=date_from)
@@ -799,7 +939,7 @@ def general_ledger(request):
     all_lines = list(display_qs)
 
     # ---------------------------------------------------------------------
-    # Build DISPLAY maps (based on the filtered result set)
+    # Build DISPLAY maps
     # ---------------------------------------------------------------------
     lines_by_account = defaultdict(list)
     for ln in all_lines:
@@ -835,18 +975,41 @@ def general_ledger(request):
     # TRUE closing balances (as-of date_to)
     # ---------------------------------------------------------------------
     closing_by_account_id = defaultdict(lambda: Decimal("0.00"))
-
-    for ln in balance_qs:
+    for ln in balance_qs.iterator():
         acc = ln.account
-        debit = Decimal(str(ln.debit or "0.00"))
-        credit = Decimal(str(ln.credit or "0.00"))
-        closing_by_account_id[acc.id] = apply_movement(acc, closing_by_account_id[acc.id], debit, credit)
+        d = _dec(ln.debit)
+        c = _dec(ln.credit)
+        closing_by_account_id[acc.id] = apply_movement(acc, closing_by_account_id[acc.id], d, c)
 
     def rolled_up_closing(acc: Account) -> Decimal:
         total = Decimal("0.00")
         for aid in collect_subtree_ids(acc.id):
             total += closing_by_account_id.get(aid, Decimal("0.00"))
         return total
+
+    # =====================================================================
+    # EXPORT HELPERS (REAL XLSX when export=excel)
+    # =====================================================================
+    def _excel_autowidth(ws):
+        for col in range(1, ws.max_column + 1):
+            max_len = 10
+            for row in range(1, ws.max_row + 1):
+                v = ws.cell(row=row, column=col).value
+                if v is None:
+                    continue
+                max_len = max(max_len, len(str(v)))
+            ws.column_dimensions[get_column_letter(col)].width = min(max_len + 2, 55)
+
+    def _make_xlsx_response(wb: Workbook, filename: str) -> HttpResponse:
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        resp = HttpResponse(
+            bio.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
 
     # =========================
     # SUMMARY VIEW
@@ -874,20 +1037,38 @@ def general_ledger(request):
             })
             grand_total += closing
 
+        # Export Excel (REAL XLSX) - keeps your export=excel param & button label
         if export == "excel":
-            response = HttpResponse(content_type="text/csv")
-            response["Content-Disposition"] = 'attachment; filename="general_ledger_summary.csv"'
-            writer = csv.writer(response)
-            writer.writerow(["Account Name", "Account Number", "Account Type", "Closing Balance"])
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "General Ledger Summary"
+
+            # header/meta (safe)
+            ws.append(["General Ledger (Summary)"])
+            ws.append(["Company", str(getattr(company, "name", "YoAccountant"))])
+            ws.append(["Generated On", timezone.now().strftime("%Y-%m-%d %H:%M")])
+            ws.append([])
+            ws.append(["Account Name", "Account Number", "Account Type", "Closing Balance"])
+
+            bold = Font(bold=True)
+            for cell in ws[5]:
+                cell.font = bold
+                cell.alignment = Alignment(horizontal="center")
+
             for row in summary_rows:
-                writer.writerow([
+                ws.append([
                     row["account_name"],
                     row["account_number"],
                     row["account_type"],
                     float(row["closing_balance"]),
                 ])
-            writer.writerow(["TOTAL", "", "", float(grand_total)])
-            return response
+
+            ws.append(["TOTAL", "", "", float(grand_total)])
+            ws.cell(row=ws.max_row, column=1).font = bold
+            ws.cell(row=ws.max_row, column=4).font = bold
+
+            _excel_autowidth(ws)
+            return _make_xlsx_response(wb, "general_ledger_summary.xlsx")
 
         paginator = Paginator(summary_rows, 50)
         page_obj = paginator.get_page(page_num)
@@ -918,7 +1099,6 @@ def general_ledger(request):
 
     detail_rows = []
 
-    # Movement totals (transactions shown)
     tx_total_debit = Decimal("0.00")
     tx_total_credit = Decimal("0.00")
 
@@ -980,16 +1160,10 @@ def general_ledger(request):
         })
 
     def starting_balance_for_account(acc: Account) -> Decimal:
+        # SAFE + FAST: uses precomputed opening_by_account_id
         if not date_from:
             return Decimal("0.00")
-
-        prior = base_qs.filter(entry__date__lt=date_from, account_id=acc.id)
-        running0 = Decimal("0.00")
-        for ln0 in prior:
-            d0 = Decimal(str(ln0.debit or "0.00"))
-            c0 = Decimal(str(ln0.credit or "0.00"))
-            running0 = apply_movement(acc, running0, d0, c0)
-        return running0
+        return opening_by_account_id.get(acc.id, Decimal("0.00"))
 
     def add_leaf_transactions(acc: Account, depth: int, depth_display: int, path: str):
         nonlocal tx_total_debit, tx_total_credit
@@ -1001,8 +1175,8 @@ def general_ledger(request):
         running = starting_balance_for_account(acc)
 
         for ln in lines:
-            debit = Decimal(str(ln.debit or "0.00"))
-            credit = Decimal(str(ln.credit or "0.00"))
+            debit = _dec(ln.debit)
+            credit = _dec(ln.credit)
 
             running = apply_movement(acc, running, debit, credit)
 
@@ -1026,7 +1200,6 @@ def general_ledger(request):
                 "customer_id": ln.customer_id,
             })
 
-            # these are MOVEMENT totals (not closing)
             tx_total_debit += debit
             tx_total_credit += credit
 
@@ -1037,6 +1210,7 @@ def general_ledger(request):
         kids = [c for c in children_by_parent.get(node.id, []) if c.id in visible_ids]
         has_children = len(kids) > 0
 
+        # flatten AR/AP parents (your existing logic)
         if is_arap_parent(node):
             for ch in kids:
                 walk_tree(ch, depth, parent_path)
@@ -1061,9 +1235,7 @@ def general_ledger(request):
     for r in paged_roots:
         walk_tree(r, 0, "")
 
-    # ---------------------------------------------------------------------
-    # TB-CONSISTENT TOTALS WHEN AN ACCOUNT IS SELECTED
-    # ---------------------------------------------------------------------
+    # TB-consistent totals when account is selected
     closing_total = None
     closing_total_debit = Decimal("0.00")
     closing_total_credit = Decimal("0.00")
@@ -1072,22 +1244,35 @@ def general_ledger(request):
         closing_total = rolled_up_closing(selected_account)
         closing_total_debit, closing_total_credit = split_to_tb_columns(selected_account, closing_total)
 
-    # This one is still movement net (useful sometimes)
     tx_total_balance = tx_total_debit - tx_total_credit
 
+    # Export Excel (REAL XLSX) - detail
     if export == "excel":
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = 'attachment; filename="general_ledger_detail.csv"'
-        writer = csv.writer(response)
-        writer.writerow([
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "General Ledger Detail"
+
+        ws.append(["General Ledger (Detail)"])
+        ws.append(["Company", str(getattr(company, "name", "YoAccountant"))])
+        ws.append(["Generated On", timezone.now().strftime("%Y-%m-%d %H:%M")])
+        ws.append(["Account Filter", account_label or "All accounts"])
+        ws.append(["Date From", date_from.strftime("%Y-%m-%d") if date_from else ""])
+        ws.append(["Date To", date_to.strftime("%Y-%m-%d") if date_to else ""])
+        ws.append([])
+        ws.append([
             "Level", "Account Name", "Account Number", "Account Type", "Account Sub-Class",
             "Date", "Description", "Journal Ref", "Debit", "Credit", "Balance"
         ])
 
+        bold = Font(bold=True)
+        for cell in ws[8]:
+            cell.font = bold
+            cell.alignment = Alignment(horizontal="center")
+
         for r in detail_rows:
             level = r.get("depth_display", 0)
             if r.get("kind") == "account":
-                writer.writerow([
+                ws.append([
                     level,
                     r["account_name"],
                     r["account_number"],
@@ -1098,20 +1283,29 @@ def general_ledger(request):
                     float(r.get("closing_balance") or Decimal("0.00")),
                 ])
             else:
-                writer.writerow([
+                ws.append([
                     level,
                     r["account_name"],
                     r["account_number"],
                     r["account_type"],
                     r["detail_type"],
-                    r["date"].strftime("%Y-%m-%d"),
+                    r["date"].strftime("%Y-%m-%d") if r.get("date") else "",
                     r["description"],
                     r["reference"],
                     float(r["debit"]),
                     float(r["credit"]),
                     float(r["balance"]),
                 ])
-        return response
+
+        # totals row (matches your template totals)
+        ws.append([])
+        ws.append(["TOTAL", "", "", "", "", "", "", "", float(tx_total_debit), float(tx_total_credit), float(tx_total_balance)])
+        ws.cell(row=ws.max_row, column=1).font = bold
+        for c in range(9, 12):
+            ws.cell(row=ws.max_row, column=c).font = bold
+
+        _excel_autowidth(ws)
+        return _make_xlsx_response(wb, "general_ledger_detail.xlsx")
 
     return render(request, "general_ledger.html", {
         "mode": "detail",
@@ -1141,17 +1335,21 @@ def general_ledger(request):
 
 
 # general ledger print view
-
+@login_required
+@company_required
+@module_required("accounts")
 def general_ledger_print(request):
     """
     Clean print-friendly General Ledger view.
     No pagination, no export, no UI – just the report.
+    TENANT SAFE: only prints ledger data for the current company.
     """
+    company = request.company
 
     account_id = request.GET.get("account_id")
-    query      = request.GET.get("search", "")
-    date_from  = request.GET.get("date_from")
-    date_to    = request.GET.get("date_to")
+    query = request.GET.get("search", "")
+    date_from = request.GET.get("date_from")
+    date_to = request.GET.get("date_to")
 
     include_children = request.GET.get("include_children")
     include_children = True if str(include_children).lower() in ("1", "true", "yes", "on") else False
@@ -1169,9 +1367,20 @@ def general_ledger_print(request):
 
     # build account subtree when needed
     if account_id:
-        selected_account = Account.objects.filter(pk=account_id).select_related("parent").first()
+        selected_account = (
+            Account.objects.for_company(company)
+            .select_related("parent")
+            .filter(pk=account_id)
+            .first()
+        )
+
         if selected_account:
-            all_active_accounts = list(Account.objects.filter(is_active=True).select_related("parent"))
+            all_active_accounts = list(
+                Account.objects.for_company(company)
+                .filter(is_active=True)
+                .select_related("parent")
+            )
+
             children_by_parent = {}
             for a in all_active_accounts:
                 if a.parent_id:
@@ -1197,7 +1406,12 @@ def general_ledger_print(request):
             else:
                 account_ids = [selected_account.id]
 
-    lines_qs = JournalLine.objects.select_related("entry", "account").order_by("entry__date", "id")
+    lines_qs = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(entry__company=company)
+        .order_by("entry__date", "id")
+    )
 
     if account_ids:
         lines_qs = lines_qs.filter(account_id__in=account_ids)
@@ -1267,17 +1481,27 @@ def general_ledger_print(request):
 
 
 # journel entry lists
-# @login_required
+@login_required
+@company_required
+@module_required("accounts")
 def journal_entries(request):
+    company = request.company
+
     entries = (
         JournalEntry.objects
+        .filter(company=company)
         .prefetch_related("lines__account")
         .order_by("-date", "-id")
     )
 
-    totals = JournalLine.objects.filter(entry__in=entries).aggregate(
-        grand_debit=Sum("debit"),
-        grand_credit=Sum("credit"),
+    # totals must match same tenant scope
+    totals = (
+        JournalLine.objects
+        .filter(entry__company=company, entry__in=entries)
+        .aggregate(
+            grand_debit=Sum("debit"),
+            grand_credit=Sum("credit"),
+        )
     )
 
     # ADD EDIT URLs JUST LIKE GL
@@ -1291,39 +1515,56 @@ def journal_entries(request):
     }
 
     return render(request, "journal_entries.html", context)
+
+
 # journal entry detail view
-# @login_required
+@login_required
+@company_required
+@module_required("accounts")
 def journal_entry_detail(request, pk):
+    company = request.company
+
     entry = (
         JournalEntry.objects
+        .filter(company=company, pk=pk)
         .prefetch_related("lines__account")
-        .filter(pk=pk)
         .first()
     )
+
     if not entry:
         raise Http404("Journal entry not found")
 
-    totals = JournalLine.objects.filter(entry=entry).aggregate(
-        grand_debit=Sum("debit"),
-        grand_credit=Sum("credit"),
+    totals = (
+        JournalLine.objects
+        .filter(entry=entry, entry__company=company)
+        .aggregate(
+            grand_debit=Sum("debit"),
+            grand_credit=Sum("credit"),
+        )
     )
-     
+
     context = {
         "entries": [entry],  # reuse the same table layout
         "grand_debit": totals.get("grand_debit") or Decimal("0"),
         "grand_credit": totals.get("grand_credit") or Decimal("0"),
     }
     return render(request, "journal_entries.html", context)
-
 # working on the reports
+@login_required
+@company_required
+@module_required("accounts")
 def reports(request):
     return render(request, "Reports.html", {})
 
 
+@login_required
+@company_required
+@module_required("accounts")
 def reports_export_hub(request, fmt):
     """
     fmt: 'excel' or 'pdf'
     Shows a list of report links. User clicks the report and uses that report's export buttons.
+    TENANT SAFE: hub is restricted to accounts module access.
     """
     fmt = (fmt or "").lower()
     if fmt not in ("excel", "pdf"):
@@ -1358,21 +1599,26 @@ def reports_export_hub(request, fmt):
         "fmt": fmt,
         "report_groups": report_groups,
     })
-# working on the reports 
 
+
+# working on the reports
 def _parse_range(request):
     """
     Helper to parse ?from=YYYY-MM-DD&to=YYYY-MM-DD from query string.
     Returns (dfrom, dto) as date or None.
     """
     from_str = request.GET.get("from") or request.GET.get("date_from")
-    to_str   = request.GET.get("to") or request.GET.get("date_to")
+    to_str = request.GET.get("to") or request.GET.get("date_to")
 
     dfrom = parse_date(from_str) if from_str else None
-    dto   = parse_date(to_str) if to_str else None
+    dto = parse_date(to_str) if to_str else None
     return dfrom, dto
 
+
 # trial balance
+@login_required
+@company_required
+@module_required("accounts")
 def report_trial_balance(request):
     """
     Trial Balance (Journal-only + Parent-only display)
@@ -1385,7 +1631,10 @@ def report_trial_balance(request):
     - If an account has sub-accounts (visible children), show ONLY the parent row
       with rolled-up balance, and DO NOT show the children rows.
     - Totals sum only displayed rows.
+
+    TENANT SAFE: JournalLines + Accounts are restricted to request.company.
     """
+    company = request.company
 
     dfrom, dto = _parse_range(request)
 
@@ -1424,7 +1673,8 @@ def report_trial_balance(request):
         return -ending, Decimal("0.00")
 
     # ----- Journal sums up to dto (or all time if dto is None) -----
-    lines = JournalLine.objects.select_related("entry", "account")
+    lines = JournalLine.objects.select_related("entry", "account").filter(entry__company=company)
+
     if dto:
         lines = lines.filter(entry__date__lte=dto)
 
@@ -1450,7 +1700,11 @@ def report_trial_balance(request):
     }
 
     # ----- Build account tree -----
-    all_accounts = list(Account.objects.filter(is_active=True).select_related("parent"))
+    all_accounts = list(
+        Account.objects.for_company(company)
+        .filter(is_active=True)
+        .select_related("parent")
+    )
     acc_by_id = {a.id: a for a in all_accounts}
 
     children_by_parent = defaultdict(list)
@@ -1521,7 +1775,7 @@ def report_trial_balance(request):
         if acc.id not in visible_ids:
             return
 
-        children = [c for c in children_by_parent.get(acc.id, []) if c.id in visible_ids]
+        children = [c for c in children_by_parent.get(acc.id) if c.id in visible_ids]
         if children:
             # show ONLY parent (rolled-up), do NOT show children
             ending = rolled_up_ending(acc)
@@ -1583,7 +1837,7 @@ def report_trial_balance(request):
 
         writer = csv.writer(resp)
         writer.writerow([f"Trial Balance - { _period_label() }"])
-        writer.writerow([f"Company: YoAccountant", f"Currency: UGX"])
+        writer.writerow([f"Company: {company.name}", f"Currency: {getattr(company, 'currency', 'UGX')}"])
         writer.writerow([])
         writer.writerow(["Account", "Debit", "Credit"])
 
@@ -1604,7 +1858,7 @@ def report_trial_balance(request):
         ws.title = "Trial Balance"
 
         ws.append([f"Trial Balance - { _period_label() }"])
-        ws.append([f"Company: YoAccountant", f"Currency: UGX"])
+        ws.append([f"Company: {company.name}", f"Currency: {getattr(company, 'currency', 'UGX')}"])
         ws.append([])
         ws.append(["Account", "Debit", "Credit"])
 
@@ -1646,9 +1900,9 @@ def report_trial_balance(request):
         styles = getSampleStyleSheet()
         story = []
         story.append(Paragraph("Trial Balance", styles["Title"]))
-        story.append(Paragraph(f"Company: YoAccountant", styles["Normal"]))
+        story.append(Paragraph(f"Company: {company.name}", styles["Normal"]))
         story.append(Paragraph(f"Period: {_period_label()}", styles["Normal"]))
-        story.append(Paragraph(f"Reporting Currency: UGX", styles["Normal"]))
+        story.append(Paragraph(f"Reporting Currency: {getattr(company, 'currency', 'UGX')}", styles["Normal"]))
         story.append(Spacer(1, 12))
 
         data = [["Account", "Debit", "Credit"]]
@@ -1690,8 +1944,8 @@ def report_trial_balance(request):
     # NORMAL PAGE RENDER
     # =========================================================
     context = {
-        "company_name": "YoAccountant",
-        "reporting_currency": "UGX",
+        "company_name": company.name,
+        "reporting_currency": getattr(company, "currency", "UGX"),
         "rows": rows,
         "total_debit": total_debit,
         "total_credit": total_credit,
@@ -1700,14 +1954,16 @@ def report_trial_balance(request):
     }
     return render(request, "trial_balance.html", context)
 
-# profit and loss
-# Treat these detail types as COGS (from your COA form options)
+
 COGS_DETAIL_TYPES = {
     "cost of goods sold",
     "cost of sales",
 }
+from tenancy.permissions import company_required, module_required  # make sure this exists
+from django.contrib.auth.decorators import login_required
 
 
+# Working on the p&l
 def dec(v) -> Decimal:
     """Safe Decimal converter."""
     try:
@@ -1742,7 +1998,13 @@ INCOME_TYPES = {"Income", "Other Income"}
 EXPENSE_TYPES = {"Expense", "Other Expense", "Cost of Goods Sold"}
 COGS_DETAIL_TYPES = {"cost of goods sold", "cogs"}  # keep your real set
 
+
+@login_required
+@company_required
+@module_required("accounts")
 def report_pnl(request):
+    company = request.company
+
     # ---------- 1. Parse date filters ----------
     dfrom_raw = request.GET.get("from")
     dto_raw = request.GET.get("to")
@@ -1772,7 +2034,11 @@ def report_pnl(request):
         basis = "accrual"
 
     # ---------- 3. Base queryset from journal lines ----------
-    jl = JournalLine.objects.select_related("account", "entry")
+    jl = (
+        JournalLine.objects
+        .select_related("account", "entry")
+        .filter(entry__company=company)
+    )
 
     if date_from:
         jl = jl.filter(entry__date__gte=date_from)
@@ -1781,7 +2047,11 @@ def report_pnl(request):
 
     # ---------- 4. Cash basis filter (QB-like simplified) ----------
     if basis == "cash":
-        cash_bank_accounts = Account.objects.filter(is_active=True).filter(bankish_q())
+        cash_bank_accounts = (
+            Account.objects.for_company(company)
+            .filter(is_active=True)
+            .filter(bankish_q())
+        )
 
         cash_entry_ids = (
             jl.filter(account__in=cash_bank_accounts)
@@ -1791,7 +2061,7 @@ def report_pnl(request):
         jl = jl.filter(entry_id__in=cash_entry_ids)
 
     posted_accounts = (
-        Account.objects
+        Account.objects.for_company(company)
         .filter(journalline__in=jl)
         .distinct()
         .select_related("parent")
@@ -1824,7 +2094,11 @@ def report_pnl(request):
     # PARENT-ONLY ROLLUP LIKE TRIAL BALANCE
     # ============================================================
 
-    all_active = list(Account.objects.filter(is_active=True).select_related("parent"))
+    all_active = list(
+        Account.objects.for_company(company)
+        .filter(is_active=True)
+        .select_related("parent")
+    )
     children_by_parent = defaultdict(list)
 
     for a in all_active:
@@ -1923,9 +2197,9 @@ def report_pnl(request):
             writer = csv.writer(response)
 
             writer.writerow(["Statement of Profit or Loss"])
-            writer.writerow(["Company", "YoAccountant"])
+            writer.writerow(["Company", company.name])
             writer.writerow(["Period", period_text])
-            writer.writerow(["Reporting Currency", "UGX"])
+            writer.writerow(["Reporting Currency", getattr(company, "currency", "UGX")])
             writer.writerow([])
             writer.writerow(["Section", "Account", "Amount"])
 
@@ -1961,9 +2235,9 @@ def report_pnl(request):
             ws.title = "Profit & Loss"
 
             ws.append(["Statement of Profit or Loss"])
-            ws.append(["Company", "YoAccountant"])
+            ws.append(["Company", company.name])
             ws.append(["Period", period_text])
-            ws.append(["Reporting Currency", "UGX"])
+            ws.append(["Reporting Currency", getattr(company, "currency", "UGX")])
             ws.append([])
             ws.append(["Section", "Account", "Amount"])
 
@@ -2048,9 +2322,9 @@ def report_pnl(request):
 
             story = []
             story.append(Paragraph("Statement of Profit or Loss", title_style))
-            story.append(Paragraph("YoAccountant", meta_style))
+            story.append(Paragraph(company.name, meta_style))
             story.append(Paragraph(period_text, meta_style))
-            story.append(Paragraph("Reporting Currency: UGX", meta_style))
+            story.append(Paragraph(f"Reporting Currency: {getattr(company, 'currency', 'UGX')}", meta_style))
             story.append(Spacer(1, 10))
 
             def _fmt(x: Decimal) -> str:
@@ -2058,7 +2332,7 @@ def report_pnl(request):
 
             def add_section(title, rows, total_label, total_value, extra_totals=None):
                 """
-             NO COLUMN HEADERS (Account/Amount) — professional statement layout
+                NO COLUMN HEADERS (Account/Amount) — professional statement layout
                 rows: list of dicts with keys: account, amount
                 extra_totals: list of tuples (label, value) shown after total (bold)
                 """
@@ -2149,8 +2423,8 @@ def report_pnl(request):
 
     # ---------- 10. Normal HTML render ----------
     context = {
-        "company_name": "YoAccountant",
-        "reporting_currency": "UGX",
+        "company_name": company.name,
+        "reporting_currency": getattr(company, "currency", "UGX"),
         "basis": basis,
 
         "buckets": buckets,
@@ -2166,8 +2440,10 @@ def report_pnl(request):
     }
 
     return render(request, "pnl.html", context)
-
 # balance sheet
+@login_required
+@company_required
+@module_required("accounts")
 def report_balance_sheet(request):
     """
     Balance sheet 'as of' a single date, grouped into
@@ -2183,6 +2459,7 @@ def report_balance_sheet(request):
     - does NOT create Retained Earnings in DB
     - keeps accounting correct and balances the sheet even without closing entries
     """
+    company = request.company
 
     # 1) Read filters
     to_str = request.GET.get("to")
@@ -2205,7 +2482,11 @@ def report_balance_sheet(request):
         )
 
     # 2) All lines up to that date
-    base_lines = JournalLine.objects.select_related("entry", "account").filter(entry__date__lte=asof)
+    base_lines = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(entry__company=company, entry__date__lte=asof)
+    )
 
     # 2b) CASH method: only keep lines that hit bank/cash accounts
     if method == "cash":
@@ -2215,7 +2496,11 @@ def report_balance_sheet(request):
     # Roll up subaccounts into their parent accounts
     # Show ONLY non-subaccount accounts (like your TB behavior)
     # =========================================================
-    all_accs = list(Account.objects.filter(is_active=True).select_related("parent"))
+    all_accs = list(
+        Account.objects.for_company(company)
+        .filter(is_active=True)
+        .select_related("parent")
+    )
     acc_by_id = {a.id: a for a in all_accs}
 
     children_by_parent = defaultdict(list)
@@ -2273,7 +2558,11 @@ def report_balance_sheet(request):
         Returns NET PROFIT (positive = profit, negative = loss)
         computed from Income and Expense accounts using your movement logic.
         """
-        qs = JournalLine.objects.select_related("entry", "account").filter(entry__date__lte=dto)
+        qs = (
+            JournalLine.objects
+            .select_related("entry", "account")
+            .filter(entry__company=company, entry__date__lte=dto)
+        )
 
         if dfrom:
             qs = qs.filter(entry__date__gte=dfrom)
@@ -2299,7 +2588,7 @@ def report_balance_sheet(request):
         total_exp = Decimal("0.00")
 
         for acc_id, bal in running_by_acc.items():
-            acc = acc_by_id.get(acc_id) or Account.objects.filter(pk=acc_id).first()
+            acc = acc_by_id.get(acc_id) or Account.objects.for_company(company).filter(pk=acc_id).first()
             if not acc:
                 continue
 
@@ -2423,8 +2712,8 @@ def report_balance_sheet(request):
     # EXPORTS: CSV / EXCEL / PDF
     # =========================================================
     export = (request.GET.get("export") or "").strip().lower()
-    reporting_currency = "UGX"
-    company_name = "YoAccountant"
+    reporting_currency = getattr(company, "currency", "UGX")
+    company_name = company.name
     filename_base = f"balance_sheet_{asof.strftime('%Y%m%d')}_{method}"
 
     def money(x: Decimal) -> str:
@@ -2624,7 +2913,7 @@ def report_balance_sheet(request):
 # cash flow
 
 # =========================================================
-# DETAIL TYPES 
+# DETAIL TYPES
 # =========================================================
 DEPOSIT_DETAIL_TYPES = [
     "Cash and Cash equivalents",
@@ -2664,13 +2953,16 @@ def _apply_movement(acc, running: Decimal, debit: Decimal, credit: Decimal) -> D
     return running + (credit - debit)
 
 
-def _collect_subtree_ids(root_ids):
+def _collect_subtree_ids(root_ids, company=None):
     """
     Expand a set of account IDs to include all descendant subaccounts.
+    TENANT SAFE if company is provided.
     """
     from accounts.models import Account
 
-    all_active = list(Account.objects.filter(is_active=True).only("id", "parent_id"))
+    qs = Account.objects.for_company(company).filter(is_active=True).only("id", "parent_id")
+
+    all_active = list(qs)
     children_by_parent = defaultdict(list)
     for a in all_active:
         if a.parent_id:
@@ -2689,16 +2981,21 @@ def _collect_subtree_ids(root_ids):
     return list(out)
 
 
-def _balance_for_account_ids(account_ids, as_of_date, strict_lt=False) -> Decimal:
+def _balance_for_account_ids(account_ids, as_of_date, strict_lt=False, company=None) -> Decimal:
     """
     Journal-only balance for a group of accounts, using normal-side rules.
+    TENANT SAFE if company is provided.
     """
     from accounts.models import JournalLine
 
     if not account_ids:
         return Decimal("0.00")
 
-    qs = JournalLine.objects.select_related("entry", "account").filter(account_id__in=account_ids)
+    qs = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(account_id__in=account_ids, entry__company=company)
+    )
 
     if strict_lt:
         qs = qs.filter(entry__date__lt=as_of_date)
@@ -2720,13 +3017,21 @@ def _balance_for_account_ids(account_ids, as_of_date, strict_lt=False) -> Decima
     return total.quantize(Decimal("0.01"))
 
 
-def _period_net_profit(dfrom, dto) -> Decimal:
+def _period_net_profit(dfrom, dto, company=None) -> Decimal:
     """
     Net profit from journal:
     Income = credits - debits
     Expenses = debits - credits
+    TENANT SAFE if company is provided.
     """
-    qs = JournalLine.objects.select_related("entry", "account").all()
+    from accounts.models import JournalLine
+
+    qs = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(entry__company=company)
+    )
+
     if dfrom:
         qs = qs.filter(entry__date__gte=dfrom)
     qs = qs.filter(entry__date__lte=dto)
@@ -2748,21 +3053,28 @@ def _period_net_profit(dfrom, dto) -> Decimal:
     return (income_total - expense_total).quantize(Decimal("0.01"))
 
 
-def _period_depreciation(dfrom, dto) -> Decimal:
+def _period_depreciation(dfrom, dto, company=None) -> Decimal:
     """
     Depreciation add-back:
     match depreciation expense accounts by name/detail_type.
+    TENANT SAFE if company is provided.
     """
     from accounts.models import JournalLine
 
-    qs = JournalLine.objects.select_related("entry", "account").filter(
-        account__account_type__in=[
-            "OPERATING_EXPENSE", "INVESTING_EXPENSE",
-            "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE",
-        ]
-    ).filter(
-        Q(account__detail_type__icontains="depreciation") |
-        Q(account__account_name__icontains="depreciation")
+    qs = (
+        JournalLine.objects
+        .select_related("entry", "account")
+        .filter(
+            entry__company=company,
+            account__account_type__in=[
+                "OPERATING_EXPENSE", "INVESTING_EXPENSE",
+                "FINANCING_EXPENSE", "INCOME_TAX_EXPENSE",
+            ]
+        )
+        .filter(
+            Q(account__detail_type__icontains="depreciation") |
+            Q(account__account_name__icontains="depreciation")
+        )
     )
 
     if dfrom:
@@ -2782,8 +3094,12 @@ def _first_id_or_none(qs):
 # -----------------------------
 # MAIN CASHFLOW VIEW
 # -----------------------------
-
+@login_required
+@company_required
+@module_required("accounts")
 def report_cashflow(request):
+    company = request.company
+
     from_str = request.GET.get("from")
     to_str = request.GET.get("to")
     export = (request.GET.get("export") or "").strip().lower()
@@ -2801,15 +3117,19 @@ def report_cashflow(request):
     # CASH & CASH EQUIVALENTS (your exact detail types)
     # include subaccounts where parent is cash/bank too
     # =========================================================
-    cash_roots = Account.objects.filter(
-        is_active=True,
-        account_type="CURRENT_ASSET",
-    ).filter(
-        Q(detail_type__in=DEPOSIT_DETAIL_TYPES) |
-        Q(parent__detail_type__in=DEPOSIT_DETAIL_TYPES)
+    cash_roots = (
+        Account.objects.for_company(company)
+        .filter(
+            is_active=True,
+            account_type="CURRENT_ASSET",
+        )
+        .filter(
+            Q(detail_type__in=DEPOSIT_DETAIL_TYPES) |
+            Q(parent__detail_type__in=DEPOSIT_DETAIL_TYPES)
+        )
     )
 
-    cash_ids = _collect_subtree_ids(list(cash_roots.values_list("id", flat=True)))
+    cash_ids = _collect_subtree_ids(list(cash_roots.values_list("id", flat=True)), company=company)
     cash_account_id = _first_id_or_none(cash_roots)
 
     # =========================================================
@@ -2818,55 +3138,67 @@ def report_cashflow(request):
 
     # "Change in Accounts Receivable":
     # CURRENT ASSETS excluding cash/bank
-    ar_roots = Account.objects.filter(
-        is_active=True,
-        account_type="CURRENT_ASSET",
-    ).exclude(id__in=cash_ids)
+    ar_roots = (
+        Account.objects.for_company(company)
+        .filter(
+            is_active=True,
+            account_type="CURRENT_ASSET",
+        )
+        .exclude(id__in=cash_ids)
+    )
 
     # "Change in Inventory"
-    inv_roots = Account.objects.filter(
-        is_active=True,
-        account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
-    ).filter(
-        Q(detail_type__icontains="inventory") |
-        Q(account_name__icontains="inventory")
+    inv_roots = (
+        Account.objects.for_company(company)
+        .filter(
+            is_active=True,
+            account_type__in=["CURRENT_ASSET", "NON_CURRENT_ASSET"]
+        )
+        .filter(
+            Q(detail_type__icontains="inventory") |
+            Q(account_name__icontains="inventory")
+        )
     )
 
     # "Change in Accounts Payable":
     # CURRENT LIABILITIES excluding overdrafts
-    ap_roots = Account.objects.filter(
-        is_active=True,
-        account_type="CURRENT_LIABILITY",
-    ).exclude(
-        Q(detail_type__icontains="overdraft") |
-        Q(account_name__icontains="overdraft")
+    ap_roots = (
+        Account.objects.for_company(company)
+        .filter(
+            is_active=True,
+            account_type="CURRENT_LIABILITY",
+        )
+        .exclude(
+            Q(detail_type__icontains="overdraft") |
+            Q(account_name__icontains="overdraft")
+        )
     )
 
     # "Change in Fixed/Other Assets":
-    fa_roots = Account.objects.filter(
+    fa_roots = Account.objects.for_company(company).filter(
         is_active=True,
         account_type="NON_CURRENT_ASSET"
     )
 
     # "Change in Loans":
-    loan_roots = Account.objects.filter(
+    loan_roots = Account.objects.for_company(company).filter(
         is_active=True,
         account_type="NON_CURRENT_LIABILITY"
     )
 
     # "Change in Equity":
-    equity_roots = Account.objects.filter(
+    equity_roots = Account.objects.for_company(company).filter(
         is_active=True,
         account_type="OWNER_EQUITY"
     )
 
     # Expand subtrees (include children)
-    ar_ids = _collect_subtree_ids(list(ar_roots.values_list("id", flat=True)))
-    inv_ids = _collect_subtree_ids(list(inv_roots.values_list("id", flat=True)))
-    ap_ids = _collect_subtree_ids(list(ap_roots.values_list("id", flat=True)))
-    fa_ids = _collect_subtree_ids(list(fa_roots.values_list("id", flat=True)))
-    loan_ids = _collect_subtree_ids(list(loan_roots.values_list("id", flat=True)))
-    eq_ids = _collect_subtree_ids(list(equity_roots.values_list("id", flat=True)))
+    ar_ids = _collect_subtree_ids(list(ar_roots.values_list("id", flat=True)), company=company)
+    inv_ids = _collect_subtree_ids(list(inv_roots.values_list("id", flat=True)), company=company)
+    ap_ids = _collect_subtree_ids(list(ap_roots.values_list("id", flat=True)), company=company)
+    fa_ids = _collect_subtree_ids(list(fa_roots.values_list("id", flat=True)), company=company)
+    loan_ids = _collect_subtree_ids(list(loan_roots.values_list("id", flat=True)), company=company)
+    eq_ids = _collect_subtree_ids(list(equity_roots.values_list("id", flat=True)), company=company)
 
     # IDs for GL drill links (your HTML expects these)
     ar_account_id = _first_id_or_none(ar_roots)
@@ -2879,21 +3211,21 @@ def report_cashflow(request):
     # =========================================================
     # PROFIT + DEPRECIATION
     # =========================================================
-    net_profit = _period_net_profit(dfrom, dto)
-    depreciation = _period_depreciation(dfrom, dto)
+    net_profit = _period_net_profit(dfrom, dto, company=company)
+    depreciation = _period_depreciation(dfrom, dto, company=company)
 
     # =========================================================
     # OPENING BALANCES (strictly before start_date)
     # =========================================================
     if start_date:
-        cash_start = _balance_for_account_ids(cash_ids, start_date, strict_lt=True)
+        cash_start = _balance_for_account_ids(cash_ids, start_date, strict_lt=True, company=company)
 
-        ar_start = _balance_for_account_ids(ar_ids, start_date, strict_lt=True)
-        inv_start = _balance_for_account_ids(inv_ids, start_date, strict_lt=True)
-        ap_start = _balance_for_account_ids(ap_ids, start_date, strict_lt=True)
-        fa_start = _balance_for_account_ids(fa_ids, start_date, strict_lt=True)
-        loans_start = _balance_for_account_ids(loan_ids, start_date, strict_lt=True)
-        equity_start = _balance_for_account_ids(eq_ids, start_date, strict_lt=True)
+        ar_start = _balance_for_account_ids(ar_ids, start_date, strict_lt=True, company=company)
+        inv_start = _balance_for_account_ids(inv_ids, start_date, strict_lt=True, company=company)
+        ap_start = _balance_for_account_ids(ap_ids, start_date, strict_lt=True, company=company)
+        fa_start = _balance_for_account_ids(fa_ids, start_date, strict_lt=True, company=company)
+        loans_start = _balance_for_account_ids(loan_ids, start_date, strict_lt=True, company=company)
+        equity_start = _balance_for_account_ids(eq_ids, start_date, strict_lt=True, company=company)
     else:
         cash_start = Decimal("0.00")
         ar_start = inv_start = ap_start = fa_start = loans_start = equity_start = Decimal("0.00")
@@ -2901,14 +3233,14 @@ def report_cashflow(request):
     # =========================================================
     # CLOSING BALANCES (<= dto)
     # =========================================================
-    cash_end = _balance_for_account_ids(cash_ids, dto)
+    cash_end = _balance_for_account_ids(cash_ids, dto, company=company)
 
-    ar_end = _balance_for_account_ids(ar_ids, dto)
-    inv_end = _balance_for_account_ids(inv_ids, dto)
-    ap_end = _balance_for_account_ids(ap_ids, dto)
-    fa_end = _balance_for_account_ids(fa_ids, dto)
-    loans_end = _balance_for_account_ids(loan_ids, dto)
-    equity_end = _balance_for_account_ids(eq_ids, dto)
+    ar_end = _balance_for_account_ids(ar_ids, dto, company=company)
+    inv_end = _balance_for_account_ids(inv_ids, dto, company=company)
+    ap_end = _balance_for_account_ids(ap_ids, dto, company=company)
+    fa_end = _balance_for_account_ids(fa_ids, dto, company=company)
+    loans_end = _balance_for_account_ids(loan_ids, dto, company=company)
+    equity_end = _balance_for_account_ids(eq_ids, dto, company=company)
 
     # =========================================================
     # RAW DELTAS (end - start)
@@ -2950,8 +3282,8 @@ def report_cashflow(request):
     net_change = (cash_from_ops + cash_from_investing + cash_from_financing).quantize(Decimal("0.01"))
     recon_ok = (cash_start + net_change).quantize(Decimal("0.01")) == cash_end.quantize(Decimal("0.01"))
 
-    company_name = "YoAccountant"
-    reporting_currency = "UGX"
+    company_name = company.name
+    reporting_currency = getattr(company, "currency", "UGX")
 
     # =========================================================
     # EXPORT ROWS + BOLD ROWS LIST
@@ -3177,7 +3509,7 @@ def report_cashflow(request):
     return render(request, "cashflow.html", context)
 
 # -----------------------------
-# Helpers 
+# Helpers
 # -----------------------------
 
 def _dec(x) -> Decimal:
@@ -3213,6 +3545,8 @@ def _bucket(due_date, today):
     if 61 <= days <= 90:
         return "b61_90"
     return "b90_plus"
+
+
 def _bucket_label(key: str) -> str:
     return {
         "current": "Current",
@@ -3222,7 +3556,13 @@ def _bucket_label(key: str) -> str:
         "b90_plus": "90+",
     }.get(key, key)
 
+
+@login_required
+@company_required
+@module_required("accounts")
 def aging_report(request):
+    company = request.company
+
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
@@ -3230,7 +3570,7 @@ def aging_report(request):
     bucket_filter = (request.GET.get("bucket") or "").strip()
 
     invoices = (
-        Newinvoice.objects
+        Newinvoice.objects.for_company(company)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -3312,7 +3652,7 @@ def aging_report(request):
             return export_excel_simple(_export_filename("ar_aging_summary", "xlsx"), headers, data_rows, sheet_name="AR Aging Summary")
         return export_pdf_table(_export_filename("ar_aging_summary", "pdf"), "Accounts Receivable Aging Summary", subtitle, headers, data_rows)
 
-    customers = Newcustomer.objects.order_by("customer_name")
+    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
 
     return render(request, "ar_aging_report.html", {
         "today": today,
@@ -3331,7 +3671,13 @@ def aging_report(request):
         ],
     })
 
+
+@login_required
+@company_required
+@module_required("accounts")
 def aging_report_detail(request):
+    company = request.company
+
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
@@ -3339,7 +3685,7 @@ def aging_report_detail(request):
     bucket_filter = (request.GET.get("bucket") or "").strip()
 
     qs = (
-        Newinvoice.objects
+        Newinvoice.objects.for_company(company)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -3416,7 +3762,7 @@ def aging_report_detail(request):
             return export_excel_simple(_export_filename("ar_aging_detail", "xlsx"), headers, data_rows, sheet_name="AR Aging Detail")
         return export_pdf_table(_export_filename("ar_aging_detail", "pdf"), "Accounts Receivable Aging Detail", subtitle, headers, data_rows)
 
-    customers = Newcustomer.objects.order_by("customer_name")
+    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
 
     return render(request, "ar_aging_detail_report.html", {
         "today": today,
@@ -3440,29 +3786,57 @@ def _customer_model():
     return Newinvoice._meta.get_field("customer").remote_field.model
 
 
-def _customers_qs():
+def _customers_qs(request=None):
+    """
+    TENANT SAFE if request provided and Customer has company / for_company.
+    """
     Customer = _customer_model()
+    qs = None
+
+    if request is not None:
+        company = getattr(request, "company", None)
+        if company is not None:
+            if hasattr(Customer.objects, "for_company"):
+                qs = Customer.objects.for_company(company)
+            else:
+                qs = Customer.objects.all()
+
+    if qs is None:
+        qs = Customer.objects.all()
+
     # assumes customer_name exists (in your models it does)
     try:
-        return Customer.objects.order_by("customer_name")
+        return qs.order_by("customer_name")
     except Exception:
-        return Customer.objects.all()
+        return qs
+
 
 def _customer_model():
     # gets the customer model attached to Newinvoice.customer FK (safe even if customer lives in another app)
     return Newinvoice._meta.get_field("customer").remote_field.model
 
+
+@login_required
+@company_required
+@module_required("accounts")
 def aging_report_customer(request, customer_id: int):
+    company = request.company
+
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
     Customer = _customer_model()
-    customer = get_object_or_404(Customer, pk=customer_id)
+    if hasattr(Customer.objects, "for_company"):
+        cust_qs = Customer.objects.for_company(company)
+    else:
+        cust_qs = Customer.objects.all()
+
+    customer = get_object_or_404(cust_qs, pk=customer_id)
 
     bucket_filter = (request.GET.get("bucket") or "").strip()
 
     qs = (
-        Newinvoice.objects
+        Newinvoice.objects.for_company(company)
         .select_related("customer")
         .filter(customer_id=customer_id)
         .annotate(
@@ -3576,10 +3950,16 @@ def aging_report_customer(request, customer_id: int):
         ],
     })
 
+
 # ---------------------------------------------------------
 # 1) OPEN INVOICES REPORT
 # ---------------------------------------------------------
+@login_required
+@company_required
+@module_required("accounts")
 def open_invoices_report(request):
+    company = request.company
+
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
@@ -3587,7 +3967,7 @@ def open_invoices_report(request):
     bucket_filter = (request.GET.get("bucket") or "").strip()
 
     qs = (
-        Newinvoice.objects
+        Newinvoice.objects.for_company(company)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -3668,7 +4048,7 @@ def open_invoices_report(request):
         "today": today,
         "rows": rows,
         "totals": totals,
-        "customers": _customers_qs(),
+        "customers": _customers_qs(request),
         "selected_customer": int(customer_id) if customer_id.isdigit() else "",
         "selected_bucket": bucket_filter,
         "bucket_choices": [
@@ -3685,12 +4065,17 @@ def open_invoices_report(request):
 # ---------------------------------------------------------
 # 2) CUSTOMER BALANCES REPORT
 # ---------------------------------------------------------
+@login_required
+@company_required
+@module_required("accounts")
 def customer_balances_report(request):
+    company = request.company
+
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
     qs = (
-        Newinvoice.objects
+        Newinvoice.objects.for_company(company)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -3771,7 +4156,12 @@ def customer_balances_report(request):
 # ---------------------------------------------------------
 # 3) INVOICE LIST REPORT (all invoices)
 # ---------------------------------------------------------
+@login_required
+@company_required
+@module_required("accounts")
 def invoice_list_report(request):
+    company = request.company
+
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
@@ -3779,7 +4169,7 @@ def invoice_list_report(request):
     status = (request.GET.get("status") or "").strip()  # all|paid|unpaid|overdue
 
     qs = (
-        Newinvoice.objects
+        Newinvoice.objects.for_company(company)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -3858,7 +4248,7 @@ def invoice_list_report(request):
     return render(request, "invoice_list_report.html", {
         "today": today,
         "rows": rows,
-        "customers": _customers_qs(),
+        "customers": _customers_qs(request),
         "selected_customer": int(customer_id) if customer_id.isdigit() else "",
         "selected_status": status,
         "status_choices": [
@@ -3873,7 +4263,12 @@ def invoice_list_report(request):
 # ---------------------------------------------------------
 # 4) COLLECTIONS REPORT (payments + applied + unapplied)
 # ---------------------------------------------------------
+@login_required
+@company_required
+@module_required("accounts")
 def collections_report(request):
+    company = request.company
+
     today = timezone.localdate()
 
     date_from = (request.GET.get("from") or "").strip()
@@ -3885,7 +4280,7 @@ def collections_report(request):
         date_from = str(first)
         date_to = str(today)
 
-    qs = Payment.objects.select_related("customer").all().order_by("-payment_date", "-id")
+    qs = Payment.objects.for_company(company).select_related("customer").all().order_by("-payment_date", "-id")
 
     if date_from:
         qs = qs.filter(payment_date__gte=date_from)
@@ -3952,6 +4347,8 @@ def collections_report(request):
         "date_from": date_from,
         "date_to": date_to,
     })
+
+
 def _export_wants(request) -> str:
     """
     Returns 'excel', 'pdf', or '' (no export).

@@ -1,84 +1,121 @@
 {% load static %}
 {% include "includes/header.html" %}
-  <div class="container">
-    <div class="logo">
-      <img src="{% static 'sowaf/images/yo-logo.png' %}" alt="YoAccountant">
+
+<div class="container">
+  <div class="logo">
+    <img src="{% static 'sowaf/images/yo-logo.png' %}" alt="YoAccountant">
+  </div>
+
+  <h4 style="color:green; text-align:center;">Signup here! </h4>
+
+  <!-- Sign Up Form -->
+  <form id="signup-form" action="{% url 'sowaAuth:register' %}" method="POST">
+    {% csrf_token %}
+
+    <div class="input-group">
+      <i class='bx bx-user'></i>
+      <input type="text" placeholder="Name" name="username" required>
     </div>
-    <h4 style="color:green; text-align:center;">Signup here! </h4>
-    <!-- Sign Up Form -->
-    <form id="signup-form" action="{% url 'sowaAuth:register' %}" method="POST">
-      {% csrf_token %}
-      <div class="input-group">
-        <i class='bx bx-user'></i>
-        <input type="text" placeholder="Name" name="username" required>
-      </div>
-      <div class="input-group">
-        <i class='bx bx-envelope'></i>
-        <input type="email" placeholder="Email" name="email" required>
-      </div>
-      <div class="input-group">
-        <i class='bx bx-phone'></i>
-        <input type="tel" placeholder="Phone Number" name="contact" required>
-      </div>
-      <div class="input-group">
-        <i class='bx bx-lock-alt'></i>
-        <input type="password" placeholder="Password" name="password" required>
-      </div>
-      <div class="input-group">
-        <i class='bx bx-lock-alt'></i>
-        <input type="password" placeholder="Confirm Password" name="confirm_password" required>
-      </div>
-      <div class="checkbox">
-        <input type="checkbox"> I agree to the terms of service and&nbsp; <a href="./privacy-policy.html" target="_blank" style="color: #39B54B; font-weight: bold;"> Privacy Policy</a>
-      </div>
-      <button type="submit" class="btn">SIGN UP</button>
-    </form>
-<div class="checkbox col-2" style="margin-left:5%;">
-         <h4 style="margin-left:12%;"> Already have an account? <a href="{% url 'sowaAuth:login' %}" style="color:green; text-align:center; font-size:14px; text-decoration:none;">   Login here!</a></h4>
-      </div>
-    <div class="divider">Or Sign in/up with</div>
 
-    <div class="social-buttons">
-      <div class="social-btn"><img src="https://img.icons8.com/color/16/000000/google-logo.png" /> Google</div>
-      <div class="social-btn"><img src="https://img.icons8.com/fluency/16/microsoft-outlook-2019.png" /> Outlook</div>
-      <div class="social-btn"><img src="https://img.icons8.com/color/16/yahoo.png" /> Yahoo</div>
+    <div class="input-group">
+      <i class='bx bx-envelope'></i>
+      <input type="email" placeholder="Email" name="email" required>
     </div>
-    {% comment %} error popup message {% endcomment %}
-{% if messages %}
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-<script>
-  {% for message in messages %}
-    Swal.fire({
-      icon: "{% if 'error' in message.tags %}error{% else %}success{% endif %}",
-      title: "{{ message.tags|capfirst }}",
-      text: "{{ message }}",
-      confirmButtonText: "OK",
+    <div class="input-group">
+      <i class='bx bx-phone'></i>
+      <input type="tel" placeholder="Phone Number" name="contact" required>
+    </div>
 
-      /* --- Custom green theme --- */
-      background: "#f0fff5",        // soft green background
-      color: "#111",                // text color
-      iconColor: "{% if 'error' in message.tags %}#e63946{% else %}#39B54B{% endif %}",
+    <!-- ✅ NEW: Staff Signup Code -->
+    <div class="input-group">
+      <i class='bx bx-key'></i>
+      <input type="password" placeholder="Staff Signup Code" name="staff_code" required>
+    </div>
 
-      customClass: {
-          confirmButton: "swal-confirm-btn"
+    <div class="input-group">
+      <i class='bx bx-lock-alt'></i>
+      <input type="password" placeholder="Password" name="password" required>
+    </div>
+
+    <div class="input-group">
+      <i class='bx bx-lock-alt'></i>
+      <input type="password" placeholder="Confirm Password" name="confirm_password" required>
+    </div>
+
+    <div class="checkbox">
+      <!-- ✅ make it a real submitted + required checkbox -->
+      <input type="checkbox" name="agree_terms" required>
+      I agree to the terms of service and&nbsp;
+      <a href="./privacy-policy.html" target="_blank" style="color: #39B54B; font-weight: bold;">
+        Privacy Policy
+      </a>
+    </div>
+
+    <button type="submit" class="btn">SIGN UP</button>
+  </form>
+
+  <div class="checkbox col-2" style="margin-left:5%;">
+    <h4 style="margin-left:12%;">
+      Already have an account?
+      <a href="{% url 'sowaAuth:login' %}" style="color:green; text-align:center; font-size:14px; text-decoration:none;">
+        Login here!
+      </a>
+    </h4>
+  </div>
+
+  <div class="divider">Or Sign in/up with</div>
+
+  <div class="social-buttons">
+    <div class="social-btn">
+      <img src="https://img.icons8.com/color/16/000000/google-logo.png" /> Google
+    </div>
+    <div class="social-btn">
+      <img src="https://img.icons8.com/fluency/16/microsoft-outlook-2019.png" /> Outlook
+    </div>
+    <div class="social-btn">
+      <img src="https://img.icons8.com/color/16/yahoo.png" /> Yahoo
+    </div>
+  </div>
+
+  {# error popup message #}
+  {% if messages %}
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <script>
+      {% for message in messages %}
+        Swal.fire({
+          icon: "{% if 'error' in message.tags %}error{% else %}success{% endif %}",
+          title: "{{ message.tags|capfirst }}",
+          text: "{{ message }}",
+          confirmButtonText: "OK",
+
+          /* --- Custom green theme --- */
+          background: "#f0fff5",
+          color: "#111",
+          iconColor: "{% if 'error' in message.tags %}#e63946{% else %}#39B54B{% endif %}",
+
+          customClass: {
+            confirmButton: "swal-confirm-btn"
+          }
+        });
+      {% endfor %}
+    </script>
+
+    <style>
+      .swal-confirm-btn {
+        background-color: #39B54B !important;
+        color: white !important;
+        border-radius: 8px !important;
+        padding: 10px 22px !important;
+        font-size: 16px !important;
       }
-    });
-  {% endfor %}
-</script>
+      .swal-confirm-btn:hover {
+        background-color: #2da73e !important;
+      }
+    </style>
+  {% endif %}
 
-<style>
-  .swal-confirm-btn {
-      background-color: #39B54B !important;
-      color: white !important;
-      border-radius: 8px !important;
-      padding: 10px 22px !important;
-      font-size: 16px !important;
-  }
-  .swal-confirm-btn:hover {
-      background-color: #2da73e !important;
-  }
-</style>
+</div>
 
-{% endif %}
 {% include "includes/footer.html" %}

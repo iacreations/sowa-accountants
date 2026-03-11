@@ -1,12 +1,11 @@
 {% load static %}
 {% load humanize %}
 <!DOCTYPE html>
-<!-- Coding by IA Creations Uganda || www.iacreations.com -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Boxicons CSS -->
+
     <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
     <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -16,15 +15,11 @@
     <title>YoAccountant</title>
     <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
     <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+
     <style>
       @media only screen and (max-width: 600px) {
-        .search_bar{
-          display: none;
-        }
-        .logo_item{
-          padding: 5px;
-          margin: 3%;
-        }
+        .search_bar{ display: none; }
+        .logo_item{ padding: 5px; margin: 3%; }
 
         #iconDropdown {
           display: block;
@@ -40,12 +35,21 @@
           color: white;
           float: left;
         }
-        #action{
-          width: 50%;
+        #action{ width: 50%; }
+
+        .workspace-wrap{
+          gap: 6px !important;
+          max-width: 48vw;
+        }
+        .company-pill{
+          max-width: 100%;
+        }
+        .company-pill-name,
+        .company-pill-sub{
+          max-width: 120px;
         }
       }
 
-      /* Settings Center overlay (QuickBooks style) */
       .settings-center-overlay{
         display:none;
         position:fixed;
@@ -100,11 +104,8 @@
         color:#111827;
         text-decoration:none;
       }
-      .settings-link:hover{
-        color:#39B54B;
-      }
+      .settings-link:hover{ color:#39B54B; }
 
-      /* ✅ NEW: Avatar (image or first letter) - added styles only */
       .nav-avatar{
         width:34px;
         height:34px;
@@ -127,33 +128,178 @@
         object-fit:cover;
         display:block;
       }
+
+      .workspace-wrap{
+        display:flex;
+        align-items:center;
+        gap:10px;
+      }
+
+      .company-pill{
+        display:flex;
+        align-items:center;
+        gap:10px;
+        padding:6px 10px;
+        border-radius:999px;
+        border:1px solid rgba(0,0,0,.08);
+        background:#ffffff;
+        user-select:none;
+        box-shadow:0 1px 2px rgba(0,0,0,.05);
+        max-width: 320px;
+      }
+      .company-pill-logo{
+        width:28px;
+        height:28px;
+        border-radius:50%;
+        overflow:hidden;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        background:#f3f4f6;
+        border:1px solid rgba(0,0,0,.08);
+        flex:0 0 auto;
+      }
+      .company-pill-logo img{
+        width:100%;
+        height:100%;
+        object-fit:cover;
+        display:block;
+      }
+      .company-pill-text{
+        display:flex;
+        flex-direction:column;
+        line-height:1.1;
+        min-width: 0;
+      }
+      .company-pill-name{
+        font-size:13px;
+        font-weight:800;
+        color:#111827;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        max-width: 220px;
+      }
+      .company-pill-sub{
+        font-size:11px;
+        color:#6b7280;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        max-width: 220px;
+      }
+
+      .back-sowa-btn{
+        border:1px solid #39B54B;
+        background:#ffffff;
+        color:#39B54B;
+        border-radius:999px;
+        padding:7px 14px;
+        font-size:12px;
+        font-weight:700;
+        text-decoration:none;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        white-space:nowrap;
+      }
+      .back-sowa-btn:hover{
+        background:#e8fbef;
+        color:#228c34;
+      }
+
+      /* ✅ Dark mode base */
+      body.dark{
+        background:#0b1220 !important;
+        color:#e5e7eb !important;
+      }
+      body.dark .navbar,
+      body.dark .sidebar,
+      body.dark .settings-center-panel{
+        background:#0f172a !important;
+        color:#e5e7eb !important;
+        border-color: rgba(255,255,255,.08) !important;
+      }
+      body.dark .company-pill{
+        background:#0f172a !important;
+        border-color: rgba(255,255,255,.10) !important;
+        box-shadow:0 1px 2px rgba(0,0,0,.35) !important;
+      }
+      body.dark .company-pill-name{ color:#e5e7eb !important; }
+      body.dark .company-pill-sub{ color:#a7b0c0 !important; }
+
+      body.dark .back-sowa-btn{
+        background:#0f172a;
+        color:#7ee08d;
+        border-color:#39B54B;
+      }
+      body.dark .back-sowa-btn:hover{
+        background:#14301a;
+      }
     </style>
   </head>
+
   <body>
-    <!-- navbar -->
     <nav class="navbar w3-row-padding">
       <div class="logo_item">
         <i class="bx bx-menu" id="sidebarOpen"></i>
-        <img src=" {% static 'sowaf/images/yo-logo.png' %} " alt="">
+        <img src="{% static 'sowaf/images/yo-logo.png' %}" alt="">
         YoAccountant
+      </div>
+
+      <!-- WORKSPACE / COMPANY DISPLAY -->
+      <div class="workspace-wrap">
+        {% if workspace_mode == "client" and current_company %}
+          <div class="company-pill" title="{{ current_company.name }}">
+            <div class="company-pill-logo">
+              {% if current_company.logo %}
+                <img src="{{ current_company.logo.url }}" alt="{{ current_company.name }}">
+              {% else %}
+                <i class='bx bx-building' style="font-size:18px; color:#39B54B;"></i>
+              {% endif %}
+            </div>
+            <div class="company-pill-text">
+              <div class="company-pill-name">{{ current_company.name }}</div>
+              <div class="company-pill-sub">{{ current_company.email|default:"No email" }}</div>
+            </div>
+          </div>
+
+          {% if request.user.is_staff or request.user.is_superuser %}
+            <a href="{% url 'tenancy:exit_company' %}" class="back-sowa-btn">
+              Back to Sowa
+            </a>
+          {% endif %}
+
+        {% elif workspace_mode == "sowa" %}
+          <div class="company-pill" title="Sowa Workspace">
+            <div class="company-pill-logo">
+              <i class='bx bx-briefcase' style="font-size:18px; color:#39B54B;"></i>
+            </div>
+            <div class="company-pill-text">
+              <div class="company-pill-name">Sowa Workspace</div>
+              <div class="company-pill-sub">Internal staff space</div>
+            </div>
+          </div>
+        {% endif %}
       </div>
 
       <div class="search_bar">
         <input type="text" placeholder="Search" />
       </div>
 
-      <!-- icons on drop down in small screens -->
+      <!-- Mobile dropdown -->
       <div class="dropdown" id="iconDropdown">
         <button class="dropdown-toggle" id="btn" onclick="toggleDropdown()">
           <i class='bx bx-menu'></i>
         </button>
         <div class="dropdown-menu" id="dropdownMenu">
           <i class="bi bi-grid"></i>
-          <i class='bx bx-sun' id="darkLight"></i>
+
+          <i class='bx bx-sun' id="darkLightBtnMobile" title="Toggle dark mode" style="cursor:pointer;"></i>
+
           <a href="javascript:void(0);" onclick="openSettingsCenter()"><i class='bx bx-cog'></i></a>
           <i class='bx bx-bell'></i>
 
-          <!-- ✅ UPDATED: avatar in dropdown -->
           {% if request.user.is_authenticated %}
             <a href="javascript:void(0);" onclick="openSettingsCenter()" style="text-decoration:none;">
               <span class="nav-avatar" title="{{ request.user.username }}">
@@ -174,20 +320,20 @@
 
       <div class="navbar_content" id="icons">
         <i class="bi bi-grid"></i>
-        <i class='bx bx-sun' id="darkLight"></i>
+
+        <i class='bx bx-sun' id="darkLightBtn" title="Toggle dark mode" style="cursor:pointer;"></i>
+
         <a href="javascript:void(0);" onclick="openSettingsCenter()"><i class='bx bx-cog'></i></a>
         <i class='bx bx-bell'></i>
 
-        <!-- ✅ UPDATED: avatar on main navbar -->
         {% if request.user.is_authenticated %}
-        
-            <span class="nav-avatar" title="{{ request.user.username }}">
-              {% if request.user.profile_image %}
-                <img src="{{ request.user.profile_image.url }}" alt="{{ request.user.username }}">
-              {% else %}
-                {{ request.user.username|slice:":1"|upper }}
-              {% endif %}
-            </span>
+          <span class="nav-avatar" title="{{ request.user.username }}">
+            {% if request.user.profile_image %}
+              <img src="{{ request.user.profile_image.url }}" alt="{{ request.user.username }}">
+            {% else %}
+              {{ request.user.username|slice:":1"|upper }}
+            {% endif %}
+          </span>
         {% else %}
           <i class='bx bx-user-circle'></i>
         {% endif %}
@@ -212,20 +358,24 @@
             </a>
           </div>
 
-          <div>
-            <div class="settings-center-col-title">Lists</div>
-          </div>
-
-          <div>
-            <div class="settings-center-col-title">Tools</div>
-          </div>
+          <div><div class="settings-center-col-title">Lists</div></div>
+          <div><div class="settings-center-col-title">Tools</div></div>
 
           <div>
             <div class="settings-center-col-title">Your company</div>
+
+            {% if workspace_mode == "client" and current_company %}
+              <div style="font-size:14px; font-weight:700;">{{ current_company.name }}</div>
+              <div style="font-size:12px; color:#6b7280;">{{ current_company.email|default:"—" }}</div>
+            {% elif workspace_mode == "sowa" %}
+              <div style="font-size:14px; font-weight:700;">Sowa Workspace</div>
+              <div style="font-size:12px; color:#6b7280;">Internal staff space</div>
+            {% else %}
+              <div style="font-size:12px; color:#6b7280;">No company selected</div>
+            {% endif %}
           </div>
         </div>
 
-        <!-- ✅ FIX: show correct logged-in user -->
         {% if request.user.is_authenticated %}
           <h4 style="margin-top:14px;">Welcome {{ request.user.username }}</h4>
         {% endif %}
@@ -237,11 +387,12 @@
         var el = document.getElementById("settingsCenterOverlay");
         if (el) el.style.display = "flex";
       }
+
       function closeSettingsCenter(){
         var el = document.getElementById("settingsCenterOverlay");
         if (el) el.style.display = "none";
       }
-      // close when clicking outside panel
+
       document.addEventListener("click", function(e){
         var overlay = document.getElementById("settingsCenterOverlay");
         if (!overlay) return;
@@ -249,6 +400,53 @@
           closeSettingsCenter();
         }
       });
+
+      function toggleDropdown(){
+        var menu = document.getElementById("dropdownMenu");
+        if (!menu) return;
+
+        if (menu.style.display === "block") {
+          menu.style.display = "none";
+        } else {
+          menu.style.display = "block";
+        }
+      }
+
+      (function () {
+        const btnDesktop = document.getElementById("darkLightBtn");
+        const btnMobile  = document.getElementById("darkLightBtnMobile");
+
+        function setIcon(el, isDark){
+          if (!el) return;
+          el.classList.remove("bx-sun", "bx-moon");
+          el.classList.add(isDark ? "bx-moon" : "bx-sun");
+        }
+
+        function applyTheme(theme){
+          const isDark = theme === "dark";
+          document.body.classList.toggle("dark", isDark);
+
+          setIcon(btnDesktop, isDark);
+          setIcon(btnMobile, isDark);
+
+          document.body.style.display = "none";
+          document.body.offsetHeight;
+          document.body.style.display = "";
+        }
+
+        const saved = localStorage.getItem("yo_theme") || "light";
+        applyTheme(saved);
+
+        function toggle(){
+          const nowDark = !document.body.classList.contains("dark");
+          const theme = nowDark ? "dark" : "light";
+          localStorage.setItem("yo_theme", theme);
+          applyTheme(theme);
+        }
+
+        if (btnDesktop) btnDesktop.addEventListener("click", toggle);
+        if (btnMobile)  btnMobile.addEventListener("click", toggle);
+      })();
     </script>
   </body>
 </html>

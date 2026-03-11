@@ -1,0 +1,146 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Stock Transfers</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="{% static 'sowaf/styles/style.css' %}" />
+  <link rel="stylesheet" href="{% static 'sowaf/styles/bootsrap.min.css' %}" />
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+    body { background: #f4f6f8; padding: 30px; }
+
+    .container {
+      background: #fff;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      width: 90%;
+      margin: auto;
+    }
+
+    h2.title {
+      text-align: center;
+      color: #39B54B;
+      margin-bottom: 20px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .btn {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 14px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-green { background: #39B54B; color: #fff; }
+    .btn-light { background: #f5f5f5; color: #333; }
+    .btn-green:hover { background: #2da73e; }
+
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    th, td { border: 1px solid #ddd; padding: 10px; }
+    th { background-color: #fafafa; text-align: left; white-space: nowrap; }
+    td { vertical-align: middle; }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #d2f4dc;
+      color: #2a8b3f;
+      font-weight: 600;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .muted { color: #777; }
+
+    .actions a {
+      color: #39B54B;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .actions a:hover { text-decoration: underline; }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="topbar">
+      <a href="{% url 'inventory:add-stock-transfer' %}" class="btn btn-green">
+        <i class='bx bx-transfer'></i> New Stock Transfer
+      </a>
+      <a href="{% url 'inventory:add-stock-transfer' %}" class="btn btn-light">
+        ← Back to Inventory
+      </a>
+    </div>
+
+    <h2 class="title">Stock Transfers</h2>
+
+    <div class="table-responsive">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Date</th>
+            <th>From Location</th>
+            <th>To Location</th>
+            <th>Memo</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% if transfers and transfers|length > 0 %}
+            {% for t in transfers %}
+              <tr>
+                <td><span class="badge">TRF-{{ t.id }}</span></td>
+                <td>{{ t.transfer_date|date:"Y-m-d" }}</td>
+                <td>{{ t.from_location.name }}</td>
+                <td>{{ t.to_location.name }}</td>
+                <td class="muted">
+                  {% if t.memo %}{{ t.memo|truncatechars:40 }}{% else %}—{% endif %}
+                </td>
+                <td class="muted">
+                  {% if t.created_at %}{{ t.created_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}
+                </td>
+                <td class="actions">
+                  <a href="{% url 'inventory:stock-transfer-detail' t.id %}">View</a>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="muted" style="text-align:center; padding: 18px;">
+                No stock transfers yet. Click <b>New Stock Transfer</b> to create one.
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

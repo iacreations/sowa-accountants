@@ -44,13 +44,12 @@ def _compute_next_run(current_date, frequency: str, interval: int):
     if frequency == "monthly":
         if relativedelta:
             return current_date + relativedelta(months=interval)
-        # fallback: naive month add (keeps day if possible)
         y = current_date.year
         m = current_date.month + interval
         while m > 12:
             y += 1
             m -= 12
-        d = min(current_date.day, 28)  # safe fallback
+        d = min(current_date.day, 28)
         return current_date.replace(year=y, month=m, day=d)
 
     if frequency == "yearly":
@@ -58,7 +57,6 @@ def _compute_next_run(current_date, frequency: str, interval: int):
             return current_date + relativedelta(years=interval)
         return current_date.replace(year=current_date.year + interval)
 
-    # default monthly
     if relativedelta:
         return current_date + relativedelta(months=interval)
     return current_date + timedelta(days=30 * interval)
@@ -74,20 +72,29 @@ def _compute_due_date(created_date, terms: str):
 
 
 @transaction.atomic
-def generate_recurring_invoices_for_date(run_date=None, *, apply_audit_fields=None, _post_invoice_to_ledger=None, as_aware_datetime=None):
+def generate_recurring_invoices_for_date(
+    *,
+    company,                         # ✅ REQUIRED NOW
+    run_date=None,
+    apply_audit_fields=None,
+    _post_invoice_to_ledger=None,
+    as_aware_datetime=None
+):
     """
-    Generates invoices for recurring templates due on or before run_date (default today).
-    Requires passing your existing helpers from views.py:
-      - apply_audit_fields(obj)
-      - _post_invoice_to_ledger(invoice)
-      - as_aware_datetime(date_or_datetime)
+    Generates invoices for recurring templates due on/before run_date for ONE company.
     """
+
     if run_date is None:
         run_date = timezone.localdate()
 
-    qs = RecurringInvoice.objects.select_related("customer", "class_field").filter(
-        is_active=True,
-        next_run_date__lte=run_date,
+    qs = (
+        RecurringInvoice.objects
+        .select_related("customer", "class_field")
+        .filter(
+            company=company,          # ✅ COMPANY FILTER
+            is_active=True,
+            next_run_date__lte=run_date,
+        )
     )
 
     created = 0
@@ -109,19 +116,21 @@ def generate_recurring_invoices_for_date(run_date=None, *, apply_audit_fields=No
             continue
 
         # prevent duplicates for the same run date
-        already = RecurringGeneratedInvoice.objects.filter(recurring=rec, run_date=rec.next_run_date).exists()
+        already = RecurringGeneratedInvoice.objects.filter(
+            recurring=rec, run_date=rec.next_run_date
+        ).exists()
+
         if already:
-            # still advance schedule so you don't get stuck
             rec.next_run_date = _compute_next_run(rec.next_run_date, rec.frequency, rec.interval)
             rec.save(update_fields=["next_run_date"])
             skipped += 1
             continue
 
-        # create invoice
         created_dt = rec.next_run_date
         due_dt = _compute_due_date(created_dt, rec.terms)
 
         invoice = Newinvoice.objects.create(
+            company=company,  # ✅ make sure Newinvoice has company FK
             customer=rec.customer,
             email=rec.email,
             date_created=as_aware_datetime(created_dt) if as_aware_datetime else None,
@@ -146,9 +155,14 @@ def generate_recurring_invoices_for_date(run_date=None, *, apply_audit_fields=No
         total_discount = Decimal("0.00")
         total_vat = Decimal("0.00")
 
-        lines = RecurringInvoiceLine.objects.select_related("product").filter(recurring=rec).order_by("id")
-        item_rows = []
+        lines = (
+            RecurringInvoiceLine.objects
+            .select_related("product")
+            .filter(recurring=rec)
+            .order_by("id")
+        )
 
+        item_rows = []
         for ln in lines:
             product = ln.product
             qty = Decimal(ln.qty or 0)
@@ -158,7 +172,6 @@ def generate_recurring_invoices_for_date(run_date=None, *, apply_audit_fields=No
             line_amount = (qty * rate).quantize(Decimal("0.01"))
             line_discount_amt = (line_amount * dpc / Decimal("100")).quantize(Decimal("0.01"))
 
-            # VAT (18%) if taxable
             if getattr(product, "taxable", False):
                 line_vat = (line_amount * Decimal("0.18")).quantize(Decimal("0.01"))
             else:
@@ -207,19 +220,17 @@ def generate_recurring_invoices_for_date(run_date=None, *, apply_audit_fields=No
         rec.occurrences_generated = (rec.occurrences_generated or 0) + 1
         rec.next_run_date = _compute_next_run(rec.next_run_date, rec.frequency, rec.interval)
 
-        # deactivate if end reached after increment
         if rec.end_date and rec.next_run_date > rec.end_date:
             rec.is_active = False
-
         if rec.max_occurrences and rec.occurrences_generated >= rec.max_occurrences:
             rec.is_active = False
 
         rec.save()
-
         created += 1
 
     return {
         "run_date": str(run_date),
+        "company_id": getattr(company, "id", None),
         "created": created,
         "skipped": skipped,
         "deactivated": deactivated,

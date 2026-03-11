@@ -4,29 +4,32 @@ from datetime import date
 from django.contrib.auth.models import User
 from accounts.models import Account
 from django.utils import timezone
+from tenancy.models import Company
+from tenancy.base import TenantModel
 
-# Create your models here.
 
-class Newcustomer(models.Model):
-    logo = models.ImageField(null=True, blank=True)
+# Customer model
+class Newcustomer(TenantModel):
+    logo = models.ImageField(upload_to="uploads/", null=True, blank=True)
     customer_name = models.CharField(max_length=255, null=True, blank=True)
     company_name = models.CharField(max_length=255, null=True, blank=True)
     email = models.EmailField(max_length=255, null=True, blank=True)
-    phone_number = models.CharField(max_length=10, null=True, blank=True)
-    mobile_number = models.CharField(max_length=10, null=True, blank=True)
+    phone_number = models.CharField(max_length=20, null=True, blank=True)
+    mobile_number = models.CharField(max_length=20, null=True, blank=True)
     website = models.URLField(max_length=255, null=True, blank=True)
-    tin_number = models.CharField(max_length=10, null=True, blank=True)
-    opening_balance = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=0)
+    tin_number = models.CharField(max_length=20, null=True, blank=True)
+    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, default=Decimal("0.00"))
     registration_date = models.DateField(null=True, blank=True)
     street_one = models.CharField(max_length=255, null=True, blank=True)
     street_two = models.CharField(max_length=255, null=True, blank=True)
     city = models.CharField(max_length=255, null=True, blank=True)
     province = models.CharField(max_length=255, null=True, blank=True)
-    postal_code = models.CharField(max_length=5, null=True, blank=True)
+    postal_code = models.CharField(max_length=20, null=True, blank=True)
     country = models.CharField(max_length=255, null=True, blank=True)
     notes = models.TextField(max_length=1000, null=True, blank=True)
     is_active = models.BooleanField(default=True)
-    attachments = models.FileField(upload_to='uploads/', null=True, blank=True)
+    attachments = models.FileField(upload_to="uploads/", null=True, blank=True)
+
     ar_account = models.OneToOneField(
         Account,
         null=True,
@@ -34,48 +37,63 @@ class Newcustomer(models.Model):
         on_delete=models.SET_NULL,
         related_name="customer_ar_owner",
     )
+
     class Meta:
-        ordering = ['customer_name']
+        ordering = ["customer_name"]
+        indexes = [
+            models.Index(fields=["company", "customer_name"]),
+            models.Index(fields=["company", "company_name"]),
+            models.Index(fields=["company", "is_active"]),
+        ]
 
     def __str__(self):
-        return f'{self.customer_name}-{self.company_name}-{self.phone_number}-{self.country}'    
-# supplier model
-class Newsupplier(models.Model):
+        return f"{self.customer_name}-{self.company_name}-{self.phone_number}-{self.country}"
+
+    def save(self, *args, **kwargs):
+        if self.ar_account_id and self.company_id and self.ar_account.company_id != self.company_id:
+            raise ValueError("Customer A/R account must belong to the same company.")
+        super().save(*args, **kwargs)
+
+
+# Supplier model
+class Newsupplier(TenantModel):
     PAYMENT_CHOICES = [
-            ('Bank transafer', 'Bank transafer'),
-            ('Cheque','Cheque'),
-            ('Cash','Cash'),
+        ("Bank transafer", "Bank transafer"),
+        ("Cheque", "Cheque"),
+        ("Cash", "Cash"),
     ]
     SUPPLIER_CHOICES = [
-            ('Goods', 'Goods'),
-            ('Services','Services'),
-            ('Both','Both'),
+        ("Goods", "Goods"),
+        ("Services", "Services"),
+        ("Both", "Both"),
     ]
-    logo = models.ImageField(null=True, blank=True)
-    company_name = models.CharField(max_length=255,null=True, blank=True)
-    supplier_type = models.CharField(max_length=255, choices=SUPPLIER_CHOICES, default='',null=True, blank=True)
-    contact_person = models.CharField(max_length=255,null=True, blank=True)
-    contact_position = models.CharField(max_length=255,null=True, blank=True)
-    contact = models.CharField(max_length=10,null=True, blank=True)
-    email = models.EmailField(max_length=255,null=True, blank=True)
-    open_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0,null=True, blank=True)
-    website = models.URLField(max_length=255,null=True, blank=True)
-    address1 = models.CharField(max_length=255,null=True, blank=True)
-    address2= models.CharField(max_length=255,null=True, blank=True)
-    city = models.CharField(max_length=255,null=True, blank=True)
-    state = models.CharField(max_length=255,null=True, blank=True)
-    zip_code = models.CharField(max_length=5,null=True, blank=True)
-    country = models.CharField(max_length=255,null=True, blank=True)
-    bank = models.CharField(max_length=255,null=True, blank=True)
-    bank_account = models.CharField(max_length=255,null=True, blank=True)
-    bank_branch = models.CharField(max_length=255,null=True, blank=True)
-    payment_terms = models.CharField(max_length=255,null=True, blank=True)
-    currency = models.CharField(max_length=255,null=True, blank=True)
-    payment_method = models.CharField(max_length=255, choices=PAYMENT_CHOICES, default='',null=True, blank=True)
-    tin = models.CharField(max_length=10,null=True, blank=True)
-    reg_number=models.CharField(max_length=255,null=True, blank=True)
+
+    logo = models.ImageField(upload_to="uploads/", null=True, blank=True)
+    company_name = models.CharField(max_length=255, null=True, blank=True)
+    supplier_type = models.CharField(max_length=255, choices=SUPPLIER_CHOICES, default="", null=True, blank=True)
+    contact_person = models.CharField(max_length=255, null=True, blank=True)
+    contact_position = models.CharField(max_length=255, null=True, blank=True)
+    contact = models.CharField(max_length=20, null=True, blank=True)
+    email = models.EmailField(max_length=255, null=True, blank=True)
+    open_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"), null=True, blank=True)
+    website = models.URLField(max_length=255, null=True, blank=True)
+    address1 = models.CharField(max_length=255, null=True, blank=True)
+    address2 = models.CharField(max_length=255, null=True, blank=True)
+    city = models.CharField(max_length=255, null=True, blank=True)
+    state = models.CharField(max_length=255, null=True, blank=True)
+    zip_code = models.CharField(max_length=20, null=True, blank=True)
+    country = models.CharField(max_length=255, null=True, blank=True)
+    bank = models.CharField(max_length=255, null=True, blank=True)
+    bank_account = models.CharField(max_length=255, null=True, blank=True)
+    bank_branch = models.CharField(max_length=255, null=True, blank=True)
+    payment_terms = models.CharField(max_length=255, null=True, blank=True)
+    currency = models.CharField(max_length=255, null=True, blank=True)
+    payment_method = models.CharField(max_length=255, choices=PAYMENT_CHOICES, default="", null=True, blank=True)
+    tin = models.CharField(max_length=20, null=True, blank=True)
+    reg_number = models.CharField(max_length=255, null=True, blank=True)
     is_active = models.BooleanField(default=True)
-    attachments = models.FileField(upload_to='uploads/',null=True, blank=True)
+    attachments = models.FileField(upload_to="uploads/", null=True, blank=True)
+
     ap_account = models.OneToOneField(
         Account,
         null=True,
@@ -83,93 +101,58 @@ class Newsupplier(models.Model):
         on_delete=models.SET_NULL,
         related_name="supplier_ap_owner",
     )
+
     class Meta:
-        ordering =['company_name']
+        ordering = ["company_name"]
+        indexes = [
+            models.Index(fields=["company", "company_name"]),
+            models.Index(fields=["company", "supplier_type"]),
+            models.Index(fields=["company", "is_active"]),
+        ]
 
     def __str__(self):
-        return f'{self.company_name}-{self.contact_person}-{self.contact}-{self.country}'
-    
-class Newclient(models.Model):
-    CURRENCY_CHOICES = [
-        ('UGX', 'UGX'),
-        ('USD', 'UGX')
-    ]
-    INDUSTRY_CHOICES=[
-        ('Consumer products','Consumer products'),
-        ('Energy and natural resources','Energy and natural resources'),
-        ('Financial services','Financial services'),
-        ('Healthcare','Healthcare'),
-        ('Industrial products','Industrial products'),
-        ('Not for profit','Not for profit'),
-        ('Individual private clients','Individual private clients'),
-        ('Public sector','Public sector'),
-        ('Real estate and construction','Real estate and construction'),
-        ('Services','Services'),
-        ('Technology, media and telecommunications','Technology, media and telecommunications'),
-        ('Travel, tourism and leisure','Travel, tourism and leisure'),
-        ('Others','Others'),
-    ]
-    STATUS_CHOICES = [
-            ('Active', 'Active'),
-            ('Inactive','Inactive'),
-    ]
-    logo = models.ImageField(null=True, blank=True)
-    company = models.CharField(max_length=255,null=True, blank=True)
-    phone = models.CharField(max_length=10,null=True, blank=True)
-    company_email = models.EmailField(max_length=255,null=True, blank=True)
-    address = models.CharField(max_length=255,null=True, blank=True)
-    country = models.CharField(max_length=255,null=True, blank=True)
-    reg_number=models.CharField(max_length=255,null=True, blank=True)
-    start_date = models.DateTimeField(null=True, blank=True)
-    contact_name= models.CharField(max_length=255,null=True, blank=True)
-    position = models.CharField(max_length=255,null=True, blank=True)
-    contact = models.CharField(max_length=10,null=True, blank=True)
-    contact_email = models.CharField(max_length=255,null=True, blank=True)
-    tin = models.CharField(max_length=10,null=True, blank=True)
-    credit_limit = models.DecimalField(max_digits=255, decimal_places=2, default=0,null=True, blank=True)
-    payment_terms = models.CharField(max_length=255,null=True, blank=True)
-    currency = models.CharField(max_length=255,null=True, blank=True)
-    industry = models.CharField(choices=INDUSTRY_CHOICES, default='',null=True, blank=True)
-    status = models.CharField(max_length=255, choices=STATUS_CHOICES, default='',null=True, blank=True)
-    notes = models.TextField(max_length=1000,null=True, blank=True)
-    class Meta:
-        ordering =['company']
+        return f"{self.company_name}-{self.contact_person}-{self.contact}-{self.country}"
 
-    def __str__(self):
-        return f'{self.company}-{self.contact_name}-{self.contact}-{self.country}'
+    def save(self, *args, **kwargs):
+        if self.ap_account_id and self.company_id and self.ap_account.company_id != self.company_id:
+            raise ValueError("Supplier A/P account must belong to the same company.")
+        super().save(*args, **kwargs)
 
-class Newemployee(models.Model):
+
+# Employee model
+class Newemployee(TenantModel):
     PAYMENT_CHOICES = [
-            ('Bank transafer', 'Bank transafer'),
-            ('Cheque','Cheque'),
-            ('Cash','Cash'),
+        ("Bank transafer", "Bank transafer"),
+        ("Cheque", "Cheque"),
+        ("Cash", "Cash"),
     ]
     STATUS_CHOICES = [
-            ('Active', 'Active'),
-            ('Suspended','Suspended'),
-            ('Terminated','Terminated'),
+        ("Active", "Active"),
+        ("Suspended", "Suspended"),
+        ("Terminated", "Terminated"),
     ]
     EMPLOYMENT_CHOICES = [
-        ('Full-time', 'Full-time'),
-        ('Part-time', 'Part-time'),
-        ('Contract', 'Contract'),
-        ('Intern', 'Intern'),
-        ('Volunteer', 'Volunteer'),
+        ("Full-time", "Full-time"),
+        ("Part-time", "Part-time"),
+        ("Contract", "Contract"),
+        ("Intern", "Intern"),
+        ("Volunteer", "Volunteer"),
     ]
     GENDER_CHOICES = [
-        ('Male', 'Male'),
-        ('Female', 'Female'),
-        ('Other', 'Other'),
+        ("Male", "Male"),
+        ("Female", "Female"),
+        ("Other", "Other"),
     ]
+
     first_name = models.CharField(max_length=255, null=True, blank=True)
     last_name = models.CharField(max_length=255, null=True, blank=True)
-    gender = models.CharField(choices=GENDER_CHOICES,default='',max_length=255, null=True, blank=True)
+    gender = models.CharField(choices=GENDER_CHOICES, default="", max_length=255, null=True, blank=True)
     dob = models.DateField(max_length=255, null=True, blank=True)
     nationality = models.CharField(max_length=255, null=True, blank=True)
     nin_number = models.CharField(max_length=14, null=True, blank=True)
-    tin_number= models.CharField(max_length=10, null=True, blank=True)
-    profile_picture = models.ImageField(null=True, blank=True)
-    phone_number = models.CharField(max_length=10, null=True, blank=True)
+    tin_number = models.CharField(max_length=20, null=True, blank=True)
+    profile_picture = models.ImageField(upload_to="uploads/", null=True, blank=True)
+    phone_number = models.CharField(max_length=20, null=True, blank=True)
     email_address = models.EmailField(max_length=255, null=True, blank=True)
     residential_address = models.CharField(max_length=255, null=True, blank=True)
     emergency_person = models.CharField(max_length=255, null=True, blank=True)
@@ -177,35 +160,46 @@ class Newemployee(models.Model):
     relationship = models.CharField(max_length=255, null=True, blank=True)
     job_title = models.CharField(max_length=255, null=True, blank=True)
     department = models.CharField(max_length=255, null=True, blank=True)
-    employment_type = models.CharField(choices=EMPLOYMENT_CHOICES,default='',max_length=255, null=True, blank=True)
-    status = models.CharField(choices=STATUS_CHOICES,default='',max_length=255, null=True, blank=True)
+    employment_type = models.CharField(choices=EMPLOYMENT_CHOICES, default="", max_length=255, null=True, blank=True)
+    status = models.CharField(choices=STATUS_CHOICES, default="", max_length=255, null=True, blank=True)
     hire_date = models.DateField(max_length=255, null=True, blank=True)
     supervisor = models.CharField(max_length=255, null=True, blank=True)
-    salary = models.DecimalField(max_digits=255,decimal_places=2, default=0, null=True, blank=True)
+    salary = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"), null=True, blank=True)
     payment_frequency = models.CharField(max_length=255, null=True, blank=True)
-    payment_method = models.CharField(choices=PAYMENT_CHOICES,default='',max_length=255, null=True, blank=True)
+    payment_method = models.CharField(choices=PAYMENT_CHOICES, default="", max_length=255, null=True, blank=True)
     bank_name = models.CharField(max_length=255, null=True, blank=True)
     bank_account = models.CharField(max_length=255, null=True, blank=True)
     bank_branch = models.CharField(max_length=255, null=True, blank=True)
     nssf_number = models.CharField(max_length=255, null=True, blank=True)
     insurance_provider = models.CharField(max_length=255, null=True, blank=True)
-    taxable_allowances = models.DecimalField(max_digits=255,decimal_places=2,default=0, null=True, blank=True)
-    intaxable_allowances= models.DecimalField(max_digits=255,decimal_places=2,default=0, null=True, blank=True)
+    taxable_allowances = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"), null=True, blank=True)
+    intaxable_allowances = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"), null=True, blank=True)
     additional_notes = models.TextField(max_length=1000, null=True, blank=True)
-    doc_attachments= models.FileField(upload_to='uploads/')
-    
-    doc_attachments= models.FileField(upload_to='uploads/')
+    doc_attachments = models.FileField(upload_to="uploads/", null=True, blank=True)
 
-# assets model
-class Newasset(models.Model):
+    class Meta:
+        ordering = ["first_name", "last_name"]
+        indexes = [
+            models.Index(fields=["company", "first_name"]),
+            models.Index(fields=["company", "last_name"]),
+            models.Index(fields=["company", "status"]),
+        ]
+
+    def __str__(self):
+        full_name = " ".join(x for x in [self.first_name, self.last_name] if x).strip()
+        return full_name or "Employee"
+
+
+# Assets model
+class Newasset(TenantModel):
     DEPRECIATION_CHOICES = [
-        ('Straight line', 'Straight line'),
-        ('Reducing balance', 'Reducing balance'),
+        ("Straight line", "Straight line"),
+        ("Reducing balance", "Reducing balance"),
     ]
     STATUS_CHOICES = [
-        ('Active', 'Active'),
-        ('Disposed', 'Disposed'),
-        ('Written-Off', 'Written-Off'),
+        ("Active", "Active"),
+        ("Disposed", "Disposed"),
+        ("Written-Off", "Written-Off"),
     ]
 
     asset_name = models.CharField(max_length=255, null=True, blank=True)
@@ -217,7 +211,7 @@ class Newasset(models.Model):
 
     asset_status = models.CharField(
         choices=STATUS_CHOICES,
-        default='Active',
+        default="Active",
         max_length=255,
         null=True,
         blank=True
@@ -227,7 +221,13 @@ class Newasset(models.Model):
     purchase_price = models.CharField(max_length=255, null=True, blank=True)
     purchase_date = models.DateField(null=True, blank=True)
 
-    supplier = models.ForeignKey(Newsupplier, on_delete=models.CASCADE, related_name='supplied_assets')
+    supplier = models.ForeignKey(
+        Newsupplier,
+        on_delete=models.CASCADE,
+        related_name="supplied_assets",
+        null=True,
+        blank=True,
+    )
 
     warranty = models.DateField(null=True, blank=True)
 
@@ -236,15 +236,15 @@ class Newasset(models.Model):
 
     depreciation_method = models.CharField(
         choices=DEPRECIATION_CHOICES,
-        default='Straight line',
+        default="Straight line",
         max_length=255,
         null=True,
         blank=True
     )
 
-    residual_value = models.DecimalField(decimal_places=2, max_digits=10, null=True, blank=True)
-    accumulated_depreciation = models.DecimalField(decimal_places=2, max_digits=10, null=True, blank=True)
-    remaining_value = models.DecimalField(decimal_places=2, max_digits=10, null=True, blank=True)
+    residual_value = models.DecimalField(decimal_places=2, max_digits=12, null=True, blank=True)
+    accumulated_depreciation = models.DecimalField(decimal_places=2, max_digits=12, null=True, blank=True)
+    remaining_value = models.DecimalField(decimal_places=2, max_digits=12, null=True, blank=True)
 
     # asset_account should be a COA account (Fixed Asset account)
     asset_account = models.ForeignKey(
@@ -274,16 +274,21 @@ class Newasset(models.Model):
     insurance_details = models.CharField(max_length=255, null=True, blank=True)
     notes = models.CharField(max_length=255, null=True, blank=True)
 
-    asset_attachments = models.FileField(upload_to='uploads/', null=True, blank=True)
+    asset_attachments = models.FileField(upload_to="uploads/", null=True, blank=True)
 
     class Meta:
-        ordering = ['asset_name']
+        ordering = ["asset_name"]
+        indexes = [
+            models.Index(fields=["company", "asset_name"]),
+            models.Index(fields=["company", "asset_tag"]),
+            models.Index(fields=["company", "asset_status"]),
+        ]
 
     def __str__(self):
-        return f'{self.asset_name}-{self.asset_category}-{self.department}-{self.custodian}'
+        return f"{self.asset_name}-{self.asset_category}-{self.department}-{self.custodian}"
 
     # -----------------------------
-    # rs (safe conversions)
+    # helpers (safe conversions)
     # -----------------------------
     def _D(self, x, default="0.00"):
         try:
@@ -401,5 +406,12 @@ class Newasset(models.Model):
         self.remaining_value = nbv
 
     def save(self, *args, **kwargs):
+        if self.supplier_id and self.company_id and self.supplier.company_id != self.company_id:
+            raise ValueError("Asset supplier must belong to the same company.")
+        if self.asset_account_id and self.company_id and self.asset_account.company_id != self.company_id:
+            raise ValueError("Asset account must belong to the same company.")
+        if self.payment_account_id and self.company_id and self.payment_account.company_id != self.company_id:
+            raise ValueError("Payment account must belong to the same company.")
+
         self.recalc_depreciation_fields()
         super().save(*args, **kwargs)

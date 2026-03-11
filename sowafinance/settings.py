@@ -20,9 +20,7 @@ load_dotenv()  # Load .env file for local development
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-
+BASE_DIR = Path(__file__).resolve().parent.parent   
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -52,6 +50,7 @@ INSTALLED_APPS = [
     'sales',
     'sowaAuth',
     'sowa_settings',
+    'tenancy',
 ]
 
 MIDDLEWARE = [
@@ -61,6 +60,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'tenancy.middleware.CompanyMiddleware', #for client books
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'accounts.middleware.AuditMiddleware',
@@ -78,6 +78,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'tenancy.context_processors.current_company',
             ],
         },
     },
@@ -180,3 +181,15 @@ if not DEBUG:
 
     # Good for finance systems: logout when browser closes
     SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# EMAIL SETTINGS (SOWA MAIN EMAIL)
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER = "namanyajim46@gmail.com"
+EMAIL_HOST_PASSWORD = "ifdx eryx pazy sehq"
+
+DEFAULT_FROM_EMAIL = "YoAccountant <namanyajim46@gmail.com>"

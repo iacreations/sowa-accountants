@@ -40,6 +40,9 @@
     .dropdown-menu { display: none; position: absolute; right: 0; background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10; width: 170px; overflow:hidden; }
     .dropdown-menu button { width: 100%; padding: 10px 16px; background: none; border: none; text-align: left; cursor: pointer; white-space: nowrap; }
     .dropdown:hover .dropdown-menu { display: block; }
+
+    /* tiny helper (doesn't change your layout) */
+    .hint { color:#666; margin-top:6px; font-size:12px; }
   </style>
 </head>
 <body>
@@ -57,7 +60,7 @@
           <label>Payee</label>
           <input type="text" name="payee_name" placeholder="Who did you pay?"
                  value="{{ expense.payee_name|default_if_none:'' }}">
-          <small style="color:#666;margin-top:6px;">or pick supplier</small>
+          <small class="hint">or pick supplier</small>
           <select name="payee_supplier">
             <option value="">-- Optional supplier --</option>
             {% for s in suppliers %}
@@ -105,9 +108,20 @@
                  value="{% if expense %}{{ expense.ref_no }}{% else %}{{ ref_no|default_if_none:'' }}{% endif %}">
         </div>
 
+        <!-- ✅ UPDATED: Location dropdown + AJAX add-new -->
         <div class="field">
           <label>Location</label>
-          <input type="text" name="location" value="{{ expense.location|default_if_none:'' }}">
+          <select name="location" id="locationSelect">
+            <option value="">-- Select location --</option>
+            {% for loc in locations %}
+              <option value="{{ loc.id }}"
+                {% if expense and expense.location_id == loc.id %}selected{% endif %}>
+                {{ loc.name }}
+              </option>
+            {% endfor %}
+            <option value="add_new">➕ Add New</option>
+          </select>
+          <small class="hint">Tip: choose a location or add a new one.</small>
         </div>
       </div>
 
@@ -336,7 +350,9 @@
 
       <!-- Footer -->
       <div class="footer">
-        <a href="{% url 'expenses:expenses' %}"><button class="btn btn-cancel" type="button" style="background-color: #39B54B; color: white;" >Cancel</button></a>
+        <a href="{% url 'expenses:expenses' %}">
+          <button class="btn btn-cancel" type="button" style="background-color: #39B54B; color: white;">Cancel</button>
+        </a>
         <div class="dropdown">
           <button type="button" class="btn btn-green">Save ▼</button>
           <div class="dropdown-menu">
@@ -356,6 +372,9 @@
     const ADD_CUSTOMER_URL = "{% url 'sowaf:add-customer' %}";
     const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
     const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
+
+    // ✅ NEW: add location ajax
+    const ADD_LOCATION_AJAX_URL = "{% url 'inventory:add_location_ajax' %}";
 
     // CSRF helper (works everywhere, even in dynamic rows)
     function getCookie(name) {
@@ -426,6 +445,47 @@
           selectEl.value = String(data.id);
         } else {
           alert((data && data.error) ? data.error : "Failed to add class");
+          selectEl.value = "";
+        }
+      })
+      .catch(() => {
+        alert("Network error. Try again.");
+        selectEl.value = "";
+      });
+    }
+
+    // ✅ NEW: Location add inline
+    function addNewLocationInline(selectEl){
+      const name = (prompt("Enter new location name:") || "").trim();
+      if(!name){
+        selectEl.value = "";
+        return;
+      }
+
+      fetch(ADD_LOCATION_AJAX_URL, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCookie("csrftoken"),
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "name=" + encodeURIComponent(name)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data && data.success){
+          // insert before "add_new" option (last option)
+          const opt = document.createElement("option");
+          opt.value = data.id;
+          opt.textContent = data.name;
+          opt.selected = true;
+
+          // insert near end but before add_new
+          const last = selectEl.querySelector('option[value="add_new"]');
+          selectEl.insertBefore(opt, last);
+
+          selectEl.value = String(data.id);
+        } else {
+          alert((data && data.error) ? data.error : "Failed to add location");
           selectEl.value = "";
         }
       })
@@ -559,6 +619,9 @@
       if(!el || el.tagName !== "SELECT") return;
 
       const nm = el.getAttribute("name") || "";
+
+      // Header: location add
+      if(el.id === "locationSelect" && el.value === "add_new"){ addNewLocationInline(el); return; }
 
       // Category line: customer + class
       if(nm === "cat_customer[]" && el.value === "add_new"){ openAddCustomer(el); return; }

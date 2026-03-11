@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>YoAccountant | Auth</title>
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
-
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
   <style>
     body {
       margin: 0;
@@ -34,14 +34,14 @@
       margin-bottom: 20px;
     }
 
-    .logo img {
-      width: 100px;
-    }
+    .logo img { width: 100px; }
 
     .tabs {
       display: flex;
       justify-content: space-around;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .tabs span {
@@ -49,11 +49,10 @@
       font-weight: bold;
       color: #777;
       position: relative;
+      padding: 4px 6px;
     }
 
-    .tabs .active {
-      color: #39B54B;
-    }
+    .tabs .active { color: #39B54B; }
 
     .tabs .active::after {
       content: '';
@@ -66,6 +65,13 @@
       border-radius: 2px;
     }
 
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      color: #666;
+      margin: -6px 0 14px 0;
+    }
+
     .input-group {
       display: flex;
       align-items: center;
@@ -74,18 +80,29 @@
       border-radius: 30px;
       padding: 10px 15px;
       margin-bottom: 15px;
+      gap: 10px;
     }
 
     .input-group i {
-      margin-right: 10px;
       color: #333;
+      flex: 0 0 auto;
     }
 
     .input-group input {
       border: none;
       background: transparent;
       outline: none;
-      flex: 1;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .toggle-eye {
+      cursor: pointer;
+      user-select: none;
+      font-size: 18px;
+      color: #333;
+      flex: 0 0 auto;
+      padding-left: 6px;
     }
 
     .checkbox {
@@ -98,7 +115,7 @@
     .checkbox input { margin-right: 5px; }
 
     .btn {
-      width: 150px;
+      width: 180px;
       background: #39B54B;
       color: #fff;
       padding: 10px;
@@ -111,6 +128,8 @@
       margin: 0 auto 10px auto;
       display: block;
     }
+
+    .btn:hover { background: #2da73e; }
 
     .divider {
       text-align: center;
@@ -150,6 +169,15 @@
       text-decoration: none;
       font-weight: bold;
     }
+
+    .mini-link {
+      display: inline-block;
+      font-size: 12px;
+      color: #39B54B;
+      text-decoration: none;
+      font-weight: 700;
+      margin-top: 6px;
+    }
   </style>
 </head>
 
@@ -160,62 +188,72 @@
     </div>
 
     <div class="tabs">
-      <span id="login-tab" class="active">Login</span>
-      <span id="signup-tab">Sign up</span>
+      <span id="staff-login-tab" class="active">Staff Login</span>
+      <span id="client-login-tab">Client Login</span>
     </div>
 
-    <!-- Login Form -->
-    <form id="login-form" action="{% url 'sowaAuth:do_login' %}" method="POST">
+    <div class="hint" id="tab-hint">SOWA staff login • Clients log in using OTP</div>
+
+    <!-- STAFF LOGIN FORM -->
+    <form id="staff-login-form" action="{% url 'sowaAuth:do_login' %}" method="POST">
       {% csrf_token %}
+
       <div class="input-group">
         <i class='bx bx-user'></i>
-        <input type="text" name="username" placeholder="Username, Email or Phone number" required>
+        <input type="text" name="username" placeholder="Email, Username or Phone number" required>
       </div>
+
       <div class="input-group">
         <i class='bx bx-lock-alt'></i>
-        <input type="password" name="password" placeholder="Password" required>
+        <input type="password" id="login_password" name="password" placeholder="Password" required>
+        <i class='bx bx-show toggle-eye'
+           data-target="login_password"
+           aria-label="Show/Hide password"
+           title="Show/Hide password"></i>
       </div>
+
       <div class="checkbox">
-        <input type="checkbox"> Remember me
+        <input type="checkbox" name="remember_me"> Remember me
       </div>
+
       <button type="submit" class="btn">LOGIN</button>
 
       <div class="footer-link">
         <a href="{% url 'password_reset' %}">Forgot your password?</a>
       </div>
+
+      <div class="hint" style="margin-top:12px;">
+        After password verification, an OTP will be sent to your email.
+      </div>
     </form>
 
-    <!-- Sign Up Form -->
-    <form id="signup-form" action="{% url 'sowaAuth:register' %}" method="POST" style="display: none;">
+    <!-- CLIENT OTP LOGIN FORM -->
+    <form id="client-login-form" action="{% url 'tenancy:client_otp_login' %}" method="POST" style="display:none;">
       {% csrf_token %}
-      <div class="input-group">
-        <i class='bx bx-user'></i>
-        <input type="text" name="username" placeholder="Name" required>
-      </div>
+
       <div class="input-group">
         <i class='bx bx-envelope'></i>
-        <input type="email" name="email" placeholder="Email" required>
+        <input
+          type="email"
+          name="email"
+          id="client_email"
+          placeholder="Company Email (e.g. accounts@client.com)"
+          required
+        >
       </div>
-      <div class="input-group">
-        <i class='bx bx-phone'></i>
-        <input type="tel" name="contact" placeholder="Phone Number" required>
+
+      <button type="submit" class="btn">SEND OTP</button>
+
+      <div class="hint" style="margin-top:10px;">
+        We’ll send a 6-digit OTP to your email. Enter it to log in.
       </div>
-      <div class="input-group">
-        <i class='bx bx-lock-alt'></i>
-        <input type="password" name="password" placeholder="Password" required>
+
+      <div class="footer-link">
+        <a class="mini-link" href="{% url 'sowaAuth:login' %}" onclick="return false;">Need help? Contact your firm</a>
       </div>
-      <div class="input-group">
-        <i class='bx bx-lock-alt'></i>
-        <input type="password" name="confirm_password" placeholder="Retype Password" required>
-      </div>
-      <div class="checkbox">
-        <input type="checkbox"> I agree to the terms of service and&nbsp;
-        <a href="#" target="_blank" style="color: #39B54B; font-weight: bold;"> Privacy Policy</a>
-      </div>
-      <button type="submit" class="btn">SIGN UP</button>
     </form>
 
-    <div class="divider">Or Sign in/up with</div>
+    <div class="divider">Or Sign in with</div>
 
     <div class="social-buttons">
       <div class="social-btn"><img src="https://img.icons8.com/color/16/000000/google-logo.png" /> Google</div>
@@ -251,40 +289,64 @@
         .swal-confirm-btn:hover { background-color: #2da73e !important; }
       </style>
     {% endif %}
-
   </div>
 
   <script>
-    const loginTab = document.getElementById('login-tab');
-    const signupTab = document.getElementById('signup-tab');
-    const loginForm = document.getElementById('login-form');
-    const signupForm = document.getElementById('signup-form');
+    const staffLoginTab = document.getElementById('staff-login-tab');
+    const clientLoginTab = document.getElementById('client-login-tab');
 
-    function showLogin(){
-      loginTab.classList.add('active');
-      signupTab.classList.remove('active');
-      loginForm.style.display = 'block';
-      signupForm.style.display = 'none';
+    const staffLoginForm = document.getElementById('staff-login-form');
+    const clientLoginForm = document.getElementById('client-login-form');
+
+    const tabHint = document.getElementById('tab-hint');
+
+    function setActive(tab) {
+      [staffLoginTab, clientLoginTab].forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
     }
 
-    function showSignup(){
-      signupTab.classList.add('active');
-      loginTab.classList.remove('active');
-      signupForm.style.display = 'block';
-      loginForm.style.display = 'none';
+    function showStaffLogin(){
+      setActive(staffLoginTab);
+      staffLoginForm.style.display = 'block';
+      clientLoginForm.style.display = 'none';
+      if (tabHint) tabHint.textContent = "SOWA staff login • Clients log in using OTP";
     }
 
-    loginTab.onclick = showLogin;
-    signupTab.onclick = showSignup;
+    function showClientLogin(){
+      setActive(clientLoginTab);
+      staffLoginForm.style.display = 'none';
+      clientLoginForm.style.display = 'block';
+      if (tabHint) tabHint.textContent = "Client login • Enter your company email to receive OTP";
+    }
 
-    // Optional: if signup had an error message, open signup tab.
-    {% if messages %}
-      {% for message in messages %}
-        {% if 'error' in message.tags %}
-          // if you want: showSignup();
-        {% endif %}
-      {% endfor %}
-    {% endif %}
+    staffLoginTab.onclick = showStaffLogin;
+    clientLoginTab.onclick = showClientLogin;
+
+    function togglePassword(targetId, iconEl){
+      const input = document.getElementById(targetId);
+      if (!input) return;
+
+      const isHidden = input.type === "password";
+      input.type = isHidden ? "text" : "password";
+
+      iconEl.classList.toggle("bx-show", !isHidden);
+      iconEl.classList.toggle("bx-hide", isHidden);
+    }
+
+    document.querySelectorAll(".toggle-eye").forEach(icon => {
+      icon.addEventListener("click", () => {
+        const target = icon.getAttribute("data-target");
+        togglePassword(target, icon);
+      });
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    const prefillEmail = params.get("email");
+    if (prefillEmail) {
+      const emailInput = document.getElementById("client_email");
+      if (emailInput) emailInput.value = prefillEmail;
+      showClientLogin();
+    }
   </script>
 </body>
 </html>

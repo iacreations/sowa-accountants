@@ -1,0 +1,205 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<style>
+  .staff-wrap{
+    margin-top: 13%;
+    padding: 20px;
+  }
+  .card-box{
+    background:#fff;
+    border:1px solid #e9edf3;
+    border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,.06);
+    padding:18px;
+    margin-bottom:20px;
+  }
+  .section-title{
+    color:#39B54B;
+    font-weight:800;
+    margin-bottom:14px;
+  }
+  .input-row{
+    display:grid;
+    grid-template-columns:repeat(4, 1fr);
+    gap:12px;
+    margin-bottom:12px;
+  }
+  .input-row input{
+    border:1px solid #d8dee8;
+    border-radius:10px;
+    padding:10px 12px;
+    width:100%;
+  }
+  .btn-green{
+    background:#39B54B;
+    color:#fff;
+    border:none;
+    border-radius:10px;
+    padding:10px 16px;
+    font-weight:700;
+  }
+  .btn-outline{
+    background:#fff;
+    color:#39B54B;
+    border:1px solid #39B54B;
+    border-radius:10px;
+    padding:8px 12px;
+    font-weight:700;
+  }
+  .content-table{
+    width:100%;
+    border-collapse:collapse;
+    background:#fff;
+  }
+  .content-table th,
+  .content-table td{
+    padding:12px;
+    border-bottom:1px solid #edf2f7;
+    text-align:left;
+    font-size:14px;
+  }
+  .pill{
+    padding:4px 10px;
+    border-radius:999px;
+    font-size:12px;
+    font-weight:700;
+    display:inline-block;
+  }
+  .pill-green{ background:#e8fbef; color:#1a9d46; border:1px solid #c7f1d6; }
+  .pill-grey{ background:#f3f4f6; color:#4b5563; border:1px solid #e5e7eb; }
+  .pill-red{ background:#ffe5e5; color:#8a1f1f; border:1px solid #ffc7c7; }
+</style>
+
+<div class="staff-wrap">
+  <div class="card-box">
+    <h3 class="section-title">Invite Sowa Staff</h3>
+
+    <form method="POST" action="{% url 'sowaAuth:staff_invite_create' %}">
+      {% csrf_token %}
+      <div class="input-row">
+        <input type="text" name="full_name" placeholder="Full name">
+        <input type="email" name="email" placeholder="Email address" required>
+        <input type="text" name="role_label" placeholder="Role label (e.g. Accountant)">
+        <div>
+          <button type="submit" class="btn-green">Send Invite</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div class="card-box">
+    <h3 class="section-title">Sowa Staff Members</h3>
+
+    <table class="content-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Superuser</th>
+          <th>Can Manage Staff</th>
+          <th>Status</th>
+          <th>Operations</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for member in staff_members %}
+        <tr>
+          <td>{{ member.username }}</td>
+          <td>{{ member.email|default:"—" }}</td>
+          <td>{{ member.contact|default:"—" }}</td>
+          <td>
+            {% if member.is_superuser %}
+              <span class="pill pill-green">YES</span>
+            {% else %}
+              <span class="pill pill-grey">NO</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if member.can_manage_staff %}
+              <span class="pill pill-green">YES</span>
+            {% else %}
+              <span class="pill pill-grey">NO</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if member.is_active %}
+              <span class="pill pill-green">ACTIVE</span>
+            {% else %}
+              <span class="pill pill-red">INACTIVE</span>
+            {% endif %}
+          </td>
+          <td style="display:flex; gap:8px; flex-wrap:wrap;">
+            {% if not member.is_superuser %}
+            <form method="POST" action="{% url 'sowaAuth:staff_toggle_active' member.id %}">
+              {% csrf_token %}
+              <button type="submit" class="btn-outline">
+                {% if member.is_active %}Deactivate{% else %}Activate{% endif %}
+              </button>
+            </form>
+
+            <form method="POST" action="{% url 'sowaAuth:staff_toggle_manager' member.id %}">
+              {% csrf_token %}
+              <button type="submit" class="btn-outline">
+                {% if member.can_manage_staff %}Remove Manager{% else %}Make Manager{% endif %}
+              </button>
+            </form>
+            {% else %}
+              <span class="pill pill-green">Primary Admin</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7">No staff users found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card-box">
+    <h3 class="section-title">Pending / Past Staff Invites</h3>
+
+    <table class="content-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Full Name</th>
+          <th>Role Label</th>
+          <th>Created</th>
+          <th>Expires</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for invite in invites %}
+        <tr>
+          <td>{{ invite.email }}</td>
+          <td>{{ invite.full_name|default:"—" }}</td>
+          <td>{{ invite.role_label|default:"—" }}</td>
+          <td>{{ invite.created_at }}</td>
+          <td>{{ invite.expires_at }}</td>
+          <td>
+            {% if invite.used_at %}
+              <span class="pill pill-green">USED</span>
+            {% elif invite.is_valid %}
+              <span class="pill pill-grey">PENDING</span>
+            {% else %}
+              <span class="pill pill-red">EXPIRED</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6">No invites yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include 'includes/footer.html' %}

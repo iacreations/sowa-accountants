@@ -1,0 +1,209 @@
+{% load static %}
+
+{% include 'includes/navbar.html' %}
+<style>
+  h1{ color: rgb(7, 142, 36); }
+
+  @media only screen and (max-width: 600px) {
+    #action{
+      background-color: #fff;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      padding:10%;
+      justify-content: center;
+    }
+    #action button{ display: flex; }
+    #search{
+      display: flex;
+      width: 50%;
+      margin-top: 0px;
+    }
+    h1{
+      color: rgb(7, 142, 36);
+      font-size: 20px;
+    }
+    .button{ width: 100px; }
+    #main{
+      padding: 15%;
+      margin-left: -20%;
+      margin-top: 65%;
+    }
+    #template{
+      position: fixed;
+      margin-top:-3%;
+      margin-left:70%;
+    }
+  }
+
+  /* Laptops & small desktops */
+  @media only screen and (min-width: 1024px) and (max-width: 1600px) {
+    #main{ margin-top: 15%; }
+  }
+
+  .pill{
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    display: inline-block;
+  }
+  .pill-trial{ background:#fff6d6; color:#7a5a00; border:1px solid #ffe59a; }
+  .pill-active{ background:#e8f5e9; color:#2e6e3a; border:1px solid #cfe9d3; }
+  .pill-expired{ background:#ffe5e5; color:#8a1f1f; border:1px solid #ffc7c7; }
+  .pill-suspended{ background:#eee; color:#333; border:1px solid #ddd; }
+
+  /* ✅ Make logo feel clickable */
+  .logo-link{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .logo-link:hover{
+    box-shadow: 0 0 0 2px rgba(57,181,75,0.25);
+  }
+  .logo-img{
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+</style>
+
+{% include 'includes/sidebar.html' %}
+
+<div class="action" id="action">
+  <h1 style="color: #39B54B; font-weight: 600;">CLIENTS</h1>
+
+  <div class="search_bar" id="search" style="width: 20%;">
+    <input type="text" placeholder="Search Clients" />
+  </div>
+
+  <!-- Add new goes to tenancy -->
+  <a href="{% url 'tenancy:company_create' %}" style="text-decoration: none;">
+    <button class="button">
+      <span class="button_text">ADD NEW</span>
+      <span class="button_icon">
+        <i class='bx bx-folder-plus'></i>
+      </span>
+    </button>
+  </a>
+
+  <!-- OPTIONAL: keep customize -->
+  <button class="button" onclick="openColumnCustomizer()">
+    <span class="button_text">CUSTOMIZE</span>
+    <span class="button_icon">
+      <i class='bx bxs-customize'></i>
+    </span>
+  </button>
+</div>
+
+<div class="main_body" id="main" style="margin-top: 13%;">
+  <table class="content-table">
+    <thead>
+      <tr>
+        <th>LOGO</th>
+        <th>ID</th>
+        <th>COMPANY NAME</th>
+        <th>PHONE</th>
+        <th>EMAIL</th>
+        <th>PLAN</th>
+        <th>STATUS</th>
+        <th>OPERATIONS</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {% for company in companies %}
+      <tr>
+        <!-- ✅ LOGO CLICK = SWITCH COMPANY -->
+        <td>
+          <a class="logo-link" href="{% url 'tenancy:switch_company' company.id %}" title="Click to open {{ company.name }}">
+            {% if company.logo %}
+              <img src="{{ company.logo.url }}" alt="logo" class="logo-img">
+            {% else %}
+              <i class='bx bx-building' style="font-size: 26px; color:#39B54B;"></i>
+            {% endif %}
+          </a>
+        </td>
+
+        <td>{{ company.id|stringformat:"03d" }}</td>
+
+        <!-- Optional: click company name to switch too -->
+        <td>
+          <a href="{% url 'tenancy:switch_company' company.id %}" style="text-decoration:none; color:#111; font-weight:600;">
+            {{ company.name }}
+          </a>
+        </td>
+
+        <td>{{ company.phone|default:"—" }}</td>
+        <td>{{ company.email|default:"—" }}</td>
+
+        <td>
+          {% if company.subscription %}
+            {{ company.subscription.plan }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+
+        <td>
+          {% if company.subscription %}
+            {% if company.subscription.status == "TRIAL" %}
+              <span class="pill pill-trial">TRIAL</span>
+            {% elif company.subscription.status == "ACTIVE" %}
+              <span class="pill pill-active">ACTIVE</span>
+            {% elif company.subscription.status == "EXPIRED" %}
+              <span class="pill pill-expired">EXPIRED</span>
+            {% elif company.subscription.status == "SUSPENDED" %}
+              <span class="pill pill-suspended">SUSPENDED</span>
+            {% else %}
+              {{ company.subscription.status }}
+            {% endif %}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+
+ <td>
+          <!-- keep operations (optional) -->
+          <a href="" title="View details" style="color:green;">
+            <i class='bx bx-show'></i>
+          </a>
+        </td> 
+      </tr>
+
+      {% empty %}
+      <tr>
+        <td colspan="8">No Client recorded yet.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  function openColumnCustomizer() {
+    const m = document.getElementById('columnCustomizerModal');
+    if (m) m.style.display = 'block';
+  }
+
+  function closeColumnCustomizer() {
+    const m = document.getElementById('columnCustomizerModal');
+    if (m) m.style.display = 'none';
+  }
+
+  window.onclick = function(event) {
+    const modal = document.getElementById('columnCustomizerModal');
+    if (modal && event.target == modal) {
+      closeColumnCustomizer();
+    }
+  }
+</script>
+
+{% include 'includes/footer.html' %}

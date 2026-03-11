@@ -1,0 +1,167 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Verify OTP</title>
+
+<link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+<link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+<style>
+body{
+  margin:0;
+  padding:0;
+  background:#ffffff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  height:100vh;
+  font-family:"Poppins", sans-serif;
+}
+
+.container{
+  width:400px;
+  background:#fff;
+  padding:30px;
+  border-radius:12px;
+  box-shadow:0 4px 8px rgba(0,0,0,0.1);
+}
+
+.logo{
+  display:flex;
+  justify-content:center;
+  margin-bottom:20px;
+}
+
+.logo img{
+  width:100px;
+}
+
+.title{
+  text-align:center;
+  color:#39B54B;
+  font-weight:700;
+  margin-bottom:12px;
+}
+
+.hint{
+  text-align:center;
+  font-size:13px;
+  color:#666;
+  margin-bottom:18px;
+}
+
+.email-box{
+  text-align:center;
+  background:#f3fff6;
+  border:1px solid #d8f3e1;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:18px;
+  font-size:13px;
+}
+
+.input-group{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  background:#e8f5e9;
+  border:1px solid #ccc;
+  border-radius:30px;
+  padding:10px 15px;
+  margin-bottom:15px;
+}
+
+.input-group input{
+  border:none;
+  background:transparent;
+  outline:none;
+  flex:1;
+}
+
+.btn{
+  width:180px;
+  background:#39B54B;
+  color:#fff;
+  padding:10px;
+  border:none;
+  border-radius:30px;
+  font-weight:bold;
+  cursor:pointer;
+  text-align:center;
+  font-size:14px;
+  margin:0 auto;
+  display:block;
+}
+
+.btn:hover{
+  background:#2da73e;
+}
+
+.swal-confirm-btn{
+  background-color:#39B54B !important;
+  color:white !important;
+  border-radius:8px !important;
+  padding:10px 22px !important;
+  font-size:16px !important;
+}
+
+.swal-confirm-btn:hover{
+  background-color:#2da73e !important;
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="logo">
+<img src="{% static 'sowaf/images/yo-logo.png' %}" alt="YoAccountant">
+</div>
+
+<div class="title">Verify Client OTP</div>
+
+<div class="hint">
+Enter the 6-digit OTP sent to your email
+</div>
+
+<div class="email-box">
+OTP sent to: <b>{{ email }}</b>
+</div>
+
+{% if messages %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+{% for m in messages %}
+Swal.fire({
+icon:"{% if 'error' in m.tags %}error{% else %}success{% endif %}",
+title:"{{ m.tags|capfirst }}",
+text:"{{ m }}",
+confirmButtonText:"OK",
+background:"#f0fff5",
+color:"#111",
+iconColor:"{% if 'error' in m.tags %}#e63946{% else %}#39B54B{% endif %}",
+customClass:{confirmButton:"swal-confirm-btn"}
+});
+{% endfor %}
+</script>
+{% endif %}
+
+<form method="POST">
+{% csrf_token %}
+
+<div class="input-group">
+<i class='bx bx-lock-alt'></i>
+<input type="text" name="code" maxlength="6" placeholder="Enter OTP" required>
+</div>
+
+<button type="submit" class="btn">Verify & Login</button>
+
+</form>
+
+</div>
+
+</body>
+</html>

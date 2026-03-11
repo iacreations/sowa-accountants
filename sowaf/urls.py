@@ -25,15 +25,6 @@ urlpatterns = [
     path("customers/<int:pk>/make-active/", views.make_active_customer, name="make-active"),
 
 
-    
-    # clents urls
-    path('clients/', views.clients, name='clients'),
-    path('clients/add/', views.add_client, name='add-client'),
-    path('clients/edit/<str:pk>/', views.edit_client, name='edit-client'),
-    path('clients/delete/<str:pk>/', views.delete_client, name='delete-client'),
-    path('clients/import/import-clients', views.import_clients, name='import-clients'), 
-    path('templates/clients/', views.download_clients_template, name='import_clients_template'),
-    
     # employee urls
     path('employees/', views.employee, name='employees'),
     path('employees/add/employee', views.add_employees, name='add-employee'),

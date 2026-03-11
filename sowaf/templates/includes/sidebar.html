@@ -1,313 +1,294 @@
+{% load static %}
+<style>
+  .nav_label_link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: inherit;
+    width: 100%;
+  }
+</style>
 
-   {% load static %}
-   <style>
-    .nav_label_link {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-decoration: none;
-  color: inherit;
-  width: 100%;
-}
-
-   </style>
- <!-- sidebar -->
-    <nav class="sidebar">
-      <div class="menu_content">
+<nav class="sidebar">
+  <div class="menu_content">
 
     <ul class="menu_items" style="margin-top: 10%;">
-          <div class="menu_title menu_editor"></div>
-          <li class="item " id="home">
-            <a href="{% url 'sowaf:home' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bx-home' ></i>
-              </span>
-              <span class="navlink">Home</span>
-            </a>
-          </li>
-        </ul>
-<!-- reports -->
-<ul class="menu_items">
-          <div class="menu_title menu_dahsboard"></div>
-           <li class="item">
-            <div class="nav_link submenu_item">
-              <a href="{% url 'accounts:reports' %}" class="nav_label_link">
-                 <span class="navlink_icon">
-                 <i class='bx bx-spreadsheet'></i>
-                 </span>
-                 <span class="navlink">Reports</span>
-                </a>
-              <i class="bx bx-chevron-right arrow-left"></i>
-             </div>
+      <div class="menu_title menu_editor"></div>
 
-            <ul class="menu_items submenu">
-              <li class="item">
-                <a href="{% url 'accounts:report-trial-balance' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class='bx bx-bar-chart-alt-2'></i>
-                  </span>
-                  <span class="navlink">Trial Balance</span>
-                </a>
-              </li>  
-               <li class="item">
-                <a href="{% url 'accounts:report-pnl' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class='bx bx-trending-up'></i>
-                  </span>
-                  <span class="navlink">Profit & Loss</span>
-                </a>
-              </li>
-              <li class="item">
-                <a href="{% url 'accounts:report-balance-sheet' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-spreadsheet'></i>
-                  </span>
-                  <span class="navlink">Balance Sheet</span>
-                </a>
-              </li>
-              <li class="item">
-                <a href="{% url 'accounts:report-cashflow' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-money-withdraw'></i>
-                  </span>
-                  <span class="navlink">Cashflow</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-        </ul>
-<!-- end -->
+      <li class="item" id="home">
+        <a href="{% url 'sowaf:home' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bx-home'></i></span>
+          <span class="navlink">Home</span>
+        </a>
+      </li>
 
-<!-- sales -->
-        <ul class="menu_items">
-          <div class="menu_title menu_dahsboard"></div>
-           <li class="item">
-            <div class="nav_link submenu_item">
-            <a href="{% url 'sales:sales' %}" class="nav_label_link">
-             <span class="navlink_icon">
-               <i class='bx bx-money'></i>
-                </span>
-               <span class="navlink">Sales</span>
-              </a>
-             <i class="bx bx-chevron-right arrow-left"></i>
-            </div>
+      {% if workspace_mode == "sowa" and request.user.is_authenticated and request.user.is_staff %}
+      <li class="item">
+        <a href="{% url 'tenancy:company_list' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bx-body'></i></span>
+          <span class="navlink">Firm Central</span>
+        </a>
+      </li>
+      {% endif %}
 
-            <ul class="menu_items submenu">
-             <li class="item">
-                <a href="{% url 'sales:invoices' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class='bx bx-file'></i>
-                  </span>
-                  <span class="navlink">Invoices</span>
-                </a>
-              </li>  
-               <li class="item">
-                <a href="{% url 'sales:payments_list' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class='bx bx-credit-card'></i>
-                  </span>
-                  <span class="navlink">Payments</span>
-                </a>
-              </li>
-              <li class="item">
-                <a href="{% url 'sales:sales-receipt-list' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-detail'></i>
-                  </span>
-                  <span class="navlink">Receipts</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-        </ul>
-<!-- end -->
+      {% if workspace_mode == "sowa" and can_manage_sowa_staff %}
+      <li class="item">
+        <a href="{% url 'sowaAuth:staff_users' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bx-user-plus'></i></span>
+          <span class="navlink">Staff Users</span>
+        </a>
+      </li>
+      {% endif %}
 
-<!-- Expenses -->
-<ul class="menu_items">
-          <div class="menu_title menu_dahsboard"></div>
-           <li class="item">
-            <div class="nav_link submenu_item">
-              <a href="{% url 'expenses:expenses' %}" class="nav_label_link">
-               <span class="navlink_icon">
-                 <i class='bx bx-money-withdraw' ></i>
-               </span>
-               <span class="navlink">Expenses</span>
-              </a>
-              <i class="bx bx-chevron-right arrow-left"></i>
-          </div>
+      {% if workspace_mode == "client" and request.user.is_authenticated and request.user.is_staff %}
+      <li class="item">
+        <a href="{% url 'tenancy:exit_company' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bx-arrow-back'></i></span>
+          <span class="navlink">Back to Sowa</span>
+        </a>
+      </li>
+      {% endif %}
+    </ul>
 
-            <ul class="menu_items submenu">
-             <li class="item">
-                <a class="nav_link" role="menuitem" href="{% url 'expenses:time-activity' %}"> 
-                  <span class="navlink_icon">
-                    <i class='bx bx-time-five'></i>
-                  </span>
-                  <span class="navlink">
-                        Time activity</span>
-                    </a>
-                </li>
-               <li class="item">
-                <a href="{% url 'expenses:bills-list' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class='bx bx-file'></i>
-                  </span>
-                  <span class="navlink">Bill</span>
-                </a>
-              </li>
-              <li class="item">
-                <a href="{% url 'expenses:add-cheque' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-money-withdraw'></i>
-                  </span>
-                  <span class="navlink">Cheque</span>
-                </a>
-              </li>
-              <li class="item">
-                <a href="{% url 'expenses:expense-list' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-receipt'></i>
-                  </span>
-                  <span class="navlink">Expenses</span>
-                </a>
-              </li>
-                                  
-               <li class="item">
-                <a href="{% url 'expenses:credit-card' %}" class="nav_link">
-                  <span class="navlink_icon">
-                   <i class='bx bx-card'></i>
-                  </span>
-                  <span class="navlink">Credit card credit</span>
-                </a>
-              </li> 
-            </ul>
-          </li>
-        </ul>
-
-<!-- end -->
-
-<ul class="menu_items">
-          <div class="menu_title menu_dahsboard"></div>
-           <li class="item">
-            <div class="nav_link submenu_item">
-              <a href="#" class="nav_label_link">
-                 <span class="navlink_icon">
-                 <i class="bx bx-store"></i> 
-                 </span>
-                 <span class="navlink">Inventory</span>
-                </a>
-              <i class="bx bx-chevron-right arrow-left"></i>
-             </div>
-
-            <ul class="menu_items submenu">
-              <li class="item">
-                <a href="{% url 'inventory:products-list' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class="bx bx-package"></i>
-                  </span>
-                  <span class="navlink">Products and Services</span>
-                </a>
-              </li>  
-               <li class="item">
-                <a href="{% url 'inventory:movements-list' %}" class="nav_link">
-                  <span class="navlink_icon">
-                    <i class="bx bx-layer"></i> 
-                  </span>
-                  <span class="navlink">Inventory Management</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-        </ul>
-<!-- end -->
-
-
-        <ul class="menu_items">
-          <div class="menu_title menu_editor"></div>
-          <!-- duplicate these li tag if you want to add or remove navlink only -->
-          <!-- Start -->
-            <li class="item" >
-            <a href="{% url 'sowaf:clients' %}" class="nav_link" id="">
-              <span class="navlink_icon">
-                <i class='bx bx-body'></i>
-              </span>
-              <span class="navlink">Firm Central</span>
-            </a>
-          </li>
-        
-        <li class="item">
-            <a href="{% url 'sowaf:employees' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bxs-briefcase' ></i>
-              </span>
-              <span class="navlink">Employees</span>
-            </a>
-          </li>
-         
-          <li class="item">
-            <a href="{% url 'sowaf:taxes' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bxs-wallet-alt' ></i>
-              </span>
-              <span class="navlink">Taxes</span>
-            </a>
-          </li>
-          <li class="item">
-            <a href="{% url 'sowaf:assets' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bx-building-house' ></i>
-              </span>
-              <span class="navlink">Assets</span>
-            </a>
-          </li>
-          <li class="item">
-            <a href="{% url 'sowaf:miscellaneous' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bxl-graphql' ></i>
-              </span>
-              <span class="navlink">Miscellaneous</span>
-            </a>
-          </li>
-        </ul>
-          <!-- End -->
-
-        <ul class="menu_items" style="margin-top: 5%; border-top: 1px solid gray; bottom: 0;">
-          <div class="menu_title menu_setting"></div>
-          <li class="item">
-            <a href="#" class="nav_link">
-              <span class="navlink_icon">
-                <i class='bx bx-help-circle' ></i>
-              </span>
-              <span class="navlink">Help</span>
-            </a>
-          </li>
-<li class="item">
-    <a href="javascript:void(0);" class="nav_link" onclick="openSettingsCenter()">
-      <span class="navlink_icon">
-        <i class="bx bx-cog"></i>
-      </span>
-      <span class="navlink">Setting</span>
-    </a>
-  </li>
-          <li class="item">
-              <a href="{% url 'sowaAuth:logout' %}" class="nav_link">
-              <span class="navlink_icon">
-                <i class="bx bx-log-out"></i>
-              </span>
-              <span class="navlink">Logout</span>
-            </a>
-          </li>
-        </ul>
-
-        <!-- Sidebar Open / Close -->
-        <div class="bottom_content" id="bottom" style="margin-top: 5%; border-top: 1px solid gray; bottom: 0;">
-          <div class="bottom expand_sidebar">
-            <span> Expand</span>
-            <i class='bx bx-log-in' ></i>
-          </div>
-          <div class="bottom collapse_sidebar">
-            <span> Collapse</span>
-            <i class='bx bx-log-out'></i>
-          </div>
+    <ul class="menu_items">
+      <div class="menu_title menu_dahsboard"></div>
+      <li class="item">
+        <div class="nav_link submenu_item">
+          <a href="{% url 'sales:sales' %}" class="nav_label_link">
+            <span class="navlink_icon"><i class='bx bx-money'></i></span>
+            <span class="navlink">Sales</span>
+          </a>
+          <i class="bx bx-chevron-right arrow-left"></i>
         </div>
+
+        <ul class="menu_items submenu">
+          <li class="item">
+            <a href="{% url 'sales:invoices' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-file'></i></span>
+              <span class="navlink">Invoices</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'sales:payments_list' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-credit-card'></i></span>
+              <span class="navlink">Payments</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'sales:sales-receipt-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-detail'></i></span>
+              <span class="navlink">Receipts</span>
+            </a>
+          </li>
+        </ul>
+      </li>
+    </ul>
+
+    <ul class="menu_items">
+      <div class="menu_title menu_dahsboard"></div>
+      <li class="item">
+        <div class="nav_link submenu_item">
+          <a href="{% url 'expenses:expenses' %}" class="nav_label_link">
+            <span class="navlink_icon"><i class='bx bx-money-withdraw'></i></span>
+            <span class="navlink">Expenses</span>
+          </a>
+          <i class="bx bx-chevron-right arrow-left"></i>
+        </div>
+
+        <ul class="menu_items submenu">
+          <li class="item">
+            <a class="nav_link" role="menuitem" href="{% url 'expenses:time-activity' %}">
+              <span class="navlink_icon"><i class='bx bx-time-five'></i></span>
+              <span class="navlink">Time activity</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'expenses:bills-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-file'></i></span>
+              <span class="navlink">Bill</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'expenses:add-cheque' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-money-withdraw'></i></span>
+              <span class="navlink">Cheque</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'expenses:expense-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-receipt'></i></span>
+              <span class="navlink">Expenses</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'expenses:credit-card' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-card'></i></span>
+              <span class="navlink">Credit card credit</span>
+            </a>
+          </li>
+        </ul>
+      </li>
+    </ul>
+
+    <ul class="menu_items">
+      <div class="menu_title menu_dahsboard"></div>
+      <li class="item">
+        <div class="nav_link submenu_item">
+          <a href="#" class="nav_label_link">
+            <span class="navlink_icon"><i class="bx bx-store"></i></span>
+            <span class="navlink">Inventory</span>
+          </a>
+          <i class="bx bx-chevron-right arrow-left"></i>
+        </div>
+
+        <ul class="menu_items submenu">
+          <li class="item">
+            <a href="{% url 'inventory:add-stock-transfer' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-package"></i></span>
+              <span class="navlink">Stock transfer</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:products-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-package"></i></span>
+              <span class="navlink">Stock adjustment</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:products-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-package"></i></span>
+              <span class="navlink">Build assembly</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:products-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-package"></i></span>
+              <span class="navlink">Stock levels</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:products-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-package"></i></span>
+              <span class="navlink">Products</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:movements-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-layer"></i></span>
+              <span class="navlink">Inventory Management</span>
+            </a>
+          </li>
+        </ul>
+      </li>
+    </ul>
+
+    <ul class="menu_items">
+      <div class="menu_title menu_editor"></div>
+
+      <li class="item">
+        <a href="{% url 'sowaf:employees' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bxs-briefcase'></i></span>
+          <span class="navlink">Employees</span>
+        </a>
+      </li>
+
+      {% if workspace_mode == "sowa" and request.user.is_authenticated and request.user.is_staff %}
+      <li class="item">
+        <a href="{% url 'sowaf:taxes' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bxs-wallet-alt'></i></span>
+          <span class="navlink">Taxes</span>
+        </a>
+      </li>
+      {% endif %}
+
+      <li class="item">
+        <a href="{% url 'sowaf:assets' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bx-building-house'></i></span>
+          <span class="navlink">Assets</span>
+        </a>
+      </li>
+
+      <li class="item">
+        <div class="nav_link submenu_item">
+          <a href="{% url 'accounts:reports' %}" class="nav_label_link">
+            <span class="navlink_icon"><i class='bx bx-spreadsheet'></i></span>
+            <span class="navlink">Reports</span>
+          </a>
+          <i class="bx bx-chevron-right arrow-left"></i>
+        </div>
+
+        <ul class="menu_items submenu">
+          <li class="item">
+            <a href="{% url 'accounts:report-trial-balance' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-bar-chart-alt-2'></i></span>
+              <span class="navlink">Trial Balance</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'accounts:report-pnl' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-trending-up'></i></span>
+              <span class="navlink">Profit & Loss</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'accounts:report-balance-sheet' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-spreadsheet'></i></span>
+              <span class="navlink">Balance Sheet</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'accounts:report-cashflow' %}" class="nav_link">
+              <span class="navlink_icon"><i class='bx bx-money-withdraw'></i></span>
+              <span class="navlink">Cashflow</span>
+            </a>
+          </li>
+        </ul>
+      </li>
+
+      <li class="item">
+        <a href="{% url 'sowaf:miscellaneous' %}" class="nav_link">
+          <span class="navlink_icon"><i class='bx bxl-graphql'></i></span>
+          <span class="navlink">Miscellaneous</span>
+        </a>
+      </li>
+    </ul>
+
+    <ul class="menu_items" style="margin-top: 5%; border-top: 1px solid gray; bottom: 0;">
+      <div class="menu_title menu_setting"></div>
+
+      <li class="item">
+        <a href="#" class="nav_link">
+          <span class="navlink_icon"><i class='bx bx-help-circle'></i></span>
+          <span class="navlink">Help</span>
+        </a>
+      </li>
+
+      <li class="item">
+        <a href="javascript:void(0);" class="nav_link" onclick="openSettingsCenter()">
+          <span class="navlink_icon"><i class="bx bx-cog"></i></span>
+          <span class="navlink">Setting</span>
+        </a>
+      </li>
+
+      <li class="item">
+        <a href="{% url 'sowaAuth:logout' %}" class="nav_link">
+          <span class="navlink_icon"><i class="bx bx-log-out"></i></span>
+          <span class="navlink">Logout</span>
+        </a>
+      </li>
+    </ul>
+
+    <div class="bottom_content" id="bottom" style="margin-top: 5%; border-top: 1px solid gray; bottom: 0;">
+      <div class="bottom expand_sidebar">
+        <span> Expand</span>
+        <i class='bx bx-log-in'></i>
       </div>
-    </nav>
+      <div class="bottom collapse_sidebar">
+        <span> Collapse</span>
+        <i class='bx bx-log-out'></i>
+      </div>
+    </div>
+
+  </div>
+</nav>

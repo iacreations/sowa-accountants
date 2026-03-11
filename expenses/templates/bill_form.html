@@ -91,9 +91,18 @@
             <input type="text" name="bill_no" value="{{ generated_bill_no }}" readonly style="color: #39B54B; font-weight: 700;">
           </div>
 
+          <!-- ✅ UPDATED LOCATION FIELD -->
           <div class="form-group">
             <label>Location</label>
-            <input type="text" name="location" value="{{ bill.location|default_if_none:'' }}">
+            <select name="location" id="locationSelect">
+              <option value="">-- Select location --</option>
+              {% for loc in locations %}
+                <option value="{{ loc.id }}" {% if bill and bill.location_id == loc.id %}selected{% endif %}>
+                  {{ loc.name }}
+                </option>
+              {% endfor %}
+              <option value="add_new">➕ Add New</option>
+            </select>
           </div>
         </div>
       </div>
@@ -379,7 +388,10 @@
     const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
     const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
 
-    // CSRF helper (for class ajax create)
+    // ✅ NEW: add location ajax (same endpoint you used in Expense form)
+    const ADD_LOCATION_AJAX_URL = "{% url 'inventory:add_location_ajax' %}";
+
+    // CSRF helper (for ajax create)
     function getCookie(name) {
       let cookieValue = null;
       if (document.cookie && document.cookie !== '') {
@@ -407,6 +419,7 @@
       window.open(ADD_PRODUCT_URL, "_blank", "noopener");
       selectEl.value = "";
     }
+
     function addNewClassInline(selectEl){
       const name = (prompt("Enter new class name:") || "").trim();
       if(!name){ selectEl.value = ""; return; }
@@ -439,6 +452,41 @@
       });
     }
 
+    // ✅ NEW: add new location inline (no style change)
+    function addNewLocationInline(selectEl){
+      const name = (prompt("Enter new location name:") || "").trim();
+      if(!name){ selectEl.value = ""; return; }
+
+      fetch(ADD_LOCATION_AJAX_URL, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCookie("csrftoken"),
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "name=" + encodeURIComponent(name)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data && data.success){
+          const opt = document.createElement("option");
+          opt.value = data.id;
+          opt.textContent = data.name;
+          opt.selected = true;
+
+          const last = selectEl.querySelector('option[value="add_new"]');
+          selectEl.insertBefore(opt, last);
+          selectEl.value = String(data.id);
+        } else {
+          alert((data && data.error) ? data.error : "Failed to add location");
+          selectEl.value = "";
+        }
+      })
+      .catch(() => {
+        alert("Network error. Try again.");
+        selectEl.value = "";
+      });
+    }
+
     // open Add supplier in new tab if chosen (your existing logic, kept)
     (function(){
       const sel = document.getElementById('supplier-select');
@@ -446,6 +494,18 @@
         sel.addEventListener('change', function(){
           if (this.value === 'add_new'){
             openAddSupplier(this);
+          }
+        });
+      }
+    })();
+
+    // ✅ Location header handler
+    (function(){
+      const locSel = document.getElementById("locationSelect");
+      if(locSel){
+        locSel.addEventListener("change", function(){
+          if(this.value === "add_new"){
+            addNewLocationInline(this);
           }
         });
       }
@@ -474,7 +534,6 @@
     function updateRowNumbers(tbody) {
       const rows = tbody.querySelectorAll("tr");
       rows.forEach((row, index) => { row.cells[0].textContent = index + 1; });
-      // keep billable values aligned to row index
       tbody.querySelectorAll('input[type="checkbox"]').forEach((cb, i)=> cb.value = i);
     }
 

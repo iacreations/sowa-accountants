@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.views.decorators.http import require_GET, require_POST
 from django.http import JsonResponse
 from django.db import transaction
 import json
@@ -18,11 +19,13 @@ from django.core.files import File
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from accounts.utils import income_accounts_qs, expense_accounts_qs
-from .models import Product,BundleItem,Category,Pclass
+from .models import Product, BundleItem, Category, Pclass, InventoryLocation, InventoryMovement, StockTransfer, StockTransferLine
 from sowaf.models import Newsupplier
 from accounts.models import Account
 from sales.models import InvoiceItem
-from .services import InventoryMovement
+from .services import rebuild_movements_for_stock_transfer, get_main_store
+from tenancy.permissions import company_required, module_required
+
 # Create your views here.
 def _dec(v):
     try:
@@ -30,25 +33,37 @@ def _dec(v):
     except Exception:
         return Decimal("0.00")
 
+
 # working on the product detail
 ZERO_DEC = Value(Decimal("0"), output_field=DecimalField(max_digits=18, decimal_places=2))
 
+
+@login_required
+@company_required
+@module_required("inventory")
 def inventory_products_list(request):
     """
     Shows products, filtered to Inventory type only.
     """
+    company = request.company
     qs = (
-        Product.objects
+        Product.objects.for_company(company)
         .filter(type="Inventory")
         .select_related("category", "class_field", "supplier")
         .order_by("name")
     )
     return render(request, "products_list.html", {"products": qs})
 
+
+@login_required
+@company_required
+@module_required("inventory")
 def product_detail(request, pk: int):
+    company = request.company
+
     # Product + common FKs
     product = get_object_or_404(
-        Product.objects.select_related(
+        Product.objects.for_company(company).select_related(
             "category",
             "class_field",
             "supplier",
@@ -61,10 +76,14 @@ def product_detail(request, pk: int):
     )
 
     # How many units sold across all invoices
+    sold_qty_qs = InvoiceItem.objects.filter(product_id=product.id)
+    if hasattr(InvoiceItem, "company_id"):
+        sold_qty_qs = sold_qty_qs.filter(company=company)
+    elif hasattr(InvoiceItem, "invoice") and hasattr(getattr(InvoiceItem, "invoice", None), "field"):
+        pass
+
     sold_qty = (
-        InvoiceItem.objects.filter(product_id=product.id)
-        .aggregate(v=Coalesce(Sum("qty"), ZERO_DEC))
-        .get("v") or Decimal("0")
+        sold_qty_qs.aggregate(v=Coalesce(Sum("qty"), ZERO_DEC)).get("v") or Decimal("0")
     )
 
     on_hand = Decimal(product.quantity or 0)
@@ -83,18 +102,19 @@ def product_detail(request, pk: int):
         bundle_rows = list(
             BundleItem.objects
             .select_related("product")
-            .filter(bundle=product)
+            .filter(bundle=product, product__company=company)
         )
 
     # NEW: Recent Inventory Movements for this product
     movements = (
-        InventoryMovement.objects
+        InventoryMovement.objects.for_company(company)
         .filter(product=product)
+        .select_related("location")
         .order_by("-date", "-id")[:30]
     )
 
     # NEW: Movement totals (in/out) for display
-    totals = InventoryMovement.objects.filter(product=product).aggregate(
+    totals = InventoryMovement.objects.for_company(company).filter(product=product).aggregate(
         total_in=Coalesce(Sum("qty_in"), ZERO_DEC),
         total_out=Coalesce(Sum("qty_out"), ZERO_DEC),
     )
@@ -123,6 +143,10 @@ def product_detail(request, pk: int):
     }
     return render(request, "product_detail.html", context)
 
+
+@login_required
+@company_required
+@module_required("inventory")
 def inventory_movements_list(request):
     """
     Full inventory ledger.
@@ -130,7 +154,13 @@ def inventory_movements_list(request):
       ?product_id=1
       ?source_type=BILL
     """
-    qs = InventoryMovement.objects.select_related("product").order_by("-date", "-id")
+    company = request.company
+
+    qs = (
+        InventoryMovement.objects.for_company(company)
+        .select_related("product", "location")
+        .order_by("-date", "-id")
+    )
 
     product_id = request.GET.get("product_id")
     if product_id:
@@ -140,7 +170,7 @@ def inventory_movements_list(request):
     if source_type:
         qs = qs.filter(source_type=source_type)
 
-    products = Product.objects.filter(type="Inventory").order_by("name")
+    products = Product.objects.for_company(company).filter(type="Inventory").order_by("name")
 
     return render(
         request,
@@ -152,6 +182,8 @@ def inventory_movements_list(request):
             "selected_source_type": source_type or "",
         }
     )
+
+
 # adding a product
 # -------------------------
 # INTERNAL HELPERS
@@ -164,6 +196,7 @@ def _to_int(val, default=0):
     except Exception:
         return default
 
+
 def _to_dec(val, default=Decimal("0.00")):
     if val in (None, "", "None", "null"):
         return default
@@ -172,52 +205,63 @@ def _to_dec(val, default=Decimal("0.00")):
     except Exception:
         return default
 
-def _find_default_account(name_contains: str):
-    """
-    Finds an account by name (contains), active only.
-    """
-    return Account.objects.filter(is_active=True, account_name__icontains=name_contains).order_by("account_name").first()
 
-def _default_inventory_asset_account():
+def _find_default_account(company, name_contains: str):
+    """
+    Finds an account by name (contains), active only, company-safe where applicable.
+    """
+    qs = Account.objects.filter(is_active=True, account_name__icontains=name_contains)
+    if hasattr(Account, "company_id"):
+        qs = qs.filter(company=company)
+    return qs.order_by("account_name").first()
+
+
+def _default_inventory_asset_account(company):
     """
     QuickBooks-like default.
-    If you already have an Inventory/Stock account in CoA, it picks it.
-    Otherwise, returns None (we still allow saving, but posting will fallback later).
+    If you already have a Stock account in CoA, it picks it.
+    Otherwise, returns None.
     """
     return (
-        _find_default_account("Inventory")
-        or _find_default_account("Stock")
-        or _find_default_account("Merchandise")
+        _find_default_account(company, "Inventory")
+        or _find_default_account(company, "Stock")
+        or _find_default_account(company, "Merchandise")
     )
 
-def _default_cogs_account():
+
+def _default_cogs_account(company):
     """
     QuickBooks-like default.
     """
     return (
-        _find_default_account("Cost of Sales")
-        or _find_default_account("Cost of Goods")
-        or _find_default_account("COGS")
-        or _find_default_account("Expenses")
-        or _find_default_account("Expense")
+        _find_default_account(company, "Cost of Sales")
+        or _find_default_account(company, "Cost of Goods")
+        or _find_default_account(company, "COGS")
+        or _find_default_account(company, "Expenses")
+        or _find_default_account(company, "Expense")
     )
 
 
 # ======================================================
 # ADD PRODUCT
 # ======================================================
+@login_required
+@company_required
+@module_required("inventory")
 @transaction.atomic
 def add_products(request):
+    company = request.company
+
     if request.method == "POST":
         ptype = request.POST.get("type")
         name = (request.POST.get("name") or "").strip()
         sku = (request.POST.get("sku") or "").strip()
 
         category_id = request.POST.get("category")
-        category = Category.objects.filter(pk=category_id).first() if category_id else None
+        category = Category.objects.for_company(company).filter(pk=category_id).first() if category_id else None
 
         class_field_id = request.POST.get("class_field")
-        class_field = Pclass.objects.filter(pk=class_field_id).first() if class_field_id else None
+        class_field = Pclass.objects.for_company(company).filter(pk=class_field_id).first() if class_field_id else None
 
         sales_description = request.POST.get("sales_description")
         purchase_description = request.POST.get("purchase_description")
@@ -228,22 +272,33 @@ def add_products(request):
         display_bundle_contents = (request.POST.get("display_bundle_contents") == "on")
         taxable = (request.POST.get("taxable") == "on")
 
-        # ✅ IMPORTANT: Product.quantity is DecimalField -> store Decimal, not int
+        # IMPORTANT: Product.quantity is DecimalField -> store Decimal, not int
         quantity = _to_dec(request.POST.get("quantity"), default=Decimal("0.00"))
 
         sales_price = _to_dec(request.POST.get("sales_price"), default=None)
         purchase_price = _to_dec(request.POST.get("purchase"), default=None)  # your HTML uses name="purchase"
 
         income_account_id = request.POST.get("income_account")
-        income_account = Account.objects.filter(pk=income_account_id).first() if income_account_id else None
+        income_qs = income_accounts_qs()
+        if hasattr(income_qs, "for_company"):
+            income_qs = income_qs.for_company(company)
+        elif hasattr(income_qs.model, "company_id"):
+            income_qs = income_qs.filter(company=company)
+        income_account = income_qs.filter(pk=income_account_id).first() if income_account_id else None
 
         expense_account_id = request.POST.get("expense_account")
-        expense_account = Account.objects.filter(pk=expense_account_id).first() if expense_account_id else None
+        expense_qs = expense_accounts_qs()
+        if hasattr(expense_qs, "for_company"):
+            expense_qs = expense_qs.for_company(company)
+        elif hasattr(expense_qs.model, "company_id"):
+            expense_qs = expense_qs.filter(company=company)
+        expense_account = expense_qs.filter(pk=expense_account_id).first() if expense_account_id else None
 
         supplier_id = request.POST.get("supplier")
-        supplier = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
+        supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
         product = Product.objects.create(
+            company=company,
             type=ptype,
             name=name,
             sku=sku,
@@ -265,23 +320,20 @@ def add_products(request):
             display_bundle_contents=display_bundle_contents,
         )
 
-        # ✅ QuickBooks-style defaults for Inventory items
-        # (No form changes required; this just prevents posting crashes.)
+        # QuickBooks-style defaults for Inventory items
         if product.type == "Inventory":
-            # only set defaults if empty
             if not getattr(product, "inventory_asset_account_id", None):
                 try:
-                    product.inventory_asset_account = _default_inventory_asset_account()
+                    product.inventory_asset_account = _default_inventory_asset_account(company)
                 except Exception:
                     pass
 
             if not getattr(product, "cogs_account_id", None):
                 try:
-                    product.cogs_account = _default_cogs_account()
+                    product.cogs_account = _default_cogs_account(company)
                 except Exception:
                     pass
 
-            # fallback: if user selected expense_account, let it act as COGS if cogs still empty
             if not getattr(product, "cogs_account_id", None) and product.expense_account_id:
                 try:
                     product.cogs_account = product.expense_account
@@ -291,7 +343,6 @@ def add_products(request):
             try:
                 product.save(update_fields=["inventory_asset_account", "cogs_account"])
             except Exception:
-                # if fields don't exist yet, ignore
                 pass
 
         # bundle items
@@ -300,7 +351,7 @@ def add_products(request):
             quantities = request.POST.getlist("bundle_product_qty[]")
             for prod_id, qty in zip(product_ids, quantities):
                 if prod_id:
-                    child_product = Product.objects.filter(pk=_to_int(prod_id)).first()
+                    child_product = Product.objects.for_company(company).filter(pk=_to_int(prod_id)).first()
                     if child_product:
                         BundleItem.objects.create(
                             bundle=product,
@@ -315,13 +366,25 @@ def add_products(request):
             return redirect("sales:sales")
         return redirect("sales:sales")
 
+    income_qs = income_accounts_qs()
+    if hasattr(income_qs, "for_company"):
+        income_qs = income_qs.for_company(request.company)
+    elif hasattr(income_qs.model, "company_id"):
+        income_qs = income_qs.filter(company=request.company)
+
+    expense_qs = expense_accounts_qs()
+    if hasattr(expense_qs, "for_company"):
+        expense_qs = expense_qs.for_company(request.company)
+    elif hasattr(expense_qs.model, "company_id"):
+        expense_qs = expense_qs.filter(company=request.company)
+
     context = {
-        "products": Product.objects.all(),
-        "suppliers": Newsupplier.objects.all(),
-        "categories": Category.objects.all(),
-        "classes": Pclass.objects.all(),
-        "income_accounts": income_accounts_qs(),
-        "expense_accounts": expense_accounts_qs(),
+        "products": Product.objects.for_company(company).all(),
+        "suppliers": Newsupplier.objects.for_company(company).all(),
+        "categories": Category.objects.for_company(company).all(),
+        "classes": Pclass.objects.for_company(company).all(),
+        "income_accounts": income_qs,
+        "expense_accounts": expense_qs,
         "edit_mode": False,
     }
     return render(request, "Products_and_services_form.html", context)
@@ -330,28 +393,44 @@ def add_products(request):
 # ======================================================
 # EDIT PRODUCT
 # ======================================================
+@login_required
+@company_required
+@module_required("inventory")
 @transaction.atomic
 def product_edit(request, pk: int):
-    product = get_object_or_404(Product, pk=pk)
+    company = request.company
+    product = get_object_or_404(Product.objects.for_company(company), pk=pk)
 
     if request.method == "POST":
         ptype = request.POST.get("type") or product.type
         product.type = ptype
 
         product.name = (request.POST.get("name") or "").strip()
-        product.sku  = (request.POST.get("sku") or "").strip()
+        product.sku = (request.POST.get("sku") or "").strip()
 
-        category_id     = request.POST.get("category")
-        class_field_id  = request.POST.get("class_field")
-        supplier_id     = request.POST.get("supplier")
-        income_acc_id   = request.POST.get("income_account")
-        expense_acc_id  = request.POST.get("expense_account")
+        category_id = request.POST.get("category")
+        class_field_id = request.POST.get("class_field")
+        supplier_id = request.POST.get("supplier")
+        income_acc_id = request.POST.get("income_account")
+        expense_acc_id = request.POST.get("expense_account")
 
-        product.category    = Category.objects.filter(pk=category_id).first() if category_id else None
-        product.class_field = Pclass.objects.filter(pk=class_field_id).first() if class_field_id else None
-        product.supplier    = Newsupplier.objects.filter(pk=supplier_id).first() if supplier_id else None
-        product.income_account  = Account.objects.filter(pk=income_acc_id).first() if income_acc_id else None
-        product.expense_account = Account.objects.filter(pk=expense_acc_id).first() if expense_acc_id else None
+        product.category = Category.objects.for_company(company).filter(pk=category_id).first() if category_id else None
+        product.class_field = Pclass.objects.for_company(company).filter(pk=class_field_id).first() if class_field_id else None
+        product.supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+
+        income_qs = income_accounts_qs()
+        if hasattr(income_qs, "for_company"):
+            income_qs = income_qs.for_company(company)
+        elif hasattr(income_qs.model, "company_id"):
+            income_qs = income_qs.filter(company=company)
+        product.income_account = income_qs.filter(pk=income_acc_id).first() if income_acc_id else None
+
+        expense_qs = expense_accounts_qs()
+        if hasattr(expense_qs, "for_company"):
+            expense_qs = expense_qs.for_company(company)
+        elif hasattr(expense_qs.model, "company_id"):
+            expense_qs = expense_qs.filter(company=company)
+        product.expense_account = expense_qs.filter(pk=expense_acc_id).first() if expense_acc_id else None
 
         product.sell_checkbox = (request.POST.get("sell_checkbox") == "on")
         product.purchase_checkbox = (request.POST.get("purchase_checkbox") == "on")
@@ -369,25 +448,24 @@ def product_edit(request, pk: int):
         product.is_bundle = (ptype == "Bundle")
         product.save()
 
-        # ✅ Set defaults again if Inventory and missing
+        # Set defaults again if Inventory and missing
         if product.type == "Inventory":
             changed = False
 
             try:
                 if not product.inventory_asset_account_id:
-                    product.inventory_asset_account = _default_inventory_asset_account()
+                    product.inventory_asset_account = _default_inventory_asset_account(company)
                     changed = True
             except Exception:
                 pass
 
             try:
                 if not product.cogs_account_id:
-                    product.cogs_account = _default_cogs_account()
+                    product.cogs_account = _default_cogs_account(company)
                     changed = True
             except Exception:
                 pass
 
-            # fallback: expense_account becomes COGS if still empty
             try:
                 if (not product.cogs_account_id) and product.expense_account_id:
                     product.cogs_account = product.expense_account
@@ -403,14 +481,20 @@ def product_edit(request, pk: int):
 
         # bundle handling
         if product.is_bundle:
-            product.bundleitem_set.all().delete()
+            try:
+                product.bundleitem_set.all().delete()
+            except Exception:
+                try:
+                    product.bundle_items.all().delete()
+                except Exception:
+                    pass
 
             product_ids = request.POST.getlist("bundle_product_id[]")
-            quantities  = request.POST.getlist("bundle_product_qty[]")
+            quantities = request.POST.getlist("bundle_product_qty[]")
 
             for prod_id, qty in zip(product_ids, quantities):
                 if prod_id:
-                    child = Product.objects.filter(pk=_to_int(prod_id)).first()
+                    child = Product.objects.for_company(company).filter(pk=_to_int(prod_id)).first()
                     if child:
                         BundleItem.objects.create(
                             bundle=product,
@@ -418,11 +502,13 @@ def product_edit(request, pk: int):
                             quantity=_to_int(qty, default=1)
                         )
         else:
-            # if you have a different related_name, keep this try/except
             try:
                 product.bundle_items.all().delete()
             except Exception:
-                pass
+                try:
+                    product.bundleitem_set.all().delete()
+                except Exception:
+                    pass
 
         action = request.POST.get("save_action")
         if action == "save&new":
@@ -431,41 +517,267 @@ def product_edit(request, pk: int):
             return redirect("sales:sales")
         return redirect("inventory:product-detail", pk=product.pk)
 
+    income_qs = income_accounts_qs()
+    if hasattr(income_qs, "for_company"):
+        income_qs = income_qs.for_company(company)
+    elif hasattr(income_qs.model, "company_id"):
+        income_qs = income_qs.filter(company=company)
+
+    expense_qs = expense_accounts_qs()
+    if hasattr(expense_qs, "for_company"):
+        expense_qs = expense_qs.for_company(company)
+    elif hasattr(expense_qs.model, "company_id"):
+        expense_qs = expense_qs.filter(company=company)
+
     context = {
         "edit_mode": True,
         "product": product,
-        "products": Product.objects.all(),
-        "suppliers": Newsupplier.objects.all(),
-        "categories": Category.objects.all(),
-        "classes": Pclass.objects.all(),
-        "income_accounts": income_accounts_qs(),
-        "expense_accounts": expense_accounts_qs(),
+        "products": Product.objects.for_company(company).all(),
+        "suppliers": Newsupplier.objects.for_company(company).all(),
+        "categories": Category.objects.for_company(company).all(),
+        "classes": Pclass.objects.for_company(company).all(),
+        "income_accounts": income_qs,
+        "expense_accounts": expense_qs,
     }
     return render(request, "Products_and_services_form.html", context)
 
+
 # end
+@login_required
+@company_required
+@module_required("inventory")
 def add_category_ajax(request):
+    company = request.company
     if request.method == "POST":
         name = request.POST.get("name")
         if not name:
             return JsonResponse({"success": False, "error": "Category name required"})
-        
-        cat, created = Category.objects.get_or_create(category_type=name)
+
+        cat, created = Category.objects.for_company(company).get_or_create(category_type=name)
         return JsonResponse({
             "success": True,
             "id": cat.id,
             "name": cat.category_type,
         })
 
+
+@login_required
+@company_required
+@module_required("inventory")
 def add_class_ajax(request):
+    company = request.company
     if request.method == "POST":
         name = request.POST.get("name")
         if not name:
             return JsonResponse({"success": False, "error": "Class name required"})
-        
-        cls, created = Pclass.objects.get_or_create(class_name=name)
+
+        cls, created = Pclass.objects.for_company(company).get_or_create(class_name=name)
         return JsonResponse({
             "success": True,
             "id": cls.id,
             "name": cls.class_name,
         })
+
+
+def _dec(val, default="0"):
+    try:
+        s = str(val).strip()
+        if s == "":
+            s = str(default)
+        return Decimal(s)
+    except Exception:
+        return Decimal(str(default))
+
+
+# stock transfer
+@login_required
+@company_required
+@module_required("inventory")
+@transaction.atomic
+def add_stock_transfer(request):
+    company = request.company
+
+    if request.method == "POST":
+        from_loc_id = (request.POST.get("from_location") or "").strip()
+        to_loc_id = (request.POST.get("to_location") or "").strip()
+        transfer_date = request.POST.get("transfer_date") or None
+        memo = request.POST.get("memo") or ""
+
+        if not from_loc_id or not to_loc_id:
+            return redirect("inventory:add-stock-transfer")
+
+        if from_loc_id == to_loc_id:
+            return redirect("inventory:add-stock-transfer")
+
+        from_loc = get_object_or_404(InventoryLocation.objects.for_company(company), pk=from_loc_id)
+        to_loc = get_object_or_404(InventoryLocation.objects.for_company(company), pk=to_loc_id)
+
+        # parse date
+        if transfer_date:
+            try:
+                tdate = timezone.datetime.strptime(transfer_date, "%Y-%m-%d").date()
+            except Exception:
+                tdate = timezone.localdate()
+        else:
+            tdate = timezone.localdate()
+
+        transfer = StockTransfer.objects.create(
+            company=company,
+            from_location=from_loc,
+            to_location=to_loc,
+            transfer_date=tdate,
+            memo=memo,
+        )
+
+        product_ids = request.POST.getlist("product[]")
+        qtys = request.POST.getlist("qty[]")
+
+        lines = []
+        for i, pid in enumerate(product_ids):
+            if not pid:
+                continue
+            product = Product.objects.for_company(company).filter(pk=pid).first()
+            if not product:
+                continue
+
+            qty = _dec(qtys[i] if i < len(qtys) else "0", "0")
+            if qty <= 0:
+                continue
+
+            lines.append(StockTransferLine(
+                transfer=transfer,
+                product=product,
+                qty=qty,
+            ))
+
+        if not lines:
+            transfer.delete()
+            return redirect("inventory:add-stock-transfer")
+
+        StockTransferLine.objects.bulk_create(lines)
+
+        # Build movements (OUT from A, IN to B) — no GL posting
+        try:
+            rebuild_movements_for_stock_transfer(transfer)
+        except Exception:
+            raise
+
+        return redirect("inventory:stock-transfer-list")
+
+    context = {
+        "locations": InventoryLocation.objects.for_company(company).filter(is_active=True).order_by("name"),
+        "products": Product.objects.for_company(company).all().order_by("name"),
+        "today": timezone.localdate(),
+    }
+    return render(request, "stock_transfer_form.html", context)
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def stock_transfer_list(request):
+    company = request.company
+    transfers = StockTransfer.objects.for_company(company).select_related("from_location", "to_location").all()
+    return render(request, "stock_transfer_list.html", {"transfers": transfers})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def stock_transfer_detail(request, pk: int):
+    company = request.company
+    transfer = get_object_or_404(
+        StockTransfer.objects.for_company(company).select_related("from_location", "to_location"),
+        pk=pk
+    )
+    lines = transfer.lines.select_related("product").all()
+    return render(request, "stock_transfer_detail.html", {"transfer": transfer, "lines": lines})
+
+
+def _get_default_location(company):
+    loc = InventoryLocation.objects.for_company(company).filter(is_default=True, is_active=True).first()
+    if not loc:
+        store = get_main_store(company) if callable(get_main_store) else None
+        create_kwargs = {
+            "company": company,
+            "name": "Main Store",
+            "is_default": True,
+            "is_active": True,
+        }
+        if store is not None:
+            create_kwargs["store"] = store
+        loc = InventoryLocation.objects.create(**create_kwargs)
+
+    InventoryLocation.objects.for_company(company).exclude(id=loc.id).update(is_default=False)
+    return loc
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@require_GET
+def locations_list_json(request):
+    company = request.company
+    locs = InventoryLocation.objects.for_company(company).filter(is_active=True).order_by("-is_default", "name")
+    return JsonResponse({
+        "ok": True,
+        "locations": [{"id": l.id, "name": l.name, "is_default": l.is_default} for l in locs]
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@require_POST
+def location_create_json(request):
+    company = request.company
+    name = (request.POST.get("name") or "").strip()
+    if not name:
+        return JsonResponse({"ok": False, "error": "Location name is required."}, status=400)
+
+    loc = InventoryLocation.objects.for_company(company).filter(name__iexact=name).first()
+    if loc:
+        if not loc.is_active:
+            loc.is_active = True
+            loc.save(update_fields=["is_active"])
+        return JsonResponse({"ok": True, "location": {"id": loc.id, "name": loc.name}})
+
+    store = get_main_store(company) if callable(get_main_store) else None
+    create_kwargs = {
+        "company": company,
+        "name": name,
+        "is_default": False,
+        "is_active": True,
+    }
+    if store is not None:
+        create_kwargs["store"] = store
+
+    loc = InventoryLocation.objects.create(**create_kwargs)
+    _get_default_location(company)  # ensures default exists
+    return JsonResponse({"ok": True, "location": {"id": loc.id, "name": loc.name}})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@require_POST
+@transaction.atomic
+def add_location_ajax(request):
+    company = request.company
+    name = (request.POST.get("name") or "").strip()
+    if not name:
+        return JsonResponse({"success": False, "error": "Location name is required."})
+
+    store = get_main_store(company) if callable(get_main_store) else None
+
+    loc, created = InventoryLocation.objects.for_company(company).get_or_create(
+        store=store,
+        name=name,
+        defaults={"company": company, "is_active": True, "is_default": False},
+    )
+
+    if not loc.is_active:
+        loc.is_active = True
+        loc.save(update_fields=["is_active"])
+
+    return JsonResponse({"success": True, "id": loc.id, "name": loc.name})
