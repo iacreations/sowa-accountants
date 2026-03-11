@@ -23,7 +23,7 @@ def copy_location_data(apps, schema_editor):
             continue
 
         if old_value in valid_locations:
-            expense.location = valid_locations[old_value]
+            expense.location_id = valid_locations[old_value]
             expense.save(update_fields=["location"])
 
 
