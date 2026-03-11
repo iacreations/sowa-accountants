@@ -5,12 +5,11 @@ from decimal import Decimal
 from django.db import migrations, models
 
 
-def clean_empty_location_values(apps, schema_editor):
-    # Convert empty-string values to NULL before changing the field type
+def clean_invalid_location_values(apps, schema_editor):
     schema_editor.execute("""
         UPDATE expenses_expense
         SET location = NULL
-        WHERE location = '';
+        WHERE TRIM(COALESCE(location, '')) !~ '^[0-9]+$';
     """)
 
 
@@ -22,7 +21,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(clean_empty_location_values, migrations.RunPython.noop),
+        migrations.RunPython(clean_invalid_location_values, migrations.RunPython.noop),
 
         migrations.AlterField(
             model_name='expense',
