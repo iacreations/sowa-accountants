@@ -7,7 +7,7 @@ import secrets
 
 
 class Company(models.Model):
-    name = models.CharField(max_length=255)
+    name = models.CharField(max_length=255,null=True,blank=True)
     company_kind = models.CharField(
         max_length=20,
         choices=[

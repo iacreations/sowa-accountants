@@ -56,7 +56,7 @@ class Expense(TenantModel):
     location = models.ForeignKey(
         InventoryLocation,
         null=True, blank=True,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name="expenses",
     )
 
