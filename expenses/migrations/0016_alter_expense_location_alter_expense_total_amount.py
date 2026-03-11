@@ -5,12 +5,26 @@ from decimal import Decimal
 from django.db import migrations, models
 
 
-def clean_invalid_location_values(apps, schema_editor):
-    schema_editor.execute("""
-        UPDATE expenses_expense
-        SET location = NULL
-        WHERE TRIM(COALESCE(location, '')) !~ '^[0-9]+$';
-    """)
+def copy_location_data(apps, schema_editor):
+    Expense = apps.get_model("expenses", "Expense")
+    InventoryLocation = apps.get_model("inventory", "InventoryLocation")
+
+    valid_locations = {str(obj.pk): obj.pk for obj in InventoryLocation.objects.all()}
+
+    for expense in Expense.objects.all():
+        old_value = getattr(expense, "location_old", None)
+
+        if old_value is None:
+            continue
+
+        old_value = str(old_value).strip()
+
+        if not old_value:
+            continue
+
+        if old_value in valid_locations:
+            expense.location = valid_locations[old_value]
+            expense.save(update_fields=["location"])
 
 
 class Migration(migrations.Migration):
@@ -21,9 +35,12 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(clean_invalid_location_values, migrations.RunPython.noop),
-
-        migrations.AlterField(
+        migrations.RenameField(
+            model_name='expense',
+            old_name='location',
+            new_name='location_old',
+        ),
+        migrations.AddField(
             model_name='expense',
             name='location',
             field=models.ForeignKey(
@@ -33,6 +50,11 @@ class Migration(migrations.Migration):
                 related_name='expenses',
                 to='inventory.inventorylocation',
             ),
+        ),
+        migrations.RunPython(copy_location_data, migrations.RunPython.noop),
+        migrations.RemoveField(
+            model_name='expense',
+            name='location_old',
         ),
         migrations.AlterField(
             model_name='expense',
