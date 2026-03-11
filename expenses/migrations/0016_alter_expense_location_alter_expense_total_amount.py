@@ -5,6 +5,15 @@ from decimal import Decimal
 from django.db import migrations, models
 
 
+def clean_empty_location_values(apps, schema_editor):
+    # Convert empty-string values to NULL before changing the field type
+    schema_editor.execute("""
+        UPDATE expenses_expense
+        SET location = NULL
+        WHERE location = '';
+    """)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -13,14 +22,26 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(clean_empty_location_values, migrations.RunPython.noop),
+
         migrations.AlterField(
             model_name='expense',
             name='location',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='expenses', to='inventory.inventorylocation'),
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name='expenses',
+                to='inventory.inventorylocation',
+            ),
         ),
         migrations.AlterField(
             model_name='expense',
             name='total_amount',
-            field=models.DecimalField(decimal_places=2, default=Decimal('0.00'), max_digits=14),
+            field=models.DecimalField(
+                decimal_places=2,
+                default=Decimal('0.00'),
+                max_digits=14,
+            ),
         ),
     ]
