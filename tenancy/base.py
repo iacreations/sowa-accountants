@@ -8,7 +8,7 @@ class TenantModel(models.Model):
         "tenancy.Company",
         on_delete=models.CASCADE,
         related_name="+",   # ✅ prevents reverse accessor clashes
-        db_index=True,
+        db_index=True, null= True, blank=True
     )
     objects = TenantManager()
 
