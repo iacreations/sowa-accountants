@@ -26,20 +26,32 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='columnpreference',
             name='company',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, to='tenancy.company'),
-            preserve_default=False,
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                to='tenancy.company',
+            ),
         ),
         migrations.AlterField(
             model_name='account',
             name='company',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, to='tenancy.company'),
-            preserve_default=False,
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                to='tenancy.company',
+            ),
         ),
         migrations.AlterField(
             model_name='journalentry',
             name='company',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, to='tenancy.company'),
-            preserve_default=False,
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                to='tenancy.company',
+            ),
         ),
         migrations.AlterUniqueTogether(
             name='columnpreference',
@@ -83,6 +95,10 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='account',
-            constraint=models.UniqueConstraint(condition=models.Q(('account_number__isnull', False)), fields=('company', 'account_number'), name='uniq_account_number_per_company'),
+            constraint=models.UniqueConstraint(
+                condition=models.Q(('account_number__isnull', False)),
+                fields=('company', 'account_number'),
+                name='uniq_account_number_per_company',
+            ),
         ),
     ]

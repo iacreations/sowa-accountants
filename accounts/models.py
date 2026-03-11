@@ -207,7 +207,8 @@ class ColumnPreference(TenantModel):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.company.name} - {self.user} - {self.table_name}"
+        company_name = self.company.name if self.company else "No Company"
+        return f"{company_name} - {self.user} - {self.table_name}"
 
 
 # ----------------- Journal Entries -----------------

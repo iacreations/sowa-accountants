@@ -15,16 +15,34 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='account',
             name='company',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='+', to='tenancy.company'),
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name='+',
+                to='tenancy.company',
+            ),
         ),
         migrations.AlterField(
             model_name='columnpreference',
             name='company',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='+', to='tenancy.company'),
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name='+',
+                to='tenancy.company',
+            ),
         ),
         migrations.AlterField(
             model_name='journalentry',
             name='company',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='+', to='tenancy.company'),
+            field=models.ForeignKey(
+                null=True,
+                blank=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name='+',
+                to='tenancy.company',
+            ),
         ),
     ]

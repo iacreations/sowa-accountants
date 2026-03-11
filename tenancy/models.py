@@ -14,7 +14,7 @@ class Company(models.Model):
             ("SOWA", "Sowa"),
             ("CLIENT", "Client"),
             ],
-        default="CLIENT"
+        default="CLIENT"       
     )
     logo = models.ImageField(upload_to="company_logos/", null=True, blank=True)
 
