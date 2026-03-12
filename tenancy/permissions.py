@@ -6,8 +6,8 @@ from .models import CompanyMember
 
 def is_sowa_user(user) -> bool:
     """
-    SOWA (your internal admin users) = staff or superuser.
-    They can access everything across companies.
+    SOWA internal admin users.
+    They must never be blocked by tenant role/module restrictions.
     """
     if not user or not getattr(user, "is_authenticated", False):
         return False
@@ -33,9 +33,14 @@ def get_membership(request):
 def company_required(view_func):
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
+        # SOWA bypass first
+        if is_sowa_user(request.user):
+            return view_func(request, *args, **kwargs)
+
         if not getattr(request, "company", None):
-            messages.error(request, "Select a company first.")
-            return redirect("tenancy:choose_company")
+            messages.error(request, "Your company workspace is not ready yet.")
+            return redirect("sowaf:home")
+
         return view_func(request, *args, **kwargs)
     return _wrapped
 
@@ -46,18 +51,18 @@ def module_required(module_key: str):
     def decorator(view_func):
         @wraps(view_func)
         def _wrapped(request, *args, **kwargs):
-            if not getattr(request, "company", None):
-                messages.error(request, "Select a company first.")
-                return redirect("tenancy:choose_company")
-
-            # SOWA can access everything
+            # SOWA bypass first
             if is_sowa_user(request.user):
                 return view_func(request, *args, **kwargs)
+
+            if not getattr(request, "company", None):
+                messages.error(request, "Your company workspace is not ready yet.")
+                return redirect("sowaf:home")
 
             membership = get_membership(request)
             if not membership:
                 messages.error(request, "No active company access.")
-                return redirect("tenancy:choose_company")
+                return redirect("sowaf:home")
 
             if not membership.can_access(module_key):
                 messages.error(request, "You are not allowed to access that section.")
@@ -75,18 +80,18 @@ def role_required(roles):
     def decorator(view_func):
         @wraps(view_func)
         def _wrapped(request, *args, **kwargs):
-            if not getattr(request, "company", None):
-                messages.error(request, "Select a company first.")
-                return redirect("tenancy:choose_company")
-
-            # SOWA can access everything
+            # SOWA bypass first
             if is_sowa_user(request.user):
                 return view_func(request, *args, **kwargs)
+
+            if not getattr(request, "company", None):
+                messages.error(request, "Your company workspace is not ready yet.")
+                return redirect("sowaf:home")
 
             membership = get_membership(request)
             if not membership:
                 messages.error(request, "No active company access.")
-                return redirect("tenancy:choose_company")
+                return redirect("sowaf:home")
 
             if (membership.role or "").upper().strip() not in roles_set:
                 messages.error(request, "Not allowed.")

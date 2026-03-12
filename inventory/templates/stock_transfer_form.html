@@ -213,16 +213,6 @@
           <a class="btn btn-soft" href="{% url 'inventory:stock-transfer-list' %}">View Transfers</a>
         </div>
       </div>
-
-      <!-- Messages (optional) -->
-      {% if messages %}
-        <div class="mb-3">
-          {% for message in messages %}
-            <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-
       <form method="POST" id="transferForm" novalidate>
         {% csrf_token %}
 

@@ -1,4 +1,3 @@
-# views.py
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -72,6 +71,10 @@ def _safe_parse_iso_datetime(dt_str: str):
         return None
 
 
+def _get_sowa_company():
+    return Company.objects.filter(company_kind="SOWA", is_active=True).order_by("id").first()
+
+
 def _send_invite_email(request, invite: CompanyInvite):
     link = request.build_absolute_uri(reverse("tenancy:client_invite", args=[invite.token]))
     subject = "YoAccountant - Your access link"
@@ -99,52 +102,103 @@ def _get_client_user(email: str):
     email = (email or "").strip().lower()
     if not email:
         return None
+
     user = User.objects.filter(email__iexact=email).first()
     if not user:
         return None
 
-    is_member = CompanyMember.objects.filter(user=user, is_active=True, company__is_active=True).exists()
+    is_member = CompanyMember.objects.filter(
+        user=user,
+        is_active=True,
+        company__is_active=True
+    ).exists()
+
     return user if is_member else None
 
+
+def _get_or_create_user_for_email(email: str):
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+
+    user = User.objects.filter(email__iexact=email).first()
+    if user:
+        return user
+
+    base = (email.split("@")[0] or "client")[:25]
+    username = base
+    i = 1
+    while User.objects.filter(username__iexact=username).exists():
+        i += 1
+        username = f"{base}{i}"
+
+    user = User.objects.create_user(username=username, email=email, password=None)
+    user.set_unusable_password()
+    user.save()
+    return user
+
+
 def _set_default_company_in_session(request, user):
-    owner = (
+    """
+    Since each client belongs to only one company:
+    - auto-pick the user's active company
+    - no chooser needed for clients
+    """
+    owner_membership = (
         CompanyMember.objects
-        .filter(user=user, is_active=True, company__is_active=True, role="OWNER")
+        .filter(user=user, is_active=True, role="OWNER", company__is_active=True)
         .select_related("company")
         .order_by("-created_at")
         .first()
     )
-    if owner:
-        request.session["company_id"] = owner.company_id
-        request.session["workspace_mode"] = "client"
-        return
 
-    any_m = (
+    if owner_membership:
+        request.session["company_id"] = owner_membership.company_id
+        request.session["workspace_mode"] = "client"
+        return owner_membership.company
+
+    membership = (
         CompanyMember.objects
         .filter(user=user, is_active=True, company__is_active=True)
         .select_related("company")
         .order_by("-created_at")
         .first()
     )
-    if any_m:
-        request.session["company_id"] = any_m.company_id
+
+    if membership:
+        request.session["company_id"] = membership.company_id
         request.session["workspace_mode"] = "client"
+        return membership.company
+
+    return None
+
+
 @login_required
 def choose_company(request):
+    """
+    Silent mode:
+    - Clients do not choose a company anymore.
+    - Staff can still use this route, but we redirect them intelligently.
+    """
     if request.user.is_staff or request.user.is_superuser:
-        companies = Company.objects.filter(is_active=True).order_by("name")
-        return render(request, "choose_company.html", {"companies": companies})
+        company_id = request.session.get("company_id")
+        if company_id:
+            return redirect("sowaf:home")
 
-    memberships = CompanyMember.objects.filter(
-        user=request.user, is_active=True, company__is_active=True
-    ).select_related("company")
+        sowa_company = _get_sowa_company()
+        if sowa_company:
+            request.session["company_id"] = sowa_company.id
+            request.session["workspace_mode"] = "sowa"
 
-    companies = [m.company for m in memberships]
-    if not companies:
+        return redirect("sowaf:home")
+
+    company = _set_default_company_in_session(request, request.user)
+    if not company:
         messages.error(request, "You are not assigned to any company yet.")
         return redirect("sowaAuth:login")
 
-    return render(request, "choose_company.html", {"companies": companies})
+    return redirect("sowaf:home")
+
 
 @login_required
 def switch_company(request, company_id):
@@ -152,12 +206,7 @@ def switch_company(request, company_id):
 
     if request.user.is_staff or request.user.is_superuser:
         request.session["company_id"] = company.id
-
-        if company.id == 12:
-            request.session["workspace_mode"] = "sowa"
-        else:
-            request.session["workspace_mode"] = "client"
-
+        request.session["workspace_mode"] = "sowa" if company.company_kind == "SOWA" else "client"
         messages.success(request, f"Switched to {company.name}")
         return redirect("sowaf:home")
 
@@ -169,7 +218,10 @@ def switch_company(request, company_id):
 
     if not is_member:
         messages.error(request, "You are not allowed to access that company.")
-        return redirect("tenancy:choose_company")
+        company = _set_default_company_in_session(request, request.user)
+        if company:
+            return redirect("sowaf:home")
+        return redirect("sowaAuth:login")
 
     request.session["company_id"] = company.id
     request.session["workspace_mode"] = "client"
@@ -186,11 +238,17 @@ def exit_company(request):
         messages.error(request, "Not allowed.")
         return redirect("sowaf:home")
 
-    request.session["company_id"] = 12
+    sowa_company = _get_sowa_company()
+    if not sowa_company:
+        messages.error(request, "SOWA company not configured.")
+        return redirect("sowaf:home")
+
+    request.session["company_id"] = sowa_company.id
     request.session["workspace_mode"] = "sowa"
 
     messages.success(request, "Returned to Sowa Accountant.")
     return redirect("sowaf:home")
+
 
 @login_required
 @staff_only
@@ -202,6 +260,7 @@ def company_list(request):
         .order_by("-created_at")
     )
     return render(request, "Clients.html", {"companies": companies})
+
 
 @login_required
 @staff_only
@@ -307,7 +366,6 @@ def company_create(request):
             max_users=max_users,
         )
 
-        # owner user (email = company email)
         owner_user = User.objects.filter(email__iexact=company_email).first()
         if not owner_user:
             base = (company_email.split("@")[0] or "client")[:25]
@@ -328,7 +386,6 @@ def company_create(request):
             is_active=True,
         )
 
-        # invite link to owner
         invite = CompanyInvite.create(company, company_email, role="OWNER", hours=24, created_by=request.user)
         try:
             _send_invite_email(request, invite)
@@ -341,91 +398,7 @@ def company_create(request):
     return render(request, "Clients_form.html")
 
 
-# ----------------- INVITE + OTP CLIENT LOGIN -----------------
-User = get_user_model()
-
-OTP_TTL_MINUTES = 5
-OTP_RESEND_COOLDOWN_SECONDS = 45
-
-def _send_otp_email(to_email: str, code: str):
-    """
-    Sends the OTP login code to the user email.
-    """
-    subject = "Your YoAccountant login code"
-
-    message = (
-        f"Your login code is: {code}\n\n"
-        f"This code will expire in 5 minutes.\n\n"
-        f"If you did not request this login, please ignore this email.\n\n"
-        f"YoAccountant"
-    )
-
-    send_mail(
-        subject,
-        message,
-        settings.DEFAULT_FROM_EMAIL,
-        [to_email],
-        fail_silently=False,
-    )
-def _set_default_company_in_session(request, user):
-    """
-    After login, automatically choose a company for the user.
-
-    Priority:
-    1) Company where user is OWNER
-    2) Any company membership
-    """
-
-    # First try OWNER company
-    owner_membership = (
-        CompanyMember.objects
-        .filter(user=user, is_active=True, role="OWNER", company__is_active=True)
-        .select_related("company")
-        .order_by("-created_at")
-        .first()
-    )
-
-    if owner_membership:
-        request.session["company_id"] = owner_membership.company_id
-        return
-
-    # Otherwise any membership
-    membership = (
-        CompanyMember.objects
-        .filter(user=user, is_active=True, company__is_active=True)
-        .select_related("company")
-        .order_by("-created_at")
-        .first()
-    )
-
-    if membership:
-        request.session["company_id"] = membership.company_id
-
-def _get_or_create_user_for_email(email: str):
-    """
-    Creates a user if missing (unusable password) and returns the user.
-    """
-    email = (email or "").strip().lower()
-    if not email:
-        return None
-
-    user = User.objects.filter(email__iexact=email).first()
-    if user:
-        return user
-
-    base = (email.split("@")[0] or "client")[:25]
-    username = base
-    i = 1
-    while User.objects.filter(username__iexact=username).exists():
-        i += 1
-        username = f"{base}{i}"
-
-    user = User.objects.create_user(username=username, email=email, password=None)
-    user.set_unusable_password()
-    user.save()
-    return user
-
-
+@require_http_methods(["GET", "POST"])
 def client_invite(request, token):
     """
     Invite link entry point.
@@ -450,7 +423,7 @@ def client_otp_login(request):
     OTP request screen.
     - Allows login by email IF:
         a) they are already a member of any active company OR
-        b) they have a valid invite_token session (coming from invite link)
+        b) they have a valid invite_token session
     """
     if request.method == "POST":
         email = (request.POST.get("email") or "").strip().lower()
@@ -462,13 +435,15 @@ def client_otp_login(request):
         invite = None
 
         if invite_token:
-            invite = CompanyInvite.objects.filter(token=invite_token, email__iexact=email).select_related("company").first()
+            invite = CompanyInvite.objects.filter(
+                token=invite_token,
+                email__iexact=email
+            ).select_related("company").first()
+
             if not invite or not invite.is_valid():
-                # invalid invite in session -> remove it
                 request.session.pop("invite_token", None)
                 invite = None
 
-        # If no invite, then user must already exist AND be a member somewhere
         if not invite:
             user = User.objects.filter(email__iexact=email).first()
             if not user:
@@ -485,8 +460,12 @@ def client_otp_login(request):
                 messages.error(request, "You are not assigned to any company yet.")
                 return render(request, "client_otp_login.html", {"email": email})
 
-        # resend cooldown
-        last = EmailOTP.objects.filter(email__iexact=email, purpose="LOGIN", is_used=False).order_by("-created_at").first()
+        last = EmailOTP.objects.filter(
+            email__iexact=email,
+            purpose="LOGIN",
+            is_used=False
+        ).order_by("-created_at").first()
+
         now = timezone.now()
 
         if last and last.last_sent_at:
@@ -496,14 +475,11 @@ def client_otp_login(request):
                 messages.error(request, f"Please wait {wait}s then try again.")
                 return render(request, "client_otp_login.html", {"email": email})
 
-        # send otp
         code = EmailOTP.generate_code(6)
-
-        # attach user if exists; if coming from invite, we may not have user yet
         user = User.objects.filter(email__iexact=email).first()
 
         otp = EmailOTP.objects.create(
-            user=user,  # may be None for invited new user
+            user=user,
             email=email,
             purpose="LOGIN",
             expires_at=now + timezone.timedelta(minutes=OTP_TTL_MINUTES),
@@ -530,7 +506,7 @@ def client_otp_verify(request):
     """
     OTP verify screen.
     After success:
-      - if invite_token exists -> accept invite (create user + membership)
+      - if invite_token exists -> accept invite
       - else -> normal login for existing member
     """
     otp_id = request.session.get("otp_login_id")
@@ -563,36 +539,33 @@ def client_otp_verify(request):
             messages.error(request, f"Invalid code. Attempts left: {remaining}.")
             return render(request, "client_otp_verify.html", {"email": email})
 
-        # success
         otp.is_used = True
         otp.save(update_fields=["is_used"])
 
-        # Handle invite acceptance if present
         invite_token = request.session.get("invite_token")
         if invite_token:
-            invite = CompanyInvite.objects.filter(token=invite_token, email__iexact=email).select_related("company").first()
+            invite = CompanyInvite.objects.filter(
+                token=invite_token,
+                email__iexact=email
+            ).select_related("company").first()
+
             if invite and invite.is_valid():
                 user = _get_or_create_user_for_email(email)
 
-                # create membership if not already
                 CompanyMember.objects.get_or_create(
                     company=invite.company,
                     user=user,
                     defaults={"role": invite.role, "is_active": True},
                 )
 
-                # mark invite used
                 invite.used_at = timezone.now()
                 invite.save(update_fields=["used_at"])
 
-                # set company session to invited company
                 request.session["company_id"] = invite.company_id
                 request.session["workspace_mode"] = "client"
 
-                # login
                 login(request, user, backend="django.contrib.auth.backends.ModelBackend")
 
-                # clear otp+invite session
                 request.session.pop("otp_login_id", None)
                 request.session.pop("otp_login_email", None)
                 request.session.pop("invite_token", None)
@@ -600,16 +573,13 @@ def client_otp_verify(request):
                 messages.success(request, "Login successful. Invite accepted.")
                 return redirect("sowaf:home")
 
-            # if invite invalid, remove it and continue as normal member login
             request.session.pop("invite_token", None)
 
-        # Normal login path (must already be member somewhere)
         user = otp.user or User.objects.filter(email__iexact=email).first()
         if not user:
             messages.error(request, "Account not found. Please contact support.")
             return redirect("tenancy:client_otp_login")
 
-        # ensure member somewhere
         is_member_anywhere = CompanyMember.objects.filter(
             user=user, is_active=True, company__is_active=True
         ).exists()
@@ -618,22 +588,16 @@ def client_otp_verify(request):
             return redirect("tenancy:client_otp_login")
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-
         _set_default_company_in_session(request, user)
 
         request.session.pop("otp_login_id", None)
         request.session.pop("otp_login_email", None)
 
         messages.success(request, "Login successful.")
-        memberships = CompanyMember.objects.filter(user=user, is_active=True, company__is_active=True)
-        if memberships.count() > 1:
-            return redirect("tenancy:choose_company")
-
         return redirect("sowaf:home")
 
     return render(request, "client_otp_verify.html", {"email": email})
 
-# ----------------- CLIENT SETTINGS: USERS MANAGEMENT -----------------
 
 @login_required
 @module_required("settings")
@@ -644,7 +608,7 @@ def client_settings_users(request):
     company = getattr(request, "company", None)
     if not company:
         messages.error(request, "Select a company first.")
-        return redirect("tenancy:choose_company")
+        return redirect("sowaf:home")
 
     membership = get_membership(request)
     if not membership or membership.role not in ("OWNER", "MANAGER"):
@@ -674,7 +638,7 @@ def client_invite_user(request):
     company = getattr(request, "company", None)
     if not company:
         messages.error(request, "Select a company first.")
-        return redirect("tenancy:choose_company")
+        return redirect("sowaf:home")
 
     membership = get_membership(request)
     if not membership or membership.role not in ("OWNER", "MANAGER"):
@@ -688,7 +652,6 @@ def client_invite_user(request):
         messages.error(request, "Email is required.")
         return redirect("tenancy:client_settings_users")
 
-    # subscription max users check (active members only)
     subscription = getattr(company, "subscription", None)
     if subscription:
         active_count = CompanyMember.objects.filter(company=company, is_active=True).count()
@@ -719,7 +682,6 @@ def client_update_member_role(request, member_id):
     member = get_object_or_404(CompanyMember, id=member_id, company=company)
     new_role = (request.POST.get("role") or member.role).strip().upper()
 
-    # prevent demoting self from OWNER (optional)
     if member.user_id == request.user.id and member.role == "OWNER" and new_role != "OWNER":
         messages.error(request, "Owner cannot remove their own OWNER role.")
         return redirect("tenancy:client_settings_users")
@@ -742,7 +704,6 @@ def client_deactivate_member(request, member_id):
 
     member = get_object_or_404(CompanyMember, id=member_id, company=company)
 
-    # prevent deactivating the last OWNER (simple safeguard)
     if member.role == "OWNER":
         owners = CompanyMember.objects.filter(company=company, role="OWNER", is_active=True).count()
         if owners <= 1:
