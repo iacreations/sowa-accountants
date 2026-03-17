@@ -6,10 +6,13 @@ class TenantQuerySet(models.QuerySet):
     def for_company(self, company):
         """
         Always scope queries to the active company.
+        Accepts either a Company instance or a company id.
         """
         if not company:
             return self.none()
-        return self.filter(company=company)
+
+        company_id = getattr(company, "id", company)
+        return self.filter(company_id=company_id)
 
 
 class TenantManager(models.Manager):

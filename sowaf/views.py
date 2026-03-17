@@ -1724,7 +1724,6 @@ def import_assets(request):
         messages.error(request, f"Import failed: {str(e)}")
         return redirect("sowaf:assets")
 
-
 # customer view
 
 # -------------------------
@@ -1739,11 +1738,14 @@ def must_have_company(request):
         messages.error(request, "Please select a company to continue.")
         return False
     return True
+
+
 @login_required
 @company_required
 @module_required("home")
 def customers(request):
     company = request.company
+    company_id = getattr(company, "id", company)
     q = (request.GET.get("q") or "").strip()
 
     # ------------------------------
@@ -1759,7 +1761,7 @@ def customers(request):
 
     inv_all = (
         Newinvoice.objects
-        .filter(company=company)
+        .filter(company_id=company_id)
         .annotate(
             total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
             paid=Coalesce(
@@ -1796,7 +1798,7 @@ def customers(request):
     customer_ar_balance_sq = (
         JournalLine.objects
         .filter(
-            entry__company=company,
+            entry__company_id=company_id,
             account__detail_type__in=["Customer Subledger (A/R)", "Customer ledger (A/R)"],
             account__account_name=OuterRef("customer_name"),
         )
@@ -1819,7 +1821,7 @@ def customers(request):
     # ------------------------------
     customers_qs = (
         Newcustomer.objects
-        .for_company(company)
+        .filter(company_id=company_id)
         .annotate(
             invoice_remaining=Coalesce(
                 Subquery(
@@ -1842,6 +1844,7 @@ def customers(request):
                 output_field=DecimalField(max_digits=18, decimal_places=2),
             )
         )
+        .order_by("customer_name")
     )
 
     if q:
@@ -1859,7 +1862,7 @@ def customers(request):
     ar_totals = (
         JournalLine.objects
         .filter(
-            entry__company=company,
+            entry__company_id=company_id,
             account__detail_type__in=["Customer Subledger (A/R)", "Customer ledger (A/R)"]
         )
         .aggregate(
@@ -1871,20 +1874,20 @@ def customers(request):
 
     ar_accounts = (
         Account.objects
-        .for_company(company)
+        .filter(company_id=company_id)
         .filter(detail_type__in=["Customer Subledger (A/R)", "Customer ledger (A/R)"])
         .annotate(
             deb=Coalesce(
                 Sum(
-                    "lines__debit",
-                    filter=Q(lines__entry__company=company)
+                    "journalline__debit",
+                    filter=Q(journalline__entry__company_id=company_id)
                 ),
                 Value(Decimal("0.00"))
             ),
             cred=Coalesce(
                 Sum(
-                    "lines__credit",
-                    filter=Q(lines__entry__company=company)
+                    "journalline__credit",
+                    filter=Q(journalline__entry__company_id=company_id)
                 ),
                 Value(Decimal("0.00"))
             ),
@@ -1910,21 +1913,21 @@ def customers(request):
 
     recent_paid_from_payments = (
         PaymentInvoice.objects
-        .filter(payment__company=company, payment__payment_date__gte=cutoff)
+        .filter(payment__company_id=company_id, payment__payment_date__gte=cutoff)
         .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
         ["total"]
     ) or Decimal("0.00")
 
     recent_paid_from_receipts = (
         SalesReceipt.objects
-        .filter(company=company, receipt_date__gte=cutoff)
+        .filter(company_id=company_id, receipt_date__gte=cutoff)
         .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))
         ["total"]
     ) or Decimal("0.00")
 
     amount_recent = recent_paid_from_payments + recent_paid_from_receipts
-    recent_payments_count = Payment.objects.filter(company=company, payment_date__gte=cutoff).count()
-    recent_receipts_count = SalesReceipt.objects.filter(company=company, receipt_date__gte=cutoff).count()
+    recent_payments_count = Payment.objects.filter(company_id=company_id, payment_date__gte=cutoff).count()
+    recent_receipts_count = SalesReceipt.objects.filter(company_id=company_id, receipt_date__gte=cutoff).count()
     count_recent = recent_payments_count + recent_receipts_count
 
     total_for_pct = (
@@ -1997,9 +2000,11 @@ def _customer_ar_balance_as_of(customer_id: int, as_of_date=None, company=None) 
     A/R is an Asset => debit - credit
     We match the customer subledger account by account_name == customer.customer_name
     """
+    company_id = getattr(company, "id", company) if company is not None else None
+
     customer_qs = Newcustomer.objects.all()
-    if company is not None:
-        customer_qs = customer_qs.for_company(company)
+    if company_id is not None:
+        customer_qs = customer_qs.filter(company_id=company_id)
 
     customer = customer_qs.only("id", "customer_name").get(id=customer_id)
 
@@ -2008,8 +2013,8 @@ def _customer_ar_balance_as_of(customer_id: int, as_of_date=None, company=None) 
         account__account_name=customer.customer_name,
     )
 
-    if company is not None:
-        qs = qs.filter(entry__company=company)
+    if company_id is not None:
+        qs = qs.filter(entry__company_id=company_id)
 
     if as_of_date:
         try:
@@ -2037,8 +2042,9 @@ def _customer_ar_balance_as_of(customer_id: int, as_of_date=None, company=None) 
 @module_required("home")
 def customer_detail(request, pk):
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=pk)
+    customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=pk)
     tab = request.GET.get("tab", "transactions")
 
     # ----------------------------
@@ -2046,7 +2052,7 @@ def customer_detail(request, pk):
     # ----------------------------
     inv_qs_base = (
         Newinvoice.objects
-        .filter(customer=customer, company=company)
+        .filter(customer=customer, company_id=company_id)
         .annotate(
             total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
             total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00")))
@@ -2059,7 +2065,7 @@ def customer_detail(request, pk):
     # OPEN BALANCE = GL Customer Subledger (A/R)
     # ----------------------------
     gl_qs = JournalLine.objects.filter(
-        entry__company=company,
+        entry__company_id=company_id,
         account__detail_type__in=["Customer Subledger (A/R)", "Customer ledger (A/R)"],
         account__account_name=customer.customer_name,
     )
@@ -2121,7 +2127,7 @@ def customer_detail(request, pk):
     # ----------------------------
     pay_qs = (
         Payment.objects
-        .filter(customer=customer, company=company)
+        .filter(customer=customer, company_id=company_id)
         .annotate(applied_total=Coalesce(Sum("applied_invoices__amount_paid"), Value(Decimal("0.00"))))
         .order_by("-payment_date", "-id")
     )
@@ -2153,7 +2159,7 @@ def customer_detail(request, pk):
     try:
         sr_qs = (
             SalesReceipt.objects
-            .filter(customer=customer, company=company)
+            .filter(customer=customer, company_id=company_id)
             .order_by("-receipt_date", "-id")
         )
 
@@ -2186,7 +2192,7 @@ def customer_detail(request, pk):
 
         st_qs = (
             Statement.objects
-            .filter(customer=customer, company=company)
+            .filter(customer=customer, company_id=company_id)
             .order_by("-statement_date", "-id")
         )
 
@@ -2194,7 +2200,7 @@ def customer_detail(request, pk):
             st_type = getattr(st, "get_statement_type_display", None)
             st_type = st_type() if callable(st_type) else getattr(st, "statement_type", "")
 
-            ar_live_balance = _customer_ar_balance_as_of(customer.id, st.end_date, company=company)
+            ar_live_balance = _customer_ar_balance_as_of(customer.id, st.end_date, company=company_id)
 
             statements_rows.append({
                 "id": st.id,
@@ -2229,7 +2235,8 @@ def customer_detail(request, pk):
 @transaction.atomic
 def make_inactive_customer(request, pk):
     company = request.company
-    customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=pk)
+    company_id = getattr(company, "id", company)
+    customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=pk)
     customer.is_active = False
     customer.save(update_fields=["is_active"])
     return redirect("sowaf:customers")
@@ -2242,7 +2249,8 @@ def make_inactive_customer(request, pk):
 @transaction.atomic
 def make_active_customer(request, pk):
     company = request.company
-    customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=pk)
+    company_id = getattr(company, "id", company)
+    customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=pk)
     customer.is_active = True
     customer.save(update_fields=["is_active"])
     return redirect("sowaf:customers")
@@ -2259,6 +2267,7 @@ def make_active_customer(request, pk):
 @transaction.atomic
 def add_customer(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         logo = request.FILES.get("logo")
@@ -2274,7 +2283,7 @@ def add_customer(request):
         registration_date = parse_date_or_none(request.POST.get("registration_date"))
 
         new_customer = Newcustomer(
-            company=company,
+            company_id=company_id,
             logo=logo,
             customer_name=request.POST.get("name"),
             company_name=request.POST.get("company"),
@@ -2319,6 +2328,7 @@ def add_customer(request):
 
     return render(request, "customers_form.html")
 
+
 # -------------------------
 # EDIT CUSTOMER
 # -------------------------
@@ -2328,9 +2338,10 @@ def add_customer(request):
 @module_required("home")
 def edit_customer(request, pk):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     # Prevent cross-company editing
-    customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=pk)
+    customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=pk)
 
     if request.method == "POST":
         customer.customer_name = request.POST.get("name", customer.customer_name)
@@ -2391,7 +2402,6 @@ def edit_customer(request, pk):
         return redirect("sowaf:customers")
 
     return render(request, "customers_form.html", {"customer": customer, "is_edit": True})
-
 
 # template for the download
 @login_required
