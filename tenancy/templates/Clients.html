@@ -84,7 +84,6 @@
     <input type="text" placeholder="Search Clients" />
   </div>
 
-  <!-- Add new goes to tenancy -->
   <a href="{% url 'tenancy:company_create' %}" style="text-decoration: none;">
     <button class="button">
       <span class="button_text">ADD NEW</span>
@@ -94,7 +93,6 @@
     </button>
   </a>
 
-  <!-- OPTIONAL: keep customize -->
   <button class="button" onclick="openColumnCustomizer()">
     <span class="button_text">CUSTOMIZE</span>
     <span class="button_icon">
@@ -121,7 +119,6 @@
     <tbody>
       {% for company in companies %}
       <tr>
-        <!-- ✅ LOGO CLICK = SWITCH COMPANY -->
         <td>
           <a class="logo-link" href="{% url 'tenancy:switch_company' company.id %}" title="Click to open {{ company.name }}">
             {% if company.logo %}
@@ -134,7 +131,6 @@
 
         <td>{{ company.id|stringformat:"03d" }}</td>
 
-        <!-- Optional: click company name to switch too -->
         <td>
           <a href="{% url 'tenancy:switch_company' company.id %}" style="text-decoration:none; color:#111; font-weight:600;">
             {{ company.name }}
@@ -170,12 +166,11 @@
           {% endif %}
         </td>
 
- <td>
-          <!-- keep operations (optional) -->
+        <td>
           <a href="" title="View details" style="color:green;">
             <i class='bx bx-show'></i>
           </a>
-        </td> 
+        </td>
       </tr>
 
       {% empty %}

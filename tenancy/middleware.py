@@ -5,22 +5,15 @@ class CompanyMiddleware:
     """
     Attaches:
       - request.company
-      - request.workspace_mode
       - request.in_client_workspace
       - request.in_sowa_workspace
-
-    Session keys:
-      - company_id
-      - workspace_mode  -> "sowa" or "client"
+      - request.workspace_mode
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
-    def _get_sowa_company(self):
-        return Company.objects.filter(company_kind="SOWA", is_active=True).order_by("id").first()
-
-    def _get_user_company(self, user):
+    def _get_user_default_company(self, user):
         owner_membership = (
             CompanyMember.objects
             .filter(user=user, is_active=True, role="OWNER", company__is_active=True)
@@ -45,64 +38,48 @@ class CompanyMiddleware:
 
     def __call__(self, request):
         request.company = None
-        request.workspace_mode = request.session.get("workspace_mode", "client")
         request.in_client_workspace = False
         request.in_sowa_workspace = False
+        request.workspace_mode = "sowa"
 
         if not request.user.is_authenticated:
             return self.get_response(request)
 
         is_staff_user = bool(request.user.is_staff or request.user.is_superuser)
-        company_id = request.session.get("company_id")
-        workspace_mode = request.session.get("workspace_mode")
-        sowa_company = self._get_sowa_company()
 
+        # ---------------- STAFF USERS ----------------
         if is_staff_user:
-            if not workspace_mode:
-                request.session["workspace_mode"] = "sowa"
-                request.workspace_mode = "sowa"
-            else:
-                request.workspace_mode = workspace_mode
+            active_company_id = request.session.get("active_company_id")
 
-            if not company_id and sowa_company:
-                request.session["company_id"] = sowa_company.id
-                company_id = sowa_company.id
-                if request.workspace_mode != "client":
-                    request.session["workspace_mode"] = "sowa"
-                    request.workspace_mode = "sowa"
+            if active_company_id:
+                company = Company.objects.filter(id=active_company_id, is_active=True).first()
+                if company:
+                    request.company = company
+                    request.in_client_workspace = True
+                    request.in_sowa_workspace = False
+                    request.workspace_mode = "client"
+                    return self.get_response(request)
 
-            if company_id:
-                company = Company.objects.filter(id=company_id, is_active=True).first()
-                if not company and sowa_company:
-                    request.session["company_id"] = sowa_company.id
-                    request.session["workspace_mode"] = "sowa"
-                    request.workspace_mode = "sowa"
-                    company = sowa_company
-
-                request.company = company
-
-            request.in_sowa_workspace = request.workspace_mode == "sowa"
-            request.in_client_workspace = request.workspace_mode == "client"
-            return self.get_response(request)
-
-        company = self._get_user_company(request.user)
-        if not company:
-            request.session.pop("company_id", None)
-            request.session["workspace_mode"] = "client"
-            request.workspace_mode = "client"
+            request.session["active_company_id"] = None
             request.company = None
-            request.in_client_workspace = True
-            request.in_sowa_workspace = False
+            request.in_client_workspace = False
+            request.in_sowa_workspace = True
+            request.workspace_mode = "sowa"
             return self.get_response(request)
 
-        if company_id != company.id:
-            request.session["company_id"] = company.id
+        # ---------------- CLIENT USERS ----------------
+        company = self._get_user_default_company(request.user)
 
-        request.session["workspace_mode"] = "client"
-        request.workspace_mode = "client"
+        if not company:
+            request.company = None
+            request.in_client_workspace = False
+            request.in_sowa_workspace = False
+            request.workspace_mode = "client"
+            return self.get_response(request)
 
         request.company = company
         request.in_client_workspace = True
         request.in_sowa_workspace = False
+        request.workspace_mode = "client"
 
         return self.get_response(request)

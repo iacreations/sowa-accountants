@@ -32,6 +32,7 @@ from accounts.utils import deposit_accounts_qs, expense_accounts_qs
 from accounts.date_ranges import resolve_date_range, RANGE_LABELS, RANGE_OPTIONS
 from expenses.models import Bill, Expense, Cheque
 from tenancy.permissions import company_required, module_required
+from tenancy.models import Company
 from .utils import _supplier_ap_balances_bulk
 from .models import Newcustomer, Newsupplier, Newemployee, Newasset
 
@@ -1022,13 +1023,12 @@ def _to_decimal_number(x) -> Decimal:
     except Exception:
         return Decimal("0")
 
-
 @login_required
 def home(request):
     # -----------------------------------------
     # SOWA WORKSPACE HOME
     # -----------------------------------------
-    if getattr(request, "workspace_mode", "sowa") == "sowa":
+    if (request.user.is_staff or request.user.is_superuser) and not getattr(request, "company", None):
         context = {
             "pnl_tile": {
                 "range_label": "Sowa workspace",
@@ -1291,7 +1291,6 @@ def home(request):
     }
 
     return render(request, "Home.html", context)
-
 # working on the assets
 @login_required
 @company_required

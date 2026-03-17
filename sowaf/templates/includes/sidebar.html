@@ -23,7 +23,7 @@
         </a>
       </li>
 
-      {% if workspace_mode == "sowa" and request.user.is_authenticated and request.user.is_staff %}
+      {% if in_sowa_workspace and request.user.is_authenticated and request.user.is_staff %}
       <li class="item">
         <a href="{% url 'tenancy:company_list' %}" class="nav_link">
           <span class="navlink_icon"><i class='bx bx-body'></i></span>
@@ -32,7 +32,7 @@
       </li>
       {% endif %}
 
-      {% if workspace_mode == "sowa" and can_manage_sowa_staff %}
+      {% if in_sowa_workspace and can_manage_sowa_staff %}
       <li class="item">
         <a href="{% url 'sowaAuth:staff_users' %}" class="nav_link">
           <span class="navlink_icon"><i class='bx bx-user-plus'></i></span>
@@ -41,7 +41,7 @@
       </li>
       {% endif %}
 
-      {% if workspace_mode == "client" and request.user.is_authenticated and request.user.is_staff %}
+      {% if in_client_workspace and request.user.is_authenticated and request.user.is_staff %}
       <li class="item">
         <a href="{% url 'tenancy:exit_company' %}" class="nav_link">
           <span class="navlink_icon"><i class='bx bx-arrow-back'></i></span>
@@ -193,7 +193,7 @@
         </a>
       </li>
 
-      {% if workspace_mode == "sowa" and request.user.is_authenticated and request.user.is_staff %}
+      {% if in_sowa_workspace and request.user.is_authenticated and request.user.is_staff %}
       <li class="item">
         <a href="{% url 'sowaf:taxes' %}" class="nav_link">
           <span class="navlink_icon"><i class='bx bxs-wallet-alt'></i></span>
