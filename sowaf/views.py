@@ -36,7 +36,6 @@ from tenancy.models import Company
 from .utils import _supplier_ap_balances_bulk
 from .models import Newcustomer, Newsupplier, Newemployee, Newasset
 
-
 # Constants / helpers
 def parse_date_or_none(value):
     if not value:
@@ -84,16 +83,18 @@ def get_or_create_ar_account(company):
     """
     Tenant-safe A/R control account.
     """
+    company_id = getattr(company, "id", company)
+
     ar = (
-        Account.objects.for_company(company)
-        .filter(account_name="Accounts Receivable")
+        Account.objects
+        .filter(company_id=company_id, account_name="Accounts Receivable")
         .first()
     )
     if ar:
         return ar
 
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Accounts Receivable",
         account_type="CURRENT_ASSET",
         detail_type="Accounts receivable",
@@ -108,62 +109,94 @@ def post_journal_entry(*, company, date, description, source_type, source_id, li
       ...
     ]
     """
+    company_id = getattr(company, "id", company)
+    je_date = _safe_date(date, timezone.localdate())
+
     with transaction.atomic():
         je = JournalEntry.objects.create(
-            company=company,
-            date=date,
+            company_id=company_id,
+            date=je_date,
             description=description,
             source_type=source_type,
             source_id=source_id,
         )
 
         for ln in lines:
+            account = ln["account"]
+            customer = ln.get("customer")
+            supplier = ln.get("supplier")
+
+            if getattr(account, "company_id", None) != company_id:
+                raise ValueError("Journal line account must belong to the same company as the journal entry.")
+
+            if customer and getattr(customer, "company_id", None) != company_id:
+                raise ValueError("Journal line customer must belong to the same company as the journal entry.")
+
+            if supplier and getattr(supplier, "company_id", None) != company_id:
+                raise ValueError("Journal line supplier must belong to the same company as the journal entry.")
+
             JournalLine.objects.create(
                 entry=je,
-                account=ln["account"],
+                account=account,
                 debit=D(ln.get("debit")),
                 credit=D(ln.get("credit")),
-                customer=ln.get("customer"),
-                supplier=ln.get("supplier"),
+                customer=customer,
+                supplier=supplier,
             )
         return je
 
 
 def customer_ar_balance(customer: Newcustomer, company=None) -> Decimal:
     """
-    AR = (DR - CR) on Accounts Receivable lines filtered by this customer.
+    AR = (DR - CR) on Customer A/R subledger lines filtered by this customer.
     This becomes the customer's current open balance.
     """
     company = company or customer.company
-    ar = get_or_create_ar_account(company)
+    company_id = getattr(company, "id", company)
+
+    if not customer:
+        return Decimal("0.00")
+
+    # Prefer customer-specific subaccount if available
+    ar_account = customer.ar_account
+    if not ar_account:
+        ar_account = _get_or_create_customer_ar_subaccount(customer)
+
     agg = JournalLine.objects.filter(
-        entry__company=company,
-        account=ar,
+        entry__company_id=company_id,
+        account=ar_account,
         customer=customer
     ).aggregate(
         dr=Sum("debit"),
         cr=Sum("credit"),
     )
+
     dr = D(agg.get("dr"))
     cr = D(agg.get("cr"))
     return dr - cr
 
 
 def _get_or_create_opening_equity(company):
+    company_id = getattr(company, "id", company)
+
     opening_equity = (
-        Account.objects.for_company(company)
-        .filter(account_name="Opening Balance Equity")
+        Account.objects
+        .filter(company_id=company_id, account_name="Opening Balance Equity")
         .first()
     )
     if opening_equity:
         return opening_equity
 
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Opening Balance Equity",
         account_type="OWNER_EQUITY",
         detail_type="Opening balances",
         is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
     )
 
 
@@ -171,20 +204,21 @@ def _get_or_create_ar_control_account(company):
     """
     A/R control must be a CURRENT_ASSET with detail_type 'Accounts Receivable (A/R)'.
     """
+    company_id = getattr(company, "id", company)
+
     ar = (
-        Account.objects.for_company(company)
-        .filter(detail_type__iexact="Accounts Receivable (A/R)", is_active=True).first()
-        or Account.objects.for_company(company)
-        .filter(account_name__icontains="accounts receivable", is_active=True).first()
-        or Account.objects.for_company(company)
-        .filter(account_name__icontains="receivable", is_active=True).first()
+        Account.objects
+        .filter(company_id=company_id, detail_type__iexact="Accounts Receivable (A/R)", is_active=True).first()
+        or Account.objects
+        .filter(company_id=company_id, account_name__icontains="accounts receivable", is_active=True).first()
+        or Account.objects
+        .filter(company_id=company_id, account_name__icontains="receivable", is_active=True).first()
     )
     if ar:
         return ar
 
-    # Auto-create if missing
     ar = Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Accounts Receivable",
         account_type="CURRENT_ASSET",
         detail_type="Accounts Receivable (A/R)",
@@ -201,20 +235,21 @@ def _get_or_create_ap_control_account(company):
     """
     A/P control must be a CURRENT_LIABILITY with detail_type 'Accounts Payable (A/P)'.
     """
+    company_id = getattr(company, "id", company)
+
     ap = (
-        Account.objects.for_company(company)
-        .filter(detail_type__iexact="Accounts Payable (A/P)", is_active=True).first()
-        or Account.objects.for_company(company)
-        .filter(account_name__icontains="accounts payable", is_active=True).first()
-        or Account.objects.for_company(company)
-        .filter(account_name__icontains="payable", is_active=True).first()
+        Account.objects
+        .filter(company_id=company_id, detail_type__iexact="Accounts Payable (A/P)", is_active=True).first()
+        or Account.objects
+        .filter(company_id=company_id, account_name__icontains="accounts payable", is_active=True).first()
+        or Account.objects
+        .filter(company_id=company_id, account_name__icontains="payable", is_active=True).first()
     )
     if ap:
         return ap
 
-    # Auto-create if missing
     ap = Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Accounts Payable",
         account_type="CURRENT_LIABILITY",
         detail_type="Accounts Payable (A/P)",
@@ -230,36 +265,46 @@ def _get_or_create_ap_control_account(company):
 def _get_or_create_customer_ar_subaccount(customer: Newcustomer) -> Account:
     """
     Creates/returns a child account under A/R control specifically for this customer.
+    Also links it back to customer.ar_account.
     """
     company = customer.company
+    company_id = getattr(company, "id", company)
     ar_control = _get_or_create_ar_control_account(company)
 
-    # Use a stable unique name
+    # Reuse linked account if valid
+    if customer.ar_account_id:
+        linked = customer.ar_account
+        if linked and linked.company_id == company_id:
+            return linked
+
     cust_name = (customer.customer_name or customer.company_name or f"Customer {customer.id}").strip()
     sub_name = f"{cust_name}"
 
-    # try find existing subaccount for this customer (best effort by name+parent)
-    acc = Account.objects.for_company(company).filter(
+    acc = Account.objects.filter(
+        company_id=company_id,
         parent=ar_control,
         is_subaccount=True,
         account_name__iexact=sub_name,
         is_active=True,
     ).first()
-    if acc:
-        return acc
 
-    # create
-    acc = Account.objects.create(
-        company=company,
-        account_name=sub_name,
-        account_type=ar_control.account_type,  # CURRENT_ASSET
-        detail_type="Customer ledger (A/R)",
-        is_active=True,
-        is_subaccount=True,
-        parent=ar_control,
-        opening_balance=Decimal("0.00"),
-        as_of=timezone.localdate(),
-    )
+    if not acc:
+        acc = Account.objects.create(
+            company_id=company_id,
+            account_name=sub_name,
+            account_type=ar_control.account_type,
+            detail_type="Customer ledger (A/R)",
+            is_active=True,
+            is_subaccount=True,
+            parent=ar_control,
+            opening_balance=Decimal("0.00"),
+            as_of=timezone.localdate(),
+        )
+
+    if customer.ar_account_id != acc.id:
+        customer.ar_account = acc
+        customer.save(update_fields=["ar_account"])
+
     return acc
 
 
@@ -268,31 +313,43 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier) -> Account:
     Creates/returns a child account under A/P control specifically for this supplier.
     """
     company = supplier.company
+    company_id = getattr(company, "id", company)
     ap_control = _get_or_create_ap_control_account(company)
+
+    # If supplier has linked AP account field in your model, reuse when valid
+    if getattr(supplier, "ap_account_id", None):
+        linked = supplier.ap_account
+        if linked and linked.company_id == company_id:
+            return linked
 
     sup_name = (supplier.company_name or f"Supplier {supplier.id}").strip()
     sub_name = f"{sup_name}"
 
-    acc = Account.objects.for_company(company).filter(
+    acc = Account.objects.filter(
+        company_id=company_id,
         parent=ap_control,
         is_subaccount=True,
         account_name__iexact=sub_name,
         is_active=True,
     ).first()
-    if acc:
-        return acc
 
-    acc = Account.objects.create(
-        company=company,
-        account_name=sub_name,
-        account_type=ap_control.account_type,  # CURRENT_LIABILITY
-        detail_type="Supplier ledger (A/P)",
-        is_active=True,
-        is_subaccount=True,
-        parent=ap_control,
-        opening_balance=Decimal("0.00"),
-        as_of=timezone.localdate(),
-    )
+    if not acc:
+        acc = Account.objects.create(
+            company_id=company_id,
+            account_name=sub_name,
+            account_type=ap_control.account_type,
+            detail_type="Supplier ledger (A/P)",
+            is_active=True,
+            is_subaccount=True,
+            parent=ap_control,
+            opening_balance=Decimal("0.00"),
+            as_of=timezone.localdate(),
+        )
+
+    if getattr(supplier, "ap_account_id", None) != acc.id:
+        supplier.ap_account = acc
+        supplier.save(update_fields=["ap_account"])
+
     return acc
 
 
@@ -309,80 +366,147 @@ def _upsert_opening_balance_je(
 ):
     """
     Creates or updates ONE JE for opening balance, replaces its lines.
-    Also sets supplier/customer links on the CR side when source_type matches.
 
-    - Supplier opening: source_type="SUPP_OPEN_BALANCE" source_id=supplier.id
-      -> CR is supplier AP subaccount, should have supplier_id set.
-    - Customer opening: source_type="CUST_OPEN_BALANCE" source_id=customer.id
-      -> DR/CR accordingly; usually DR customer AR subaccount, should have customer_id set.
+    Supported source_type values:
+    - "SUPP_OPEN_BALANCE"
+    - "CUST_OPEN_BALANCE"
+    - "SUPPLIER_OPENING_BALANCE"
+    - "CUSTOMER_OPENING_BALANCE"
+
+    Expected posting:
+    - Customer opening balance:
+        DR customer A/R subaccount
+        CR Opening Balance Equity
+    - Supplier opening balance:
+        DR Opening Balance Equity
+        CR supplier A/P subaccount
     """
+    company_id = getattr(company, "id", company)
     je_date = _safe_date(je_date, timezone.localdate())
+    amount = D(amount)
 
-    je = JournalEntry.objects.filter(
-        company=company,
-        source_type=source_type,
-        source_id=source_id
-    ).first()
-
-    if amount == 0 or amount == Decimal("0.00"):
-        if je:
-            je.delete()
+    if amount == 0:
+        existing = JournalEntry.objects.filter(
+            company_id=company_id,
+            source_type=source_type,
+            source_id=source_id
+        ).first()
+        if existing:
+            existing.delete()
         return
 
-    if not je:
-        je = JournalEntry.objects.create(
-            company=company,
-            date=je_date,
-            description=description,
-            source_type=source_type,
-            source_id=source_id,
-        )
-    else:
-        je.date = je_date
-        je.description = description
-        je.save(update_fields=["date", "description"])
+    if getattr(dr_account, "company_id", None) != company_id:
+        raise ValueError("Debit account must belong to the same company.")
 
-        # replace lines
-        JournalLine.objects.filter(entry=je).delete()
+    if getattr(cr_account, "company_id", None) != company_id:
+        raise ValueError("Credit account must belong to the same company.")
 
-    # Decide sub-ledger linkage
-    supplier_obj = None
     customer_obj = None
+    supplier_obj = None
 
-    if source_type == "SUPP_OPEN_BALANCE":
-        supplier_obj = Newsupplier.objects.for_company(company).filter(pk=source_id).first()
+    customer_source_types = {"CUST_OPEN_BALANCE", "CUSTOMER_OPENING_BALANCE"}
+    supplier_source_types = {"SUPP_OPEN_BALANCE", "SUPPLIER_OPENING_BALANCE"}
 
-    if source_type == "CUST_OPEN_BALANCE":
-        customer_obj = Newcustomer.objects.for_company(company).filter(pk=source_id).first()
+    if source_type in customer_source_types:
+        customer_obj = Newcustomer.objects.filter(company_id=company_id, pk=source_id).first()
 
-    # DR line (normally Opening Equity)
-    JournalLine.objects.create(
-        entry=je,
-        account=dr_account,
-        debit=amount,
-        credit=Decimal("0.00"),
-        supplier=None,
-        customer=None,
-    )
+    if source_type in supplier_source_types:
+        supplier_obj = Newsupplier.objects.filter(company_id=company_id, pk=source_id).first()
 
-    # CR line (supplier/customer sub-ledger depending on source_type)
-    JournalLine.objects.create(
-        entry=je,
-        account=cr_account,
-        debit=Decimal("0.00"),
-        credit=amount,
-        supplier=supplier_obj,
-        customer=customer_obj,
-    )
-    return je
+    with transaction.atomic():
+        je = JournalEntry.objects.filter(
+            company_id=company_id,
+            source_type=source_type,
+            source_id=source_id
+        ).first()
+
+        if not je:
+            je = JournalEntry.objects.create(
+                company_id=company_id,
+                date=je_date,
+                description=description,
+                source_type=source_type,
+                source_id=source_id,
+            )
+        else:
+            je.date = je_date
+            je.description = description
+            je.save(update_fields=["date", "description"])
+            JournalLine.objects.filter(entry=je).delete()
+
+        # Customer opening balance:
+        # DR customer A/R with customer link
+        # CR opening equity
+        if source_type in customer_source_types:
+            JournalLine.objects.create(
+                entry=je,
+                account=dr_account,
+                debit=amount,
+                credit=Decimal("0.00"),
+                supplier=None,
+                customer=customer_obj,
+            )
+            JournalLine.objects.create(
+                entry=je,
+                account=cr_account,
+                debit=Decimal("0.00"),
+                credit=amount,
+                supplier=None,
+                customer=None,
+            )
+
+        # Supplier opening balance:
+        # DR opening equity
+        # CR supplier A/P with supplier link
+        elif source_type in supplier_source_types:
+            JournalLine.objects.create(
+                entry=je,
+                account=dr_account,
+                debit=amount,
+                credit=Decimal("0.00"),
+                supplier=None,
+                customer=None,
+            )
+            JournalLine.objects.create(
+                entry=je,
+                account=cr_account,
+                debit=Decimal("0.00"),
+                credit=amount,
+                supplier=supplier_obj,
+                customer=None,
+            )
+
+        else:
+            # Fallback generic JE
+            JournalLine.objects.create(
+                entry=je,
+                account=dr_account,
+                debit=amount,
+                credit=Decimal("0.00"),
+                supplier=None,
+                customer=customer_obj,
+            )
+            JournalLine.objects.create(
+                entry=je,
+                account=cr_account,
+                debit=Decimal("0.00"),
+                credit=amount,
+                supplier=supplier_obj,
+                customer=None if supplier_obj else customer_obj,
+            )
+
+        return je
 
 
 def _get_or_create_sales_income_account(company) -> Account:
+    company_id = getattr(company, "id", company)
+
     acc = (
-        Account.objects.for_company(company)
-        .filter(account_name__iexact="Sales Income", is_active=True).first()
-        or Account.objects.for_company(company)
+        Account.objects
+        .filter(company_id=company_id, account_name__iexact="Sales Income", is_active=True).first()
+        or Account.objects
         .filter(
+            company_id=company_id,
             account_name__icontains="sales",
             account_type__in=["OPERATING_INCOME", "INVESTING_INCOME"],
             is_active=True
@@ -392,7 +516,7 @@ def _get_or_create_sales_income_account(company) -> Account:
         return acc
 
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Sales Income",
         account_type="OPERATING_INCOME",
         detail_type="Sales",
@@ -405,11 +529,14 @@ def _get_or_create_sales_income_account(company) -> Account:
 
 
 def _get_or_create_vat_payable_account(company) -> Account:
+    company_id = getattr(company, "id", company)
+
     acc = (
-        Account.objects.for_company(company)
-        .filter(account_name__iexact="VAT Payable", is_active=True).first()
-        or Account.objects.for_company(company)
+        Account.objects
+        .filter(company_id=company_id, account_name__iexact="VAT Payable", is_active=True).first()
+        or Account.objects
         .filter(
+            company_id=company_id,
             account_name__icontains="vat",
             account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"],
             is_active=True
@@ -419,7 +546,7 @@ def _get_or_create_vat_payable_account(company) -> Account:
         return acc
 
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="VAT Payable",
         account_type="CURRENT_LIABILITY",
         detail_type="Taxes payable",
@@ -437,6 +564,9 @@ def _as_date(d):
     if isinstance(d, date):
         return d
     return None
+
+
+
 
 
 def status_for_invoice(inv, total: Decimal, paid: Decimal, balance: Decimal) -> str:
@@ -519,43 +649,6 @@ def _to_decimal_number(x) -> Decimal:
         return Decimal(str(x))
     except Exception:
         return Decimal("0")
-from django.urls import reverse, NoReverseMatch
-from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse
-from openpyxl import Workbook
-from django.db import transaction
-from tempfile import NamedTemporaryFile
-from datetime import datetime, timedelta, time, date
-from django.utils import timezone
-from django.utils.dateparse import parse_date
-from django.utils.timezone import now
-import openpyxl
-import csv
-import io
-import os
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from collections import OrderedDict
-
-from django.db.models import (
-    Sum, Value, F, Q, DecimalField, ExpressionWrapper,
-    Count, FloatField, When, Case, OuterRef, Subquery
-)
-from django.db.models.functions import Coalesce, Cast
-from django.core.files import File
-from django.conf import settings
-from django.contrib import messages
-from django.contrib.auth.decorators import login_required
-
-from sales.views import _invoice_analytics
-from sales.models import Newinvoice, Payment, PaymentInvoice, SalesReceipt
-from accounts.models import Account, JournalEntry, JournalLine
-from accounts.utils import deposit_accounts_qs, expense_accounts_qs
-from accounts.date_ranges import resolve_date_range, RANGE_LABELS, RANGE_OPTIONS
-from expenses.models import Bill, Expense, Cheque
-from tenancy.permissions import company_required, module_required
-from .utils import _supplier_ap_balances_bulk
-from .models import Newcustomer, Newsupplier, Newemployee, Newasset
-
 
 # Constants / helpers
 def parse_date_or_none(value):
@@ -945,7 +1038,6 @@ def _as_date(d):
         return d
     return None
 
-
 def status_for_invoice(inv, total: Decimal, paid: Decimal, balance: Decimal) -> str:
     """
     Simple, consistent status for an invoice.
@@ -1023,6 +1115,7 @@ def _to_decimal_number(x) -> Decimal:
     except Exception:
         return Decimal("0")
 
+
 @login_required
 def home(request):
     # -----------------------------------------
@@ -1079,6 +1172,7 @@ def home(request):
         messages.error(request, "Select a company first.")
         return redirect("tenancy:choose_company")
 
+    company_id = getattr(company, "id", company)
     today = timezone.localdate()
 
     pnl_range_key = request.GET.get("pnl_range", "last_month")
@@ -1102,7 +1196,7 @@ def home(request):
     jl_pnl = (
         JournalLine.objects
         .select_related("entry", "account", "account__parent")
-        .filter(entry__company=company, entry__date__gte=pnl_from, entry__date__lte=pnl_to)
+        .filter(entry__company_id=company_id, entry__date__gte=pnl_from, entry__date__lte=pnl_to)
     )
 
     income_lines = jl_pnl.filter(_income_jl_filter())
@@ -1136,7 +1230,7 @@ def home(request):
     jl_exp = (
         JournalLine.objects
         .select_related("entry", "account", "account__parent")
-        .filter(entry__company=company, entry__date__gte=exp_from, entry__date__lte=exp_to)
+        .filter(entry__company_id=company_id, entry__date__gte=exp_from, entry__date__lte=exp_to)
         .filter(_expense_jl_filter())
         .values("account__account_name")
         .annotate(
@@ -1161,8 +1255,8 @@ def home(request):
     # 3) BANK ACCOUNTS TILE
     # =========================================================
     bank_accounts = (
-        Account.objects.for_company(company)
-        .filter(is_active=True)
+        Account.objects
+        .filter(company_id=company_id, is_active=True)
         .filter(bankish_q())
         .order_by("account_name")
     )
@@ -1170,7 +1264,7 @@ def home(request):
     bank_rows = []
     for acc in bank_accounts:
         agg = JournalLine.objects.filter(
-            entry__company=company,
+            entry__company_id=company_id,
             account=acc,
             entry__date__lte=today
         ).aggregate(
@@ -1197,8 +1291,8 @@ def home(request):
     inv_to_dt = timezone.make_aware(datetime.combine(inv_to + timedelta(days=1), time.min), tz)
 
     inv_qs = (
-        Newinvoice.objects.for_company(company)
-        .filter(date_created__gte=inv_from_dt, date_created__lt=inv_to_dt)
+        Newinvoice.objects
+        .filter(company_id=company_id, date_created__gte=inv_from_dt, date_created__lt=inv_to_dt)
         .annotate(
             total_due_f=Coalesce(Cast("total_due", FloatField()), Value(0.0), output_field=FloatField()),
             total_paid_f=Coalesce(
@@ -1253,8 +1347,8 @@ def home(request):
     sales_to_dt = timezone.make_aware(datetime.combine(sales_to + timedelta(days=1), time.min), tz)
 
     inv_rows = (
-        Newinvoice.objects.for_company(company)
-        .filter(date_created__gte=sales_from_dt, date_created__lt=sales_to_dt)
+        Newinvoice.objects
+        .filter(company_id=company_id, date_created__gte=sales_from_dt, date_created__lt=sales_to_dt)
         .values_list("date_created", "total_due")
         .order_by("date_created")
     )
@@ -1291,13 +1385,16 @@ def home(request):
     }
 
     return render(request, "Home.html", context)
+
+
 # working on the assets
 @login_required
 @company_required
 @module_required("home")
 def assets(request):
     company = request.company
-    assets = Newasset.objects.for_company(company)
+    company_id = getattr(company, "id", company)
+    assets = Newasset.objects.filter(company_id=company_id)
     return render(request, "Assets.html", {"assets": assets})
 
 
@@ -1308,25 +1405,29 @@ def assets(request):
 @transaction.atomic
 def add_assests(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         # supplier
         supplier_id = request.POST.get("supplier")
         supplier = None
         if supplier_id:
-            supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first()
+            supplier = Newsupplier.objects.filter(company_id=company_id, pk=supplier_id).first()
 
         # FK: asset account
         asset_account_id = request.POST.get("asset_account")
         asset_account = None
         if asset_account_id:
-            asset_account = Account.objects.for_company(company).filter(pk=asset_account_id).first()
+            asset_account = Account.objects.filter(company_id=company_id, pk=asset_account_id).first()
 
         # FK: payment account (cash/bank)
         payment_account_id = request.POST.get("payment_account")
         payment_account = None
         if payment_account_id:
-            payment_account = deposit_accounts_qs(company=company).filter(pk=payment_account_id).first()
+            try:
+                payment_account = deposit_accounts_qs(company=company).filter(pk=payment_account_id).first()
+            except TypeError:
+                payment_account = deposit_accounts_qs().filter(company_id=company_id, pk=payment_account_id).first()
 
         # normal fields
         asset_name = request.POST.get("asset_name")
@@ -1376,7 +1477,7 @@ def add_assests(request):
                 warranty = None
 
         asset = Newasset(
-            company=company,
+            company_id=company_id,
             asset_name=asset_name,
             asset_tag=asset_tag,
             asset_category=asset_category,
@@ -1410,8 +1511,9 @@ def add_assests(request):
             return redirect("sowaf:add-asset")
         return redirect("sowaf:assets")
 
-    suppliers = Newsupplier.objects.for_company(company)
-    asset_accounts = Account.objects.for_company(company).filter(
+    suppliers = Newsupplier.objects.filter(company_id=company_id)
+    asset_accounts = Account.objects.filter(
+        company_id=company_id,
         is_active=True,
         account_type="NON_CURRENT_ASSET"
     ).order_by("account_name", "account_number")
@@ -1419,7 +1521,7 @@ def add_assests(request):
     try:
         payment_accounts = deposit_accounts_qs(company=company)
     except TypeError:
-        payment_accounts = deposit_accounts_qs().filter(company=company)
+        payment_accounts = deposit_accounts_qs().filter(company_id=company_id)
 
     return render(request, "assets_form.html", {
         "suppliers": suppliers,
@@ -1435,7 +1537,8 @@ def add_assests(request):
 @transaction.atomic
 def edit_asset(request, pk):
     company = request.company
-    asset = get_object_or_404(Newasset.objects.for_company(company), pk=pk)
+    company_id = getattr(company, "id", company)
+    asset = get_object_or_404(Newasset.objects.filter(company_id=company_id), pk=pk)
 
     if request.method == "POST":
         asset.asset_name = request.POST.get("asset_name", asset.asset_name)
@@ -1460,18 +1563,24 @@ def edit_asset(request, pk):
 
         # supplier FK
         supplier_id = request.POST.get("supplier")
-        asset.supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+        asset.supplier = (
+            Newsupplier.objects.filter(company_id=company_id, pk=supplier_id).first()
+            if supplier_id else None
+        )
 
         # asset account FK
         asset_account_id = request.POST.get("asset_account")
-        asset.asset_account = Account.objects.for_company(company).filter(pk=asset_account_id).first() if asset_account_id else None
+        asset.asset_account = (
+            Account.objects.filter(company_id=company_id, pk=asset_account_id).first()
+            if asset_account_id else None
+        )
 
         # payment account FK
         payment_account_id = request.POST.get("payment_account")
         try:
             payment_qs = deposit_accounts_qs(company=company)
         except TypeError:
-            payment_qs = deposit_accounts_qs().filter(company=company)
+            payment_qs = deposit_accounts_qs().filter(company_id=company_id)
         asset.payment_account = payment_qs.filter(pk=payment_account_id).first() if payment_account_id else None
 
         # dates
@@ -1503,15 +1612,17 @@ def edit_asset(request, pk):
         asset.save()
         return redirect("sowaf:assets")
 
-    suppliers = Newsupplier.objects.for_company(company)
-    asset_accounts = Account.objects.for_company(company).filter(
-        is_active=True, account_type="NON_CURRENT_ASSET"
+    suppliers = Newsupplier.objects.filter(company_id=company_id)
+    asset_accounts = Account.objects.filter(
+        company_id=company_id,
+        is_active=True,
+        account_type="NON_CURRENT_ASSET"
     ).order_by("account_name", "account_number")
 
     try:
         payment_accounts = deposit_accounts_qs(company=company)
     except TypeError:
-        payment_accounts = deposit_accounts_qs().filter(company=company)
+        payment_accounts = deposit_accounts_qs().filter(company_id=company_id)
 
     return render(request, "assets_form.html", {
         "asset": asset,
@@ -1519,19 +1630,6 @@ def edit_asset(request, pk):
         "asset_accounts": asset_accounts,
         "payment_accounts": payment_accounts,
     })
-
-
-# deleting an asset
-@login_required
-@company_required
-@module_required("home")
-@transaction.atomic
-def delete_asset(request, pk):
-    company = request.company
-    asset = get_object_or_404(Newasset.objects.for_company(company), pk=pk)
-    asset.delete()
-    return redirect("sowaf:assets")
-
 
 # importing assets
 @login_required
@@ -1596,6 +1694,7 @@ def parse_warranty_safe(warranty):
 @transaction.atomic
 def import_assets(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method != "POST" or "excel_file" not in request.FILES:
         messages.error(request, "No file uploaded.")
@@ -1605,30 +1704,44 @@ def import_assets(request):
     file_name = excel_file.name.lower()
 
     def _resolve_supplier(value):
-        if not value:
+        if value in (None, ""):
             return None
+        value = str(value).strip()
         return (
-            Newsupplier.objects.for_company(company).filter(company_name__iexact=str(value).strip()).first()
-            or Newsupplier.objects.for_company(company).filter(pk=str(value).strip()).first()
+            Newsupplier.objects.filter(company_id=company_id, company_name__iexact=value).first()
+            or Newsupplier.objects.filter(company_id=company_id, pk=value).first()
         )
 
     def _resolve_asset_account(value):
-        if not value:
+        if value in (None, ""):
             return None
+        value = str(value).strip()
         return (
-            Account.objects.for_company(company).filter(account_name__iexact=str(value).strip()).first()
-            or Account.objects.for_company(company).filter(account_number__iexact=str(value).strip()).first()
-            or Account.objects.for_company(company).filter(pk=str(value).strip()).first()
+            Account.objects.filter(company_id=company_id, account_name__iexact=value).first()
+            or Account.objects.filter(company_id=company_id, account_number__iexact=value).first()
+            or Account.objects.filter(company_id=company_id, pk=value).first()
         )
+
+    def _is_blank_row(row):
+        return not row or all(v in (None, "") for v in row)
 
     try:
         if file_name.endswith(".csv"):
             decoded_file = excel_file.read().decode("utf-8")
             io_string = io.StringIO(decoded_file)
             reader = csv.reader(io_string)
-            next(reader)
+            next(reader, None)
 
             for row in reader:
+                if _is_blank_row(row):
+                    continue
+
+                row = list(row)
+                if len(row) < 24:
+                    row += [None] * (24 - len(row))
+                elif len(row) > 24:
+                    row = row[:24]
+
                 (
                     asset_name, asset_tag, asset_category, asset_description, department, custodian,
                     asset_status, purchase_price, purchase_date, supplier, warranty, funding_source,
@@ -1642,7 +1755,7 @@ def import_assets(request):
                 warranty = parse_warranty_safe(warranty)
 
                 Newasset.objects.create(
-                    company=company,
+                    company_id=company_id,
                     asset_name=asset_name,
                     asset_tag=asset_tag,
                     asset_category=asset_category,
@@ -1674,6 +1787,15 @@ def import_assets(request):
             sheet = wb.active
 
             for row in sheet.iter_rows(min_row=2, values_only=True):
+                if _is_blank_row(row):
+                    continue
+
+                row = list(row)
+                if len(row) < 24:
+                    row += [None] * (24 - len(row))
+                elif len(row) > 24:
+                    row = row[:24]
+
                 (
                     asset_name, asset_tag, asset_category, asset_description, department, custodian,
                     asset_status, purchase_price, purchase_date, supplier, warranty, funding_source,
@@ -1687,7 +1809,7 @@ def import_assets(request):
                 warranty = parse_warranty_safe(warranty)
 
                 Newasset.objects.create(
-                    company=company,
+                    company_id=company_id,
                     asset_name=asset_name,
                     asset_tag=asset_tag,
                     asset_category=asset_category,
@@ -1723,7 +1845,6 @@ def import_assets(request):
     except Exception as e:
         messages.error(request, f"Import failed: {str(e)}")
         return redirect("sowaf:assets")
-
 # customer view
 
 # -------------------------
@@ -2255,9 +2376,6 @@ def make_active_customer(request, pk):
     customer.save(update_fields=["is_active"])
     return redirect("sowaf:customers")
 
-
-# customer form view
-
 # -------------------------
 # ADD CUSTOMER
 # -------------------------
@@ -2305,17 +2423,22 @@ def add_customer(request):
         )
         new_customer.save()
 
+        # Ensure customer A/R subaccount exists and is linked
+        customer_ar_sub = _get_or_create_customer_ar_subaccount(new_customer)
+        if customer_ar_sub and new_customer.ar_account_id != customer_ar_sub.id:
+            new_customer.ar_account = customer_ar_sub
+            new_customer.save(update_fields=["ar_account"])
+
         # Opening balance journal entry
         if opening_balance != 0:
             opening_equity = _get_or_create_opening_equity(company)
-            customer_ar_sub = _get_or_create_customer_ar_subaccount(new_customer)
 
             _upsert_opening_balance_je(
                 company=company,
                 source_type="CUSTOMER_OPENING_BALANCE",
                 source_id=new_customer.id,
                 je_date=registration_date or timezone.localdate(),
-                description=f"Opening balance for customer {new_customer}",
+                description=f"Opening balance for customer {new_customer.customer_name or new_customer.company_name or new_customer.id}",
                 dr_account=customer_ar_sub,
                 cr_account=opening_equity,
                 amount=abs(opening_balance),
@@ -2340,7 +2463,6 @@ def edit_customer(request, pk):
     company = request.company
     company_id = getattr(company, "id", company)
 
-    # Prevent cross-company editing
     customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=pk)
 
     if request.method == "POST":
@@ -2383,9 +2505,14 @@ def edit_customer(request, pk):
 
         customer.save()
 
-        # Update opening balance JE (to CUSTOMER subaccount)
-        opening_equity = _get_or_create_opening_equity(company)
+        # Ensure customer A/R subaccount exists and is linked
         customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
+        if customer_ar_sub and customer.ar_account_id != customer_ar_sub.id:
+            customer.ar_account = customer_ar_sub
+            customer.save(update_fields=["ar_account"])
+
+        # Update opening balance JE
+        opening_equity = _get_or_create_opening_equity(company)
         amt = abs(new_opening_balance)
 
         _upsert_opening_balance_je(
@@ -2402,7 +2529,6 @@ def edit_customer(request, pk):
         return redirect("sowaf:customers")
 
     return render(request, "customers_form.html", {"customer": customer, "is_edit": True})
-
 # template for the download
 @login_required
 @company_required
@@ -2429,13 +2555,13 @@ def download_customers_template(request):
         response["Content-Disposition"] = 'attachment; filename="customer_template.xlsx"'
         return response
 
-
 @login_required
 @company_required
 @module_required("home")
 @transaction.atomic
 def import_customers(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method != "POST" or "excel_file" not in request.FILES:
         messages.error(request, "No file uploaded.")
@@ -2443,6 +2569,9 @@ def import_customers(request):
 
     excel_file = request.FILES["excel_file"]
     file_name = excel_file.name.lower()
+
+    def _is_blank_row(row):
+        return not row or all(v in (None, "", "None") for v in row)
 
     try:
         if file_name.endswith(".csv"):
@@ -2452,7 +2581,7 @@ def import_customers(request):
             next(reader, None)
 
             for row in reader:
-                if not row:
+                if _is_blank_row(row):
                     continue
 
                 row = list(row) + [""] * (17 - len(row))
@@ -2462,8 +2591,11 @@ def import_customers(request):
                     country, notes, logo
                 ) = row[:17]
 
+                opening_balance = _dec(balance, "0.00")
+                registration_date = parse_date_or_none(date_str)
+
                 customer = Newcustomer.objects.create(
-                    company=company,
+                    company_id=company_id,
                     customer_name=name,
                     company_name=company_name,
                     email=email,
@@ -2471,8 +2603,8 @@ def import_customers(request):
                     mobile_number=mobile,
                     website=website,
                     tin_number=tin,
-                    opening_balance=_dec(balance, "0.00"),
-                    registration_date=parse_date_or_none(date_str),
+                    opening_balance=opening_balance,
+                    registration_date=registration_date,
                     street_one=street1,
                     street_two=street2,
                     city=city,
@@ -2483,23 +2615,27 @@ def import_customers(request):
                 )
 
                 if logo:
-                    image_path = os.path.join(settings.MEDIA_ROOT, "uploads", str(logo).strip())
+                    logo_name = str(logo).strip()
+                    image_path = os.path.join(settings.MEDIA_ROOT, "uploads", logo_name)
                     if os.path.exists(image_path):
                         with open(image_path, "rb") as f:
-                            customer.logo.save(str(logo).strip(), File(f), save=True)
+                            customer.logo.save(logo_name, File(f), save=True)
                     else:
-                        messages.warning(request, f"Image file '{logo}' not found.")
+                        messages.warning(request, f"Image file '{logo_name}' not found.")
 
-                opening_balance = _dec(balance, "0.00")
+                customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
+                if customer_ar_sub and customer.ar_account_id != customer_ar_sub.id:
+                    customer.ar_account = customer_ar_sub
+                    customer.save(update_fields=["ar_account"])
+
                 if opening_balance != 0:
                     opening_equity = _get_or_create_opening_equity(company)
-                    customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
 
                     _upsert_opening_balance_je(
                         company=company,
                         source_type="CUSTOMER_OPENING_BALANCE",
                         source_id=customer.id,
-                        je_date=parse_date_or_none(date_str) or timezone.localdate(),
+                        je_date=registration_date or timezone.localdate(),
                         description=f"Opening balance for customer {customer.customer_name or customer.company_name or customer.id}",
                         dr_account=customer_ar_sub,
                         cr_account=opening_equity,
@@ -2511,7 +2647,7 @@ def import_customers(request):
             sheet = wb.active
 
             for row in sheet.iter_rows(min_row=2, values_only=True):
-                if not row:
+                if _is_blank_row(row):
                     continue
 
                 row = list(row) + [None] * (17 - len(row))
@@ -2521,8 +2657,11 @@ def import_customers(request):
                     country, notes, logo
                 ) = row[:17]
 
+                opening_balance = _dec(balance, "0.00")
+                registration_date = parse_date_or_none(str(date_str) if date_str else "")
+
                 customer = Newcustomer.objects.create(
-                    company=company,
+                    company_id=company_id,
                     customer_name=name,
                     company_name=company_name,
                     email=email,
@@ -2530,8 +2669,8 @@ def import_customers(request):
                     mobile_number=mobile,
                     website=website,
                     tin_number=tin,
-                    opening_balance=_dec(balance, "0.00"),
-                    registration_date=parse_date_or_none(str(date_str) if date_str else ""),
+                    opening_balance=opening_balance,
+                    registration_date=registration_date,
                     street_one=street1,
                     street_two=street2,
                     city=city,
@@ -2550,16 +2689,19 @@ def import_customers(request):
                     else:
                         messages.warning(request, f"Image file '{logo_name}' not found.")
 
-                opening_balance = _dec(balance, "0.00")
+                customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
+                if customer_ar_sub and customer.ar_account_id != customer_ar_sub.id:
+                    customer.ar_account = customer_ar_sub
+                    customer.save(update_fields=["ar_account"])
+
                 if opening_balance != 0:
                     opening_equity = _get_or_create_opening_equity(company)
-                    customer_ar_sub = _get_or_create_customer_ar_subaccount(customer)
 
                     _upsert_opening_balance_je(
                         company=company,
                         source_type="CUSTOMER_OPENING_BALANCE",
                         source_id=customer.id,
-                        je_date=parse_date_or_none(str(date_str) if date_str else "") or timezone.localdate(),
+                        je_date=registration_date or timezone.localdate(),
                         description=f"Opening balance for customer {customer.customer_name or customer.company_name or customer.id}",
                         dr_account=customer_ar_sub,
                         cr_account=opening_equity,
@@ -2582,7 +2724,9 @@ def import_customers(request):
 @company_required
 @module_required("home")
 def employee(request):
-    employees = Newemployee.objects.for_company(request.company)
+    company = request.company
+    company_id = getattr(company, "id", company)
+    employees = Newemployee.objects.filter(company_id=company_id)
     return render(request, "Employees.html", {"employees": employees})
 
 
@@ -2593,6 +2737,7 @@ def employee(request):
 @transaction.atomic
 def add_employees(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         first_name = request.POST.get("first_name")
@@ -2655,7 +2800,7 @@ def add_employees(request):
         doc_attachments = request.FILES.get("doc_attachments")
 
         employee = Newemployee(
-            company=company,
+            company_id=company_id,
             first_name=first_name,
             last_name=last_name,
             gender=gender,
@@ -2705,7 +2850,9 @@ def add_employees(request):
 @module_required("home")
 @transaction.atomic
 def edit_employee(request, pk):
-    employee = get_object_or_404(Newemployee.objects.for_company(request.company), pk=pk)
+    company = request.company
+    company_id = getattr(company, "id", company)
+    employee = get_object_or_404(Newemployee.objects.filter(company_id=company_id), pk=pk)
 
     if request.method == "POST":
         employee.first_name = request.POST.get("first_name", employee.first_name)
@@ -2809,13 +2956,14 @@ def download_employees_template(request):
 
 def handle_profile_picture_upload(employee, profile_picture, request=None):
     if profile_picture:
-        image_path = os.path.join(settings.MEDIA_ROOT, "uploads", profile_picture)
+        picture_name = str(profile_picture).strip()
+        image_path = os.path.join(settings.MEDIA_ROOT, "uploads", picture_name)
         if os.path.exists(image_path):
             with open(image_path, "rb") as f:
-                employee.profile_picture.save(profile_picture, File(f), save=True)
+                employee.profile_picture.save(picture_name, File(f), save=True)
         else:
             if request:
-                messages.warning(request, f"Image file '{profile_picture}' not found.")
+                messages.warning(request, f"Image file '{picture_name}' not found.")
 
 
 # Parse DOB (multiple formats)
@@ -2844,6 +2992,7 @@ def parse_hire_date_safe(hire_date):
 @transaction.atomic
 def import_employees(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method != "POST" or "excel_file" not in request.FILES:
         messages.error(request, "No file uploaded.")
@@ -2851,6 +3000,9 @@ def import_employees(request):
 
     excel_file = request.FILES["excel_file"]
     file_name = excel_file.name.lower()
+
+    def _is_blank_row(row):
+        return not row or all(v in (None, "", "None") for v in row)
 
     try:
         if file_name.endswith(".csv"):
@@ -2860,7 +3012,7 @@ def import_employees(request):
             next(reader, None)
 
             for row in reader:
-                if not row:
+                if _is_blank_row(row):
                     continue
 
                 row = list(row) + [""] * (31 - len(row))
@@ -2879,7 +3031,7 @@ def import_employees(request):
                 profile_picture = profile_picture.strip() if profile_picture else ""
 
                 employee = Newemployee.objects.create(
-                    company=company,
+                    company_id=company_id,
                     first_name=first_name,
                     last_name=last_name,
                     gender=gender,
@@ -2918,7 +3070,7 @@ def import_employees(request):
             sheet = wb.active
 
             for row in sheet.iter_rows(min_row=2, values_only=True):
-                if not row:
+                if _is_blank_row(row):
                     continue
 
                 row = list(row) + [None] * (31 - len(row))
@@ -2937,7 +3089,7 @@ def import_employees(request):
                 profile_picture = str(profile_picture).strip() if profile_picture else ""
 
                 employee = Newemployee.objects.create(
-                    company=company,
+                    company_id=company_id,
                     first_name=first_name,
                     last_name=last_name,
                     gender=gender,
@@ -2981,8 +3133,6 @@ def import_employees(request):
     except Exception as e:
         messages.error(request, f"Import failed: {str(e)}")
         return redirect("sowaf:employees")
-
-
 # supplier view
 # add new supplier form view
 @transaction.atomic
@@ -2991,6 +3141,7 @@ def import_employees(request):
 @module_required("home")
 def add_supplier(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         logo = request.FILES.get("logo")
@@ -3029,7 +3180,7 @@ def add_supplier(request):
         attachments = request.FILES.get("attachments")
 
         new_supplier = Newsupplier(
-            company=company,
+            company_id=company_id,
             logo=logo,
             company_name=company_name,
             supplier_type=supplier_type,
@@ -3057,10 +3208,15 @@ def add_supplier(request):
         )
         new_supplier.save()
 
+        # Ensure supplier A/P subaccount exists and is linked
+        supplier_ap_sub = _get_or_create_supplier_ap_subaccount(new_supplier)
+        if supplier_ap_sub and getattr(new_supplier, "ap_account_id", None) != supplier_ap_sub.id:
+            new_supplier.ap_account = supplier_ap_sub
+            new_supplier.save(update_fields=["ap_account"])
+
         # Post supplier opening balance to SUPPLIER subaccount under A/P
         if open_balance != 0:
             opening_equity = _get_or_create_opening_equity(company)
-            supplier_ap_sub = _get_or_create_supplier_ap_subaccount(new_supplier)
             amt = abs(open_balance)
 
             _upsert_opening_balance_je(
@@ -3088,7 +3244,8 @@ def add_supplier(request):
 @module_required("home")
 def edit_supplier(request, pk):
     company = request.company
-    supplier = get_object_or_404(Newsupplier.objects.for_company(company), pk=pk)
+    company_id = getattr(company, "id", company)
+    supplier = get_object_or_404(Newsupplier.objects.filter(company_id=company_id), pk=pk)
 
     if request.method == "POST":
         supplier.company_name = request.POST.get("company_name", supplier.company_name)
@@ -3132,8 +3289,12 @@ def edit_supplier(request, pk):
 
         supplier.save()
 
-        opening_equity = _get_or_create_opening_equity(company)
         supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
+        if supplier_ap_sub and getattr(supplier, "ap_account_id", None) != supplier_ap_sub.id:
+            supplier.ap_account = supplier_ap_sub
+            supplier.save(update_fields=["ap_account"])
+
+        opening_equity = _get_or_create_opening_equity(company)
         amt = abs(new_open_balance)
 
         _upsert_opening_balance_je(
@@ -3164,9 +3325,11 @@ def _supplier_ap_balance_live(supplier_id: int, as_of_date=None, company=None) -
     Uses supplier.ap_account (OneToOne to Account).
     Optionally filter as-of date (<= as_of_date).
     """
+    company_id = getattr(company, "id", company) if company is not None else None
+
     supplier_qs = Newsupplier.objects.select_related("ap_account")
-    if company is not None:
-        supplier_qs = supplier_qs.for_company(company)
+    if company_id is not None:
+        supplier_qs = supplier_qs.filter(company_id=company_id)
 
     supplier = supplier_qs.filter(pk=supplier_id).first()
     if not supplier or not supplier.ap_account_id:
@@ -3174,8 +3337,8 @@ def _supplier_ap_balance_live(supplier_id: int, as_of_date=None, company=None) -
 
     qs = JournalLine.objects.filter(account_id=supplier.ap_account_id).select_related("entry")
 
-    if company is not None:
-        qs = qs.filter(entry__company=company)
+    if company_id is not None:
+        qs = qs.filter(entry__company_id=company_id)
 
     if as_of_date:
         qs = qs.filter(entry__date__lte=as_of_date)
@@ -3198,7 +3361,9 @@ def _supplier_ap_balance_live(supplier_id: int, as_of_date=None, company=None) -
 @module_required("home")
 def supplier(request):
     company = request.company
-    suppliers = list(Newsupplier.objects.for_company(company))
+    company_id = getattr(company, "id", company)
+
+    suppliers = list(Newsupplier.objects.filter(company_id=company_id))
 
     balances = _supplier_ap_balances_bulk([s.id for s in suppliers], company=company)
 
@@ -3218,7 +3383,7 @@ def supplier(request):
     paid_30_rows = (
         JournalLine.objects
         .filter(
-            entry__company=company,
+            entry__company_id=company_id,
             supplier_id__in=[s.id for s in suppliers],
             entry__date__gte=d30
         )
@@ -3253,7 +3418,8 @@ def supplier(request):
 @module_required("home")
 def supplier_detail(request, pk):
     company = request.company
-    supplier = get_object_or_404(Newsupplier.objects.for_company(company), pk=pk)
+    company_id = getattr(company, "id", company)
+    supplier = get_object_or_404(Newsupplier.objects.filter(company_id=company_id), pk=pk)
     tab = request.GET.get("tab", "transactions")
 
     today = timezone.now().date()
@@ -3262,19 +3428,19 @@ def supplier_detail(request, pk):
 
     bills_qs = (
         Bill.objects
-        .filter(company=company, supplier=supplier)
+        .filter(company_id=company_id, supplier=supplier)
         .annotate(total_amount_dec=Cast("total_amount", DEC))
     )
 
     expenses_qs = (
         Expense.objects
-        .filter(company=company, payee_supplier=supplier)
+        .filter(company_id=company_id, payee_supplier=supplier)
         .annotate(total_amount_dec=Cast("total_amount", DEC))
     )
 
     cheques_qs = (
         Cheque.objects
-        .filter(company=company, payee_supplier=supplier)
+        .filter(company_id=company_id, payee_supplier=supplier)
         .annotate(total_amount_dec=Cast("total_amount", DEC))
     )
 
@@ -3364,7 +3530,9 @@ def supplier_detail(request, pk):
 @module_required("home")
 @transaction.atomic
 def make_inactive_supplier(request, pk):
-    supplier = get_object_or_404(Newsupplier.objects.for_company(request.company), pk=pk)
+    company = request.company
+    company_id = getattr(company, "id", company)
+    supplier = get_object_or_404(Newsupplier.objects.filter(company_id=company_id), pk=pk)
     supplier.is_active = False
     supplier.save(update_fields=["is_active"])
     return redirect("sowaf:suppliers")
@@ -3376,7 +3544,9 @@ def make_inactive_supplier(request, pk):
 @module_required("home")
 @transaction.atomic
 def make_active_supplier(request, pk):
-    supplier = get_object_or_404(Newsupplier.objects.for_company(request.company), pk=pk)
+    company = request.company
+    company_id = getattr(company, "id", company)
+    supplier = get_object_or_404(Newsupplier.objects.filter(company_id=company_id), pk=pk)
     supplier.is_active = True
     supplier.save(update_fields=["is_active"])
     return redirect("sowaf:suppliers")
@@ -3412,13 +3582,14 @@ def download_suppliers_template(request):
 
 def handle_logo_upload(supplier, logo, request=None):
     if logo:
-        image_path = os.path.join(settings.MEDIA_ROOT, "uploads", logo)
+        logo_name = str(logo).strip()
+        image_path = os.path.join(settings.MEDIA_ROOT, "uploads", logo_name)
         if os.path.exists(image_path):
             with open(image_path, "rb") as f:
-                supplier.logo.save(logo, File(f), save=True)
+                supplier.logo.save(logo_name, File(f), save=True)
         else:
             if request:
-                messages.warning(request, f"Image file '{logo}' not found.")
+                messages.warning(request, f"Image file '{logo_name}' not found.")
 
 
 @login_required
@@ -3427,6 +3598,7 @@ def handle_logo_upload(supplier, logo, request=None):
 @transaction.atomic
 def import_suppliers(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method != "POST" or "excel_file" not in request.FILES:
         messages.error(request, "No file uploaded.")
@@ -3434,6 +3606,9 @@ def import_suppliers(request):
 
     excel_file = request.FILES["excel_file"]
     file_name = excel_file.name.lower()
+
+    def _is_blank_row(row):
+        return not row or all(v in (None, "", "None") for v in row)
 
     try:
         if file_name.endswith(".csv"):
@@ -3443,7 +3618,7 @@ def import_suppliers(request):
             next(reader, None)
 
             for row in reader:
-                if not row:
+                if _is_blank_row(row):
                     continue
 
                 row = list(row) + [""] * (23 - len(row))
@@ -3455,16 +3630,17 @@ def import_suppliers(request):
                 ) = row[:23]
 
                 logo = logo.strip() if logo else ""
+                supplier_open_balance = _dec(open_balance, "0.00")
 
                 supplier = Newsupplier.objects.create(
-                    company=company,
+                    company_id=company_id,
                     company_name=company_name,
                     supplier_type=supplier_type,
                     contact_person=contact_person,
                     contact_position=contact_position,
                     contact=contact,
                     email=email,
-                    open_balance=_dec(open_balance, "0.00"),
+                    open_balance=supplier_open_balance,
                     website=website,
                     address1=address1,
                     address2=address2,
@@ -3483,10 +3659,13 @@ def import_suppliers(request):
                 )
                 handle_logo_upload(supplier, logo, request=request)
 
-                supplier_open_balance = _dec(open_balance, "0.00")
+                supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
+                if supplier_ap_sub and getattr(supplier, "ap_account_id", None) != supplier_ap_sub.id:
+                    supplier.ap_account = supplier_ap_sub
+                    supplier.save(update_fields=["ap_account"])
+
                 if supplier_open_balance != 0:
                     opening_equity = _get_or_create_opening_equity(company)
-                    supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
 
                     _upsert_opening_balance_je(
                         company=company,
@@ -3504,7 +3683,7 @@ def import_suppliers(request):
             sheet = wb.active
 
             for row in sheet.iter_rows(min_row=2, values_only=True):
-                if not row:
+                if _is_blank_row(row):
                     continue
 
                 row = list(row) + [None] * (23 - len(row))
@@ -3516,16 +3695,17 @@ def import_suppliers(request):
                 ) = row[:23]
 
                 logo = str(logo).strip() if logo else ""
+                supplier_open_balance = _dec(open_balance, "0.00")
 
                 supplier = Newsupplier.objects.create(
-                    company=company,
+                    company_id=company_id,
                     company_name=company_name,
                     supplier_type=supplier_type,
                     contact_person=contact_person,
                     contact_position=contact_position,
                     contact=contact,
                     email=email,
-                    open_balance=_dec(open_balance, "0.00"),
+                    open_balance=supplier_open_balance,
                     website=website,
                     address1=address1,
                     address2=address2,
@@ -3544,10 +3724,13 @@ def import_suppliers(request):
                 )
                 handle_logo_upload(supplier, logo, request=request)
 
-                supplier_open_balance = _dec(open_balance, "0.00")
+                supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
+                if supplier_ap_sub and getattr(supplier, "ap_account_id", None) != supplier_ap_sub.id:
+                    supplier.ap_account = supplier_ap_sub
+                    supplier.save(update_fields=["ap_account"])
+
                 if supplier_open_balance != 0:
                     opening_equity = _get_or_create_opening_equity(company)
-                    supplier_ap_sub = _get_or_create_supplier_ap_subaccount(supplier)
 
                     _upsert_opening_balance_je(
                         company=company,
@@ -3569,7 +3752,6 @@ def import_suppliers(request):
     except Exception as e:
         messages.error(request, f"Import failed: {str(e)}")
         return redirect("sowaf:suppliers")
-
 
 # tasks view
 @login_required

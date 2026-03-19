@@ -2,7 +2,7 @@
 from decimal import Decimal
 from urllib.parse import urlencode
 from django.db.models import Sum, Value, F, DecimalField, ExpressionWrapper
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Cast
 from django.http import HttpResponse
 from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
@@ -88,7 +88,8 @@ def generate_unique_po_no(company, prefix="PO"):
     """
     Generate a unique company-scoped Purchase Order number, e.g. PO00000001.
     """
-    last = PurchaseOrder.objects.for_company(company).order_by("-id").first()
+    company_id = getattr(company, "id", company)
+    last = PurchaseOrder.objects.filter(company_id=company_id).order_by("-id").first()
     last_num = 0
     if last and last.po_number and last.po_number.startswith(prefix):
         tail = last.po_number[len(prefix):]
@@ -131,8 +132,9 @@ def _account_credit_balance(account: "Account", company=None) -> Decimal:
     opening = Decimal(str(getattr(account, "opening_balance", 0) or "0"))
     qs = JournalLine.objects.filter(account=account)
 
-    if company is not None and hasattr(JournalLine, "company_id"):
-        qs = qs.filter(company=company)
+    if company is not None:
+        company_id = getattr(company, "id", company)
+        qs = qs.filter(entry__company_id=company_id)
 
     agg = qs.aggregate(
         d=Sum("debit"),
@@ -160,9 +162,11 @@ def _supplier_open_balance_amount(supplier: "Newsupplier", company=None) -> Deci
 
     # total unpaid bills for this supplier, tenant-safe
     total_unpaid_bills = Decimal("0.00")
-    bill_qs = Bill.objects.filter(supplier=supplier)
     if company is not None:
-        bill_qs = Bill.objects.for_company(company).filter(supplier=supplier)
+        company_id = getattr(company, "id", company)
+        bill_qs = Bill.objects.filter(company_id=company_id, supplier=supplier)
+    else:
+        bill_qs = Bill.objects.filter(supplier=supplier)
 
     for b in bill_qs:
         total_unpaid_bills += _bill_balance(b)
@@ -172,9 +176,11 @@ def _supplier_open_balance_amount(supplier: "Newsupplier", company=None) -> Deci
 
 
 def _get_or_create_named_account(company, account_name: str, account_type: str, detail_type: str = "") -> Account:
+    company_id = getattr(company, "id", company) if company is not None else None
+
     qs = Account.objects.filter(account_name=account_name, is_active=True)
-    if company is not None and hasattr(Account, "company_id"):
-        qs = qs.filter(company=company)
+    if company_id is not None:
+        qs = qs.filter(company_id=company_id)
 
     acc = qs.first()
     if acc:
@@ -188,16 +194,18 @@ def _get_or_create_named_account(company, account_name: str, account_type: str, 
         opening_balance=Decimal("0.00"),
         as_of=timezone.localdate(),
     )
-    if company is not None and hasattr(Account, "company_id"):
-        create_kwargs["company"] = company
+    if company_id is not None:
+        create_kwargs["company_id"] = company_id
 
     return Account.objects.create(**create_kwargs)
 
 
 def _get_supplier_advance_account(company=None) -> "Account":
+    company_id = getattr(company, "id", company) if company is not None else None
+
     qs = Account.objects.filter(account_name__iexact="Supplier Advances", is_active=True)
-    if company is not None and hasattr(Account, "company_id"):
-        qs = qs.filter(company=company)
+    if company_id is not None:
+        qs = qs.filter(company_id=company_id)
 
     acc = qs.first()
     if acc:
@@ -205,12 +213,14 @@ def _get_supplier_advance_account(company=None) -> "Account":
 
     create_kwargs = dict(
         account_name="Supplier Advances",
-        account_type="CURRENT_LIABILITY",
+        account_type="CURRENT_ASSET",
         detail_type="Supplier Advances",
         is_active=True,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
     )
-    if company is not None and hasattr(Account, "company_id"):
-        create_kwargs["company"] = company
+    if company_id is not None:
+        create_kwargs["company_id"] = company_id
 
     return Account.objects.create(**create_kwargs)
 
@@ -220,11 +230,12 @@ def _supplier_prepayment_balance(supplier, company=None) -> Decimal:
         return Decimal("0.00")
 
     company = company or getattr(supplier, "company", None)
+    company_id = getattr(company, "id", company) if company is not None else None
     adv = _get_supplier_advance_account(company=company)
 
     qs = JournalLine.objects.filter(account=adv, supplier=supplier)
-    if company is not None and hasattr(JournalLine, "company_id"):
-        qs = qs.filter(company=company)
+    if company_id is not None:
+        qs = qs.filter(entry__company_id=company_id)
 
     agg = qs.aggregate(
         d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
@@ -270,34 +281,44 @@ def _post_supplier_refund_to_ledger(refund: SupplierRefund):
       DR Bank/Cash (received_to)
       CR Supplier Advances (Asset)     (reduces your prepaid balance)
     """
+    company = refund.company
+    company_id = getattr(company, "id", company)
+
     amt = Decimal(str(refund.amount or "0.00"))
     if amt <= 0:
-        je_qs = JournalEntry.objects.filter(source_type="SUPPLIER_REFUND", source_id=refund.id)
-        if hasattr(JournalEntry, "company_id"):
-            je_qs = je_qs.filter(company=refund.company)
+        je_qs = JournalEntry.objects.filter(
+            company_id=company_id,
+            source_type="SUPPLIER_REFUND",
+            source_id=refund.id
+        )
         je_qs.delete()
         return
 
-    je_qs = JournalEntry.objects.filter(source_type="SUPPLIER_REFUND", source_id=refund.id)
-    if hasattr(JournalEntry, "company_id"):
-        je_qs = je_qs.filter(company=refund.company)
+    je_qs = JournalEntry.objects.filter(
+        company_id=company_id,
+        source_type="SUPPLIER_REFUND",
+        source_id=refund.id
+    )
     je_qs.delete()
 
-    adv = _get_supplier_advance_account(company=refund.company)
+    adv = _get_supplier_advance_account(company=company)
     bank = refund.received_to
 
-    entry_kwargs = dict(
+    if not bank:
+        raise ValueError("Supplier refund must have a received_to bank/cash account.")
+    if getattr(bank, "company_id", None) != company_id:
+        raise ValueError("Refund bank/cash account belongs to another company.")
+
+    entry = JournalEntry.objects.create(
+        company_id=company_id,
         date=refund.refund_date or timezone.localdate(),
-        description=f"Supplier Refund {refund.id:04d} – {getattr(refund.supplier, 'supplier_name', str(refund.supplier))}",
+        description=f"Supplier Refund {refund.id:04d} – {getattr(refund.supplier, 'company_name', str(refund.supplier))}",
         source_type="SUPPLIER_REFUND",
         source_id=refund.id,
     )
-    if hasattr(JournalEntry, "company_id"):
-        entry_kwargs["company"] = refund.company
 
-    entry = JournalEntry.objects.create(**entry_kwargs)
-
-    jl1_kwargs = dict(
+    # DR Bank/Cash
+    JournalLine.objects.create(
         entry=entry,
         account=bank,
         debit=amt,
@@ -305,13 +326,9 @@ def _post_supplier_refund_to_ledger(refund: SupplierRefund):
         supplier=refund.supplier,
         customer=None,
     )
-    if hasattr(JournalLine, "company_id"):
-        jl1_kwargs["company"] = refund.company
 
-    # DR Bank/Cash
-    JournalLine.objects.create(**jl1_kwargs)
-
-    jl2_kwargs = dict(
+    # CR Supplier Advances
+    JournalLine.objects.create(
         entry=entry,
         account=adv,
         debit=Decimal("0.00"),
@@ -319,11 +336,6 @@ def _post_supplier_refund_to_ledger(refund: SupplierRefund):
         supplier=refund.supplier,
         customer=None,
     )
-    if hasattr(JournalLine, "company_id"):
-        jl2_kwargs["company"] = refund.company
-
-    # CR Supplier Advances
-    JournalLine.objects.create(**jl2_kwargs)
 
 
 def _post_expense_to_ledger(expense: Expense):
@@ -338,26 +350,26 @@ def _post_expense_to_ledger(expense: Expense):
     Replaces any existing journal entry for this expense.
     """
 
+    company = expense.company
+    company_id = getattr(company, "id", company)
     total = Decimal(str(expense.total_amount or "0.00"))
 
     # If total is zero, remove any existing journal and stop.
     if total == 0:
         je_qs = JournalEntry.objects.filter(
+            company_id=company_id,
             source_type="expense",
             source_id=expense.id,
         )
-        if hasattr(JournalEntry, "company_id"):
-            je_qs = je_qs.filter(company=expense.company)
         je_qs.delete()
         return
 
     # Remove previous journal for this expense (for edits)
     je_qs = JournalEntry.objects.filter(
+        company_id=company_id,
         source_type="expense",
         source_id=expense.id,
     )
-    if hasattr(JournalEntry, "company_id"):
-        je_qs = je_qs.filter(company=expense.company)
     je_qs.delete()
 
     # Build description
@@ -370,16 +382,13 @@ def _post_expense_to_ledger(expense: Expense):
 
     entry_date = expense.payment_date or timezone.localdate()
 
-    entry_kwargs = dict(
+    entry = JournalEntry.objects.create(
+        company_id=company_id,
         date=entry_date,
         description=description,
         source_type="expense",
         source_id=expense.id,
     )
-    if hasattr(JournalEntry, "company_id"):
-        entry_kwargs["company"] = expense.company
-
-    entry = JournalEntry.objects.create(**entry_kwargs)
 
     # ----- Collect debits per account -----
     debits_by_account = defaultdict(lambda: Decimal("0.00"))
@@ -389,6 +398,8 @@ def _post_expense_to_ledger(expense: Expense):
         acc = cl.category
         amt = Decimal(str(cl.amount or "0.00"))
         if acc and amt > 0:
+            if getattr(acc, "company_id", None) != company_id:
+                raise ValueError("Expense category account belongs to another company.")
             debits_by_account[acc] += amt
 
     # 2) Item lines → use product's expense / COGS account if configured,
@@ -402,7 +413,8 @@ def _post_expense_to_ledger(expense: Expense):
         prod = il.product
 
         if prod is not None:
-            # Try common attribute names; only use if present
+            if hasattr(prod, "company_id") and prod.company_id and prod.company_id != company_id:
+                raise ValueError("Expense item product belongs to another company.")
             acc = getattr(prod, "expense_account", None) or getattr(prod, "cogs_account", None)
 
         if not acc:
@@ -414,6 +426,8 @@ def _post_expense_to_ledger(expense: Expense):
             )
 
         if acc:
+            if getattr(acc, "company_id", None) != company_id:
+                raise ValueError("Expense posting account belongs to another company.")
             debits_by_account[acc] += line_amt
 
     # 3) Create debit lines
@@ -421,29 +435,24 @@ def _post_expense_to_ledger(expense: Expense):
         if not acc or amt <= 0:
             continue
 
-        jl_kwargs = dict(
+        JournalLine.objects.create(
             entry=entry,
             account=acc,
             debit=amt,
             credit=Decimal("0.00"),
         )
-        if hasattr(JournalLine, "company_id"):
-            jl_kwargs["company"] = expense.company
-
-        JournalLine.objects.create(**jl_kwargs)
 
     # 4) Credit payment account (cash / bank)
     if expense.payment_account and total > 0:
-        jl_kwargs = dict(
+        if getattr(expense.payment_account, "company_id", None) != company_id:
+            raise ValueError("Expense payment account belongs to another company.")
+
+        JournalLine.objects.create(
             entry=entry,
             account=expense.payment_account,
             debit=Decimal("0.00"),
             credit=total,
         )
-        if hasattr(JournalLine, "company_id"):
-            jl_kwargs["company"] = expense.company
-
-        JournalLine.objects.create(**jl_kwargs)
 
 
 # post bill to ledger
@@ -452,16 +461,17 @@ def _get_or_create_ap_control_account(company=None) -> "Account":
     Returns the A/P control account.
     Creates it if missing.
     """
+    company_id = getattr(company, "id", company) if company is not None else None
+
     qs = Account.objects.filter(is_active=True, detail_type__iexact="Accounts Payable (A/P)")
-    if company is not None and hasattr(Account, "company_id"):
-        qs = qs.filter(company=company)
+    if company_id is not None:
+        qs = qs.filter(company_id=company_id)
 
     acc = qs.first()
     if acc:
         return acc
 
     # Auto-create A/P control account
-    # Adjust account_number if you have a numbering rule
     create_kwargs = dict(
         account_name="Accounts Payable",
         account_number="2000",
@@ -470,10 +480,11 @@ def _get_or_create_ap_control_account(company=None) -> "Account":
         is_subaccount=False,
         parent=None,
         opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
         is_active=True,
     )
-    if company is not None and hasattr(Account, "company_id"):
-        create_kwargs["company"] = company
+    if company_id is not None:
+        create_kwargs["company_id"] = company_id
 
     return Account.objects.create(**create_kwargs)
 
@@ -485,6 +496,7 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier, company=None) -
     Also links it to supplier.ap_account (IMPORTANT for live balance).
     """
     company = company or getattr(supplier, "company", None)
+    company_id = getattr(company, "id", company) if company is not None else None
     ap_control = _get_or_create_ap_control_account(company=company)
 
     name = _safe_name(supplier.company_name) or f"Supplier {supplier.id}"
@@ -495,8 +507,8 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier, company=None) -
         account_name__iexact=sub_name,
         is_active=True,
     )
-    if company is not None and hasattr(Account, "company_id"):
-        qs = qs.filter(company=company)
+    if company_id is not None:
+        qs = qs.filter(company_id=company_id)
 
     acc = qs.first()
 
@@ -509,13 +521,14 @@ def _get_or_create_supplier_ap_subaccount(supplier: Newsupplier, company=None) -
             is_subaccount=True,
             parent=ap_control,
             opening_balance=Decimal("0.00"),
+            as_of=timezone.localdate(),
         )
-        if company is not None and hasattr(Account, "company_id"):
-            create_kwargs["company"] = company
+        if company_id is not None:
+            create_kwargs["company_id"] = company_id
 
         acc = Account.objects.create(**create_kwargs)
 
-    # LINK THIS ACCOUNT TO THE SUPPLIER (missing before)
+    # LINK THIS ACCOUNT TO THE SUPPLIER
     if getattr(supplier, "ap_account_id", None) != acc.id:
         supplier.ap_account = acc
         supplier.save(update_fields=["ap_account"])
@@ -528,10 +541,11 @@ def _safe_name(s: str) -> str:
 
 
 def _find_control_account(company=None, detail_type=None, name_contains=None):
+    company_id = getattr(company, "id", company) if company is not None else None
     qs = Account.objects.filter(is_active=True)
 
-    if company is not None and hasattr(Account, "company_id"):
-        qs = qs.filter(company=company)
+    if company_id is not None:
+        qs = qs.filter(company_id=company_id)
 
     if detail_type:
         acc = qs.filter(detail_type__iexact=detail_type).first()
@@ -544,6 +558,8 @@ def _find_control_account(company=None, detail_type=None, name_contains=None):
             return acc
 
     return None
+
+
 # posting bill to gl
 def _post_bill_to_ledger(bill: "Bill"):
     """
@@ -564,10 +580,10 @@ def _post_bill_to_ledger(bill: "Bill"):
         return
 
     if not bill.supplier_id:
-        # You can decide to allow bills without suppliers, but subledger requires supplier
         raise ValueError("Bill must have a Supplier selected to post to Accounts Payable subledger.")
 
     company = bill.company
+    company_id = getattr(company, "id", company)
 
     # 1) Collect debits (expense accounts)
     expense_by_account = defaultdict(lambda: Decimal("0.00"))
@@ -576,6 +592,8 @@ def _post_bill_to_ledger(bill: "Bill"):
         acc = cl.category
         amt = Decimal(str(cl.amount or "0"))
         if acc and amt > 0:
+            if getattr(acc, "company_id", None) != company_id:
+                raise ValueError("Bill category account belongs to another company.")
             expense_by_account[acc] += amt
 
     default_exp_acc = (
@@ -590,19 +608,23 @@ def _post_bill_to_ledger(bill: "Bill"):
 
         acc = None
         if il.product:
+            if hasattr(il.product, "company_id") and il.product.company_id and il.product.company_id != company_id:
+                raise ValueError("Bill item product belongs to another company.")
             acc = getattr(il.product, "expense_account", None) or getattr(il.product, "cogs_account", None)
 
         if not acc:
             acc = default_exp_acc
 
         if acc:
+            if getattr(acc, "company_id", None) != company_id:
+                raise ValueError("Bill posting account belongs to another company.")
             expense_by_account[acc] += amt
 
     expense_total = sum(expense_by_account.values())
     if expense_total <= 0:
         return
 
-    # 2) Supplier A/P subaccount (creates A/P control if missing)
+    # 2) Supplier A/P subaccount
     supplier_acc = _get_or_create_supplier_ap_subaccount(bill.supplier, company=company)
 
     # 3) Create/update JournalEntry
@@ -612,16 +634,13 @@ def _post_bill_to_ledger(bill: "Bill"):
 
     entry = bill.journal_entry
     if not entry:
-        entry_kwargs = dict(
+        entry = JournalEntry.objects.create(
+            company_id=company_id,
             date=entry_date,
             description=description,
             source_type="bill",
             source_id=bill.id,
         )
-        if hasattr(JournalEntry, "company_id"):
-            entry_kwargs["company"] = company
-
-        entry = JournalEntry.objects.create(**entry_kwargs)
         bill.journal_entry = entry
         bill.save(update_fields=["journal_entry"])
     else:
@@ -631,8 +650,8 @@ def _post_bill_to_ledger(bill: "Bill"):
         entry.source_id = bill.id
 
         update_fields = ["date", "description", "source_type", "source_id"]
-        if hasattr(entry, "company_id") and getattr(entry, "company_id", None) != company.id:
-            entry.company = company
+        if getattr(entry, "company_id", None) != company_id:
+            entry.company_id = company_id
             update_fields.append("company")
 
         entry.save(update_fields=update_fields)
@@ -643,29 +662,21 @@ def _post_bill_to_ledger(bill: "Bill"):
     # 5) DR Expenses
     for acc, amt in expense_by_account.items():
         if amt > 0:
-            jl_kwargs = dict(
+            JournalLine.objects.create(
                 entry=entry,
                 account=acc,
                 debit=amt,
                 credit=Decimal("0.00"),
             )
-            if hasattr(JournalLine, "company_id"):
-                jl_kwargs["company"] = company
-
-            JournalLine.objects.create(**jl_kwargs)
 
     # 6) CR Supplier subledger account
-    jl_kwargs = dict(
+    JournalLine.objects.create(
         entry=entry,
         account=supplier_acc,
         debit=Decimal("0.00"),
         credit=expense_total,
         supplier=bill.supplier,
     )
-    if hasattr(JournalLine, "company_id"):
-        jl_kwargs["company"] = company
-
-    JournalLine.objects.create(**jl_kwargs)
 
 
 # posting cheque to ledger
@@ -681,6 +692,7 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
     """
 
     company = cheq.company
+    company_id = getattr(company, "id", company)
 
     # -------- totals --------
     alloc_total = (
@@ -703,6 +715,8 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
         acc = cl.category
         amt = Decimal(str(cl.amount or "0"))
         if acc and amt > 0:
+            if getattr(acc, "company_id", None) != company_id:
+                raise ValueError("Cheque category account belongs to another company.")
             expense_by_account[acc] += amt
 
     # Item lines -> product expense/cogs else fallback
@@ -718,12 +732,16 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
 
         acc = None
         if il.product:
+            if hasattr(il.product, "company_id") and il.product.company_id and il.product.company_id != company_id:
+                raise ValueError("Cheque item product belongs to another company.")
             acc = getattr(il.product, "expense_account", None) or getattr(il.product, "cogs_account", None)
 
         if not acc:
             acc = default_exp_acc
 
         if acc:
+            if getattr(acc, "company_id", None) != company_id:
+                raise ValueError("Cheque posting account belongs to another company.")
             expense_by_account[acc] += amt
 
     direct_total = sum(expense_by_account.values()) if expense_by_account else Decimal("0.00")
@@ -732,7 +750,6 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
 
     # Nothing to post?
     if total_bank_credit <= 0:
-        # if you have a journal entry link on Cheque, delete/clear here if you want
         return
 
     # -------- accounts --------
@@ -740,6 +757,8 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
         raise ValueError("Cheque must have a bank account.")
 
     bank_acc = cheq.bank_account
+    if getattr(bank_acc, "company_id", None) != company_id:
+        raise ValueError("Cheque bank account belongs to another company.")
 
     # Supplier AP subledger account (only if supplier exists AND we have alloc/open totals)
     supplier_acc = None
@@ -758,16 +777,13 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
     # If you already have cheq.journal_entry like Bill, keep it edit-safe
     entry = getattr(cheq, "journal_entry", None)
     if entry is None:
-        entry_kwargs = dict(
+        entry = JournalEntry.objects.create(
+            company_id=company_id,
             date=entry_date,
             description=description,
             source_type="cheque",
             source_id=cheq.id,
         )
-        if hasattr(JournalEntry, "company_id"):
-            entry_kwargs["company"] = company
-
-        entry = JournalEntry.objects.create(**entry_kwargs)
 
         # only if your Cheque has journal_entry field:
         if hasattr(cheq, "journal_entry_id"):
@@ -780,8 +796,8 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
         entry.source_id = cheq.id
 
         update_fields = ["date", "description", "source_type", "source_id"]
-        if hasattr(entry, "company_id") and getattr(entry, "company_id", None) != company.id:
-            entry.company = company
+        if getattr(entry, "company_id", None) != company_id:
+            entry.company_id = company_id
             update_fields.append("company")
 
         entry.save(update_fields=update_fields)
@@ -795,44 +811,32 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
     # -------- DR: expenses (direct) --------
     for acc, amt in expense_by_account.items():
         if amt > 0:
-            jl_kwargs = dict(
+            JournalLine.objects.create(
                 entry=entry,
                 account=acc,
                 debit=amt,
                 credit=Decimal("0.00"),
-                supplier=supplier_ref,  # tag supplier so supplier reports/lists can see it
+                supplier=supplier_ref,
             )
-            if hasattr(JournalLine, "company_id"):
-                jl_kwargs["company"] = company
-
-            JournalLine.objects.create(**jl_kwargs)
 
     # -------- DR: Supplier A/P (bills + open balance) --------
     if supplier_acc and supplier_ap_debit > 0:
-        jl_kwargs = dict(
+        JournalLine.objects.create(
             entry=entry,
             account=supplier_acc,
             debit=supplier_ap_debit,
             credit=Decimal("0.00"),
-            supplier=supplier_ref,  # CRITICAL
+            supplier=supplier_ref,
         )
-        if hasattr(JournalLine, "company_id"):
-            jl_kwargs["company"] = company
-
-        JournalLine.objects.create(**jl_kwargs)
 
     # -------- CR: Bank (total cheque) --------
-    jl_kwargs = dict(
+    JournalLine.objects.create(
         entry=entry,
         account=bank_acc,
         debit=Decimal("0.00"),
         credit=total_bank_credit,
         supplier=supplier_ref,
     )
-    if hasattr(JournalLine, "company_id"):
-        jl_kwargs["company"] = company
-
-    JournalLine.objects.create(**jl_kwargs)
 
 
 # ageing reports
@@ -894,8 +898,10 @@ def _vendors_qs(company=None):
     Vendor = _vendor_model()
     qs = Vendor.objects.all()
 
-    if company is not None and hasattr(Vendor, "company_id"):
-        qs = qs.filter(company=company)
+    if company is not None:
+        company_id = getattr(company, "id", company)
+        if hasattr(Vendor, "company_id"):
+            qs = qs.filter(company_id=company_id)
 
     # assumes company_name exists on Newsupplier
     try:
@@ -1006,19 +1012,22 @@ def _pdf_response(filename: str, title: str, subtitle: str, headers: list, data_
     c.showPage()
     c.save()
     return resp
-
-
 # ==========================================================
 # Shared Bill queryset (Outstanding = total_amount - sum(applied))
 # ==========================================================
 def _bills_with_outstanding_qs(company):
     dec_out = DecimalField(max_digits=18, decimal_places=2)
+    company_id = getattr(company, "id", company)
 
     return (
-        Bill.objects.for_company(company)
+        Bill.objects
+        .filter(company_id=company_id)
         .select_related("supplier")
         .annotate(
-            total_amt=Coalesce(F("total_amount"), Value(Decimal("0.00"), output_field=dec_out)),
+            total_amt=Coalesce(
+                Cast(F("total_amount"), output_field=dec_out),
+                Value(Decimal("0.00"), output_field=dec_out)
+            ),
             total_paid=Coalesce(
                 Sum("cheque_bill_lines__amount_applied", output_field=dec_out),
                 Value(Decimal("0.00"), output_field=dec_out),
@@ -1077,8 +1086,6 @@ def ap_aging_summary(request):
 
         vendor = b.supplier
         if not vendor:
-            # skip orphan bills without supplier FK (supplier_name only)
-            # still could be supported later, but cleanest now
             continue
 
         vid = vendor.id
@@ -1120,8 +1127,15 @@ def ap_aging_summary(request):
                 float(r["b90_plus"]),
                 float(r["total"]),
             ])
-        data.append(["GRAND TOTAL", float(grand["current"]), float(grand["b1_30"]), float(grand["b31_60"]),
-                     float(grand["b61_90"]), float(grand["b90_plus"]), float(grand["total"])])
+        data.append([
+            "GRAND TOTAL",
+            float(grand["current"]),
+            float(grand["b1_30"]),
+            float(grand["b31_60"]),
+            float(grand["b61_90"]),
+            float(grand["b90_plus"]),
+            float(grand["total"])
+        ])
         return _excel_response("ap_aging_summary.xlsx", "AP Aging Summary", headers, data)
 
     if export == "pdf":
@@ -1132,8 +1146,15 @@ def ap_aging_summary(request):
                 getattr(r["vendor"], "company_name", "—"),
                 r["current"], r["b1_30"], r["b31_60"], r["b61_90"], r["b90_plus"], r["total"]
             ])
-        data.append(["GRAND TOTAL", grand["current"], grand["b1_30"], grand["b31_60"],
-                     grand["b61_90"], grand["b90_plus"], grand["total"]])
+        data.append([
+            "GRAND TOTAL",
+            grand["current"],
+            grand["b1_30"],
+            grand["b31_60"],
+            grand["b61_90"],
+            grand["b90_plus"],
+            grand["total"]
+        ])
         return _pdf_response("ap_aging_summary.pdf", "A/P Ageing Summary", f"As of {today}", headers, data)
 
     return render(request, "ap_aging_summary.html", {
@@ -1286,10 +1307,11 @@ def ap_aging_vendor(request, vendor_id: int):
     company = request.company
     today = timezone.localdate()
     Vendor = _vendor_model()
+    company_id = getattr(company, "id", company)
 
     vendor_qs = Vendor.objects.all()
     if hasattr(Vendor, "company_id"):
-        vendor_qs = vendor_qs.filter(company=company)
+        vendor_qs = vendor_qs.filter(company_id=company_id)
 
     vendor = get_object_or_404(vendor_qs, pk=vendor_id)
 
@@ -1382,6 +1404,8 @@ def ap_aging_vendor(request, vendor_id: int):
         "export_excel_url": excel_url,
         "export_pdf_url": pdf_url,
     })
+
+
 # ==========================================================
 # 4) Unpaid Bills (OPEN bills)
 # ==========================================================
@@ -1761,7 +1785,8 @@ def payments_to_vendors_report(request):
         "export_excel_url": excel_url,
         "export_pdf_url": pdf_url,
     })
-  
+
+
 # all expenses
 
 @login_required
@@ -2017,31 +2042,38 @@ def _dec(v, default="0.00"):
         return Decimal(default)
 
 
+
 # your existing helpers:
 # deposit_accounts_qs, expense_accounts_qs, generate_unique_ref_no, _dec,
 # _post_expense_to_ledger, etc.
-
 @login_required
 @company_required
 @module_required("expenses")
 @transaction.atomic
 def add_expense(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         try:
             with transaction.atomic():
-                payment_accounts_qs = deposit_accounts_qs()
-                if hasattr(payment_accounts_qs, "for_company"):
-                    payment_accounts_qs = payment_accounts_qs.for_company(company)
-                elif hasattr(payment_accounts_qs.model, "company_id"):
-                    payment_accounts_qs = payment_accounts_qs.filter(company=company)
+                try:
+                    payment_accounts_qs = deposit_accounts_qs(company=company)
+                except TypeError:
+                    payment_accounts_qs = deposit_accounts_qs()
+                    if hasattr(payment_accounts_qs, "for_company"):
+                        payment_accounts_qs = payment_accounts_qs.for_company(company)
+                    elif hasattr(payment_accounts_qs.model, "company_id"):
+                        payment_accounts_qs = payment_accounts_qs.filter(company_id=company_id)
 
-                expense_accounts_qs_ = expense_accounts_qs()
-                if hasattr(expense_accounts_qs_, "for_company"):
-                    expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
-                elif hasattr(expense_accounts_qs_.model, "company_id"):
-                    expense_accounts_qs_ = expense_accounts_qs_.filter(company=company)
+                try:
+                    expense_accounts_qs_ = expense_accounts_qs(company=company)
+                except TypeError:
+                    expense_accounts_qs_ = expense_accounts_qs()
+                    if hasattr(expense_accounts_qs_, "for_company"):
+                        expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
+                    elif hasattr(expense_accounts_qs_.model, "company_id"):
+                        expense_accounts_qs_ = expense_accounts_qs_.filter(company_id=company_id)
 
                 payee_name = request.POST.get("payee_name") or ""
                 supplier_id = request.POST.get("payee_supplier") or ""
@@ -2062,13 +2094,16 @@ def add_expense(request):
                 supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
                 payment_account = get_object_or_404(payment_accounts_qs, pk=payment_account_id)
 
+                if getattr(payment_account, "company_id", None) != company_id:
+                    raise ValueError("Payment account belongs to another company.")
+
                 if not (len(ref_no) == 8 and ref_no.isdigit()):
                     ref_no = generate_unique_ref_no()
                 if Expense.objects.for_company(company).filter(ref_no=ref_no).exists():
                     ref_no = generate_unique_ref_no()
 
                 exp = Expense.objects.create(
-                    company=company,
+                    company_id=company_id,
                     payee_name=payee_name,
                     payee_supplier=supplier,
                     payment_account=payment_account,
@@ -2097,6 +2132,9 @@ def add_expense(request):
                     category = expense_accounts_qs_.filter(pk=cat_id).first()
                     if not category:
                         continue
+
+                    if getattr(category, "company_id", None) != company_id:
+                        raise ValueError("Expense category belongs to another company.")
 
                     amt = _dec(cat_amounts[idx])
                     if amt <= 0:
@@ -2185,17 +2223,24 @@ def add_expense(request):
 
     # GET
     store = get_main_store()
-    payment_accounts_qs = deposit_accounts_qs()
-    if hasattr(payment_accounts_qs, "for_company"):
-        payment_accounts_qs = payment_accounts_qs.for_company(company)
-    elif hasattr(payment_accounts_qs.model, "company_id"):
-        payment_accounts_qs = payment_accounts_qs.filter(company=company)
 
-    expense_accounts_qs_ = expense_accounts_qs()
-    if hasattr(expense_accounts_qs_, "for_company"):
-        expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
-    elif hasattr(expense_accounts_qs_.model, "company_id"):
-        expense_accounts_qs_ = expense_accounts_qs_.filter(company=company)
+    try:
+        payment_accounts_qs = deposit_accounts_qs(company=company)
+    except TypeError:
+        payment_accounts_qs = deposit_accounts_qs()
+        if hasattr(payment_accounts_qs, "for_company"):
+            payment_accounts_qs = payment_accounts_qs.for_company(company)
+        elif hasattr(payment_accounts_qs.model, "company_id"):
+            payment_accounts_qs = payment_accounts_qs.filter(company_id=company_id)
+
+    try:
+        expense_accounts_qs_ = expense_accounts_qs(company=company)
+    except TypeError:
+        expense_accounts_qs_ = expense_accounts_qs()
+        if hasattr(expense_accounts_qs_, "for_company"):
+            expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
+        elif hasattr(expense_accounts_qs_.model, "company_id"):
+            expense_accounts_qs_ = expense_accounts_qs_.filter(company_id=company_id)
 
     context = {
         "accounts": payment_accounts_qs,
@@ -2217,6 +2262,7 @@ def add_expense(request):
 @transaction.atomic
 def expense_edit(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     exp = get_object_or_404(
         Expense.objects.for_company(company)
@@ -2228,17 +2274,23 @@ def expense_edit(request, pk: int):
     if request.method == "POST":
         try:
             with transaction.atomic():
-                payment_accounts_qs = deposit_accounts_qs()
-                if hasattr(payment_accounts_qs, "for_company"):
-                    payment_accounts_qs = payment_accounts_qs.for_company(company)
-                elif hasattr(payment_accounts_qs.model, "company_id"):
-                    payment_accounts_qs = payment_accounts_qs.filter(company=company)
+                try:
+                    payment_accounts_qs = deposit_accounts_qs(company=company)
+                except TypeError:
+                    payment_accounts_qs = deposit_accounts_qs()
+                    if hasattr(payment_accounts_qs, "for_company"):
+                        payment_accounts_qs = payment_accounts_qs.for_company(company)
+                    elif hasattr(payment_accounts_qs.model, "company_id"):
+                        payment_accounts_qs = payment_accounts_qs.filter(company_id=company_id)
 
-                expense_accounts_qs_ = expense_accounts_qs()
-                if hasattr(expense_accounts_qs_, "for_company"):
-                    expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
-                elif hasattr(expense_accounts_qs_.model, "company_id"):
-                    expense_accounts_qs_ = expense_accounts_qs_.filter(company=company)
+                try:
+                    expense_accounts_qs_ = expense_accounts_qs(company=company)
+                except TypeError:
+                    expense_accounts_qs_ = expense_accounts_qs()
+                    if hasattr(expense_accounts_qs_, "for_company"):
+                        expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
+                    elif hasattr(expense_accounts_qs_.model, "company_id"):
+                        expense_accounts_qs_ = expense_accounts_qs_.filter(company_id=company_id)
 
                 exp.payee_name = request.POST.get("payee_name") or ""
 
@@ -2247,6 +2299,9 @@ def expense_edit(request, pk: int):
 
                 payment_account_id = request.POST.get("payment_account") or ""
                 exp.payment_account = get_object_or_404(payment_accounts_qs, pk=payment_account_id)
+
+                if getattr(exp.payment_account, "company_id", None) != company_id:
+                    raise ValueError("Payment account belongs to another company.")
 
                 exp.payment_date = request.POST.get("payment_date") or timezone.localdate()
                 exp.payment_method = request.POST.get("payment_method") or "cash"
@@ -2286,6 +2341,9 @@ def expense_edit(request, pk: int):
                     category = expense_accounts_qs_.filter(pk=cat_id).first()
                     if not category:
                         continue
+
+                    if getattr(category, "company_id", None) != company_id:
+                        raise ValueError("Expense category belongs to another company.")
 
                     amt = _dec(cat_amounts[idx])
                     if amt <= 0:
@@ -2374,17 +2432,23 @@ def expense_edit(request, pk: int):
 
     store = get_main_store()
 
-    payment_accounts_qs = deposit_accounts_qs()
-    if hasattr(payment_accounts_qs, "for_company"):
-        payment_accounts_qs = payment_accounts_qs.for_company(company)
-    elif hasattr(payment_accounts_qs.model, "company_id"):
-        payment_accounts_qs = payment_accounts_qs.filter(company=company)
+    try:
+        payment_accounts_qs = deposit_accounts_qs(company=company)
+    except TypeError:
+        payment_accounts_qs = deposit_accounts_qs()
+        if hasattr(payment_accounts_qs, "for_company"):
+            payment_accounts_qs = payment_accounts_qs.for_company(company)
+        elif hasattr(payment_accounts_qs.model, "company_id"):
+            payment_accounts_qs = payment_accounts_qs.filter(company_id=company_id)
 
-    expense_accounts_qs_ = expense_accounts_qs()
-    if hasattr(expense_accounts_qs_, "for_company"):
-        expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
-    elif hasattr(expense_accounts_qs_.model, "company_id"):
-        expense_accounts_qs_ = expense_accounts_qs_.filter(company=company)
+    try:
+        expense_accounts_qs_ = expense_accounts_qs(company=company)
+    except TypeError:
+        expense_accounts_qs_ = expense_accounts_qs()
+        if hasattr(expense_accounts_qs_, "for_company"):
+            expense_accounts_qs_ = expense_accounts_qs_.for_company(company)
+        elif hasattr(expense_accounts_qs_.model, "company_id"):
+            expense_accounts_qs_ = expense_accounts_qs_.filter(company_id=company_id)
 
     context = {
         "expense": exp,
@@ -2401,6 +2465,7 @@ def expense_edit(request, pk: int):
     }
     return render(request, "expenses_form.html", context)
     
+
 # expense list
 @login_required
 @company_required
@@ -2444,7 +2509,7 @@ def generate_unique_bill_no(company, prefix="BILL"):
     8-digit numeric suffix (like 00001234) with a prefix for readability.
     Ensures uniqueness per company.
     """
-    base_date = timezone.now().strftime("%y%m")  # e.g., '2510'
+    base_date = timezone.now().strftime("%y%m")
     seed = f"{base_date}0001"
     suffix = int(seed)
     while True:
@@ -2485,28 +2550,6 @@ def _dec(x, default="0.00") -> Decimal:
     except Exception:
         return Decimal(default)
 
-
-from decimal import Decimal
-from django.contrib import messages
-from django.db import transaction
-from django.shortcuts import render, redirect, get_object_or_404
-from django.utils import timezone
-
-from accounts.models import Account
-from inventory.models import Product, InventoryLocation  # add InventoryLocation import
-from sowaf.models import Newsupplier, Newcustomer
-from inventory.models import Pclass  # adjust import if Pclass lives elsewhere
-
-# keep your existing helpers:
-# - expense_accounts_qs
-# - _parse_ymd
-# - _dec
-# - generate_unique_bill_no
-# - _post_bill_to_ledger
-# - rebuild_movements_for_bill
-# - Bill, BillCategoryLine, BillItemLine
-
-
 def get_default_location(company):
     loc = InventoryLocation.objects.for_company(company).filter(is_default=True, is_active=True).first()
     if not loc:
@@ -2527,150 +2570,160 @@ def get_default_location(company):
 @transaction.atomic
 def add_bill(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
-        expense_qs = expense_accounts_qs()
-        if hasattr(expense_qs, "for_company"):
-            expense_qs = expense_qs.for_company(company)
-        elif hasattr(expense_qs.model, "company_id"):
-            expense_qs = expense_qs.filter(company=company)
+        try:
+            expense_qs = expense_accounts_qs()
+            if hasattr(expense_qs, "for_company"):
+                expense_qs = expense_qs.for_company(company)
+            elif hasattr(expense_qs.model, "company_id"):
+                expense_qs = expense_qs.filter(company_id=company_id)
 
-        supplier_id = request.POST.get("supplier_id") or ""
-        supplier_name = request.POST.get("supplier") or ""
-        mailing_address = request.POST.get("mailing_address") or ""
-        terms = request.POST.get("terms") or ""
-        bill_date = _parse_ymd(request.POST.get("bill_date"), timezone.localdate())
-        due_date = _parse_ymd(request.POST.get("due_date"))
-        bill_no = (request.POST.get("bill_no") or "").strip()
+            supplier_id = request.POST.get("supplier_id") or ""
+            supplier_name = request.POST.get("supplier") or ""
+            mailing_address = request.POST.get("mailing_address") or ""
+            terms = request.POST.get("terms") or ""
+            bill_date = _parse_ymd(request.POST.get("bill_date"), timezone.localdate())
+            due_date = _parse_ymd(request.POST.get("due_date"))
+            bill_no = (request.POST.get("bill_no") or "").strip()
 
-        # CHANGED: location is FK id now
-        location_id = request.POST.get("location") or ""
-        memo = request.POST.get("memo") or ""
-        attachment = request.FILES.get("attachments")
+            # CHANGED: location is FK id now
+            location_id = request.POST.get("location") or ""
+            memo = request.POST.get("memo") or ""
+            attachment = request.FILES.get("attachments")
 
-        supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+            supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
-        if (not bill_no) or Bill.objects.for_company(company).filter(bill_no=bill_no).exists():
-            bill_no = generate_unique_bill_no(company)
+            if (not bill_no) or Bill.objects.for_company(company).filter(bill_no=bill_no).exists():
+                bill_no = generate_unique_bill_no(company)
 
-        # Resolve location (fallback to default)
-        location_obj = None
-        if location_id:
-            location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
-        if not location_obj:
-            location_obj = get_default_location(company)
+            # Resolve location (fallback to default)
+            location_obj = None
+            if location_id:
+                location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+            if not location_obj:
+                location_obj = get_default_location(company)
 
-        bill = Bill.objects.create(
-            company=company,
-            supplier=supplier,
-            supplier_name=None if supplier else supplier_name,
-            mailing_address=mailing_address,
-            terms=terms,
-            bill_date=bill_date,
-            due_date=due_date,
-            bill_no=bill_no,
+            bill = Bill.objects.create(
+                company_id=company_id,
+                supplier=supplier,
+                supplier_name=None if supplier else supplier_name,
+                mailing_address=mailing_address,
+                terms=terms,
+                bill_date=bill_date,
+                due_date=due_date,
+                bill_no=bill_no,
 
-            # CHANGED
-            location=location_obj,
+                # CHANGED
+                location=location_obj,
 
-            memo=memo,
-            attachments=attachment,
-        )
-
-        total = Decimal("0.00")
-
-        # ---------- Category lines ----------
-        cat_category_ids = request.POST.getlist("cat_category[]")
-        cat_descs = request.POST.getlist("cat_desc[]")
-        cat_amounts = request.POST.getlist("cat_amount[]")
-        cat_billable = set(request.POST.getlist("cat_billable[]"))
-        cat_customer_ids = request.POST.getlist("cat_customer[]")
-        cat_class_ids = request.POST.getlist("cat_class[]")
-
-        for idx, acc_id in enumerate(cat_category_ids):
-            if not acc_id:
-                continue
-            account = expense_qs.filter(pk=acc_id).first()
-            if not account:
-                continue
-
-            amt = _dec(cat_amounts[idx])
-            if amt <= 0:
-                continue
-
-            is_bill = str(idx) in cat_billable
-            customer = Newcustomer.objects.for_company(company).filter(pk=(cat_customer_ids[idx] or None)).first()
-            klass = Pclass.objects.for_company(company).filter(pk=(cat_class_ids[idx] or None)).first()
-
-            BillCategoryLine.objects.create(
-                bill=bill, category=account,
-                description=(cat_descs[idx] or ""),
-                amount=amt, is_billable=is_bill,
-                customer=customer, class_field=klass
+                memo=memo,
+                attachments=attachment,
             )
-            total += amt
 
-        # ---------- Item lines ----------
-        item_product_ids = request.POST.getlist("item_product[]")
-        item_descs = request.POST.getlist("item_desc[]")
-        item_qtys = request.POST.getlist("item_qty[]")
-        item_rates = request.POST.getlist("item_rate[]")
-        item_amounts = request.POST.getlist("item_amount[]")
-        item_billable = set(request.POST.getlist("item_billable[]"))
-        item_customer_ids = request.POST.getlist("item_customer[]")
-        item_class_ids = request.POST.getlist("item_class[]")
+            total = Decimal("0.00")
 
-        for idx, prod_id in enumerate(item_product_ids):
-            if not prod_id:
-                continue
-            product = Product.objects.for_company(company).filter(pk=prod_id).first()
-            if not product:
-                continue
+            # ---------- Category lines ----------
+            cat_category_ids = request.POST.getlist("cat_category[]")
+            cat_descs = request.POST.getlist("cat_desc[]")
+            cat_amounts = request.POST.getlist("cat_amount[]")
+            cat_billable = set(request.POST.getlist("cat_billable[]"))
+            cat_customer_ids = request.POST.getlist("cat_customer[]")
+            cat_class_ids = request.POST.getlist("cat_class[]")
 
-            qty = _dec(item_qtys[idx], "0")
-            rate = _dec(item_rates[idx], "0")
-            amt = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
-            if amt <= 0:
-                continue
+            for idx, acc_id in enumerate(cat_category_ids):
+                if not acc_id:
+                    continue
+                account = expense_qs.filter(pk=acc_id).first()
+                if not account:
+                    continue
+                if getattr(account, "company_id", None) != company_id:
+                    raise ValueError("Selected expense account belongs to another company.")
 
-            is_bill = str(idx) in item_billable
-            customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
-            klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+                amt = _dec(cat_amounts[idx])
+                if amt <= 0:
+                    continue
 
-            BillItemLine.objects.create(
-                bill=bill, product=product,
-                description=(item_descs[idx] or ""),
-                qty=qty, rate=rate, amount=amt,
-                is_billable=is_bill, customer=customer, class_field=klass
-            )
-            total += amt
+                is_bill = str(idx) in cat_billable
+                customer = Newcustomer.objects.for_company(company).filter(pk=(cat_customer_ids[idx] or None)).first()
+                klass = Pclass.objects.for_company(company).filter(pk=(cat_class_ids[idx] or None)).first()
 
-        if total <= 0:
-            bill.delete()
-            return redirect("expenses:add-bill")
+                BillCategoryLine.objects.create(
+                    bill=bill, category=account,
+                    description=(cat_descs[idx] or ""),
+                    amount=amt, is_billable=is_bill,
+                    customer=customer, class_field=klass
+                )
+                total += amt
 
-        bill.total_amount = total
-        bill.save(update_fields=["total_amount"])
+            # ---------- Item lines ----------
+            item_product_ids = request.POST.getlist("item_product[]")
+            item_descs = request.POST.getlist("item_desc[]")
+            item_qtys = request.POST.getlist("item_qty[]")
+            item_rates = request.POST.getlist("item_rate[]")
+            item_amounts = request.POST.getlist("item_amount[]")
+            item_billable = set(request.POST.getlist("item_billable[]"))
+            item_customer_ids = request.POST.getlist("item_customer[]")
+            item_class_ids = request.POST.getlist("item_class[]")
 
-        _post_bill_to_ledger(bill)
-        rebuild_movements_for_bill(bill)
+            for idx, prod_id in enumerate(item_product_ids):
+                if not prod_id:
+                    continue
+                product = Product.objects.for_company(company).filter(pk=prod_id).first()
+                if not product:
+                    continue
+                if hasattr(product, "company_id") and product.company_id != company_id:
+                    raise ValueError("Selected product belongs to another company.")
 
-        action = request.POST.get("save_action") or "save"
-        if action == "save":
+                qty = _dec(item_qtys[idx], "0")
+                rate = _dec(item_rates[idx], "0")
+                amt = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
+                if amt <= 0:
+                    continue
+
+                is_bill = str(idx) in item_billable
+                customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
+                klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+
+                BillItemLine.objects.create(
+                    bill=bill, product=product,
+                    description=(item_descs[idx] or ""),
+                    qty=qty, rate=rate, amount=amt,
+                    is_billable=is_bill, customer=customer, class_field=klass
+                )
+                total += amt
+
+            if total <= 0:
+                bill.delete()
+                return redirect("expenses:add-bill")
+
+            bill.total_amount = total
+            bill.save(update_fields=["total_amount"])
+
+            _post_bill_to_ledger(bill)
+            rebuild_movements_for_bill(bill)
+
+            action = request.POST.get("save_action") or "save"
+            if action == "save":
+                return redirect("expenses:bills-list")
+            if action == "save&new":
+                return redirect("expenses:add-bill")
             return redirect("expenses:bills-list")
-        if action == "save&new":
+
+        except Exception as e:
+            messages.error(request, f"Could not save bill: {e}")
             return redirect("expenses:add-bill")
-        return redirect("expenses:bills-list")
 
     expense_qs = expense_accounts_qs()
     if hasattr(expense_qs, "for_company"):
         expense_qs = expense_qs.for_company(company)
     elif hasattr(expense_qs.model, "company_id"):
-        expense_qs = expense_qs.filter(company=company)
+        expense_qs = expense_qs.filter(company_id=company_id)
 
     all_accounts = Account.objects.all()
     if hasattr(Account, "company_id"):
-        all_accounts = all_accounts.filter(company=company)
+        all_accounts = all_accounts.filter(company_id=company_id)
 
     context = {
         "expense_accounts": expense_qs,
@@ -2694,6 +2747,7 @@ def add_bill(request):
 @transaction.atomic
 def edit_bill(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     bill = get_object_or_404(
         Bill.objects.for_company(company)
@@ -2703,143 +2757,152 @@ def edit_bill(request, pk: int):
     )
 
     if request.method == "POST":
-        expense_qs = expense_accounts_qs()
-        if hasattr(expense_qs, "for_company"):
-            expense_qs = expense_qs.for_company(company)
-        elif hasattr(expense_qs.model, "company_id"):
-            expense_qs = expense_qs.filter(company=company)
+        try:
+            expense_qs = expense_accounts_qs()
+            if hasattr(expense_qs, "for_company"):
+                expense_qs = expense_qs.for_company(company)
+            elif hasattr(expense_qs.model, "company_id"):
+                expense_qs = expense_qs.filter(company_id=company_id)
 
-        supplier_id = request.POST.get("supplier_id") or ""
-        supplier_manual = request.POST.get("supplier") or ""
+            supplier_id = request.POST.get("supplier_id") or ""
+            supplier_manual = request.POST.get("supplier") or ""
 
-        bill.mailing_address = request.POST.get("mailing_address") or ""
-        bill.terms = request.POST.get("terms") or ""
-        bill.bill_date = _parse_ymd(request.POST.get("bill_date"), bill.bill_date or timezone.localdate())
-        bill.due_date = _parse_ymd(request.POST.get("due_date"))
-        new_bill_no = (request.POST.get("bill_no") or "").strip()
+            bill.mailing_address = request.POST.get("mailing_address") or ""
+            bill.terms = request.POST.get("terms") or ""
+            bill.bill_date = _parse_ymd(request.POST.get("bill_date"), bill.bill_date or timezone.localdate())
+            bill.due_date = _parse_ymd(request.POST.get("due_date"))
+            new_bill_no = (request.POST.get("bill_no") or "").strip()
 
-        # CHANGED: location FK id
-        location_id = request.POST.get("location") or ""
-        bill.memo = request.POST.get("memo") or ""
+            # CHANGED: location FK id
+            location_id = request.POST.get("location") or ""
+            bill.memo = request.POST.get("memo") or ""
 
-        if new_bill_no and new_bill_no != (bill.bill_no or ""):
-            if Bill.objects.for_company(company).exclude(pk=bill.pk).filter(bill_no=new_bill_no).exists():
-                messages.error(request, "Bill No. already exists. Please use another number.")
+            if new_bill_no and new_bill_no != (bill.bill_no or ""):
+                if Bill.objects.for_company(company).exclude(pk=bill.pk).filter(bill_no=new_bill_no).exists():
+                    messages.error(request, "Bill No. already exists. Please use another number.")
+                    return redirect("expenses:bill-edit", pk=bill.pk)
+                bill.bill_no = new_bill_no
+
+            supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+            bill.supplier = supplier
+            bill.supplier_name = None if supplier else supplier_manual
+
+            # Resolve location (fallback to default)
+            location_obj = None
+            if location_id:
+                location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+            if not location_obj:
+                location_obj = get_default_location(company)
+            bill.location = location_obj
+
+            if request.FILES.get("attachments"):
+                bill.attachments = request.FILES["attachments"]
+
+            bill.save()
+
+            # replace lines
+            BillCategoryLine.objects.filter(bill=bill).delete()
+            BillItemLine.objects.filter(bill=bill).delete()
+
+            total = Decimal("0.00")
+
+            # ---- Category lines ----
+            cat_category_ids = request.POST.getlist("cat_category[]")
+            cat_descs = request.POST.getlist("cat_desc[]")
+            cat_amounts = request.POST.getlist("cat_amount[]")
+            cat_billable = set(request.POST.getlist("cat_billable[]"))
+            cat_customer_ids = request.POST.getlist("cat_customer[]")
+            cat_class_ids = request.POST.getlist("cat_class[]")
+
+            for idx, acc_id in enumerate(cat_category_ids):
+                if not acc_id:
+                    continue
+                account = expense_qs.filter(pk=acc_id).first()
+                if not account:
+                    continue
+                if getattr(account, "company_id", None) != company_id:
+                    raise ValueError("Selected expense account belongs to another company.")
+
+                amt = _dec(cat_amounts[idx])
+                if amt <= 0:
+                    continue
+
+                is_bill = str(idx) in cat_billable
+                customer = Newcustomer.objects.for_company(company).filter(pk=(cat_customer_ids[idx] or None)).first()
+                klass = Pclass.objects.for_company(company).filter(pk=(cat_class_ids[idx] or None)).first()
+
+                BillCategoryLine.objects.create(
+                    bill=bill, category=account,
+                    description=(cat_descs[idx] or ""),
+                    amount=amt, is_billable=is_bill,
+                    customer=customer, class_field=klass
+                )
+                total += amt
+
+            # ---- Item lines ----
+            item_product_ids = request.POST.getlist("item_product[]")
+            item_descs = request.POST.getlist("item_desc[]")
+            item_qtys = request.POST.getlist("item_qty[]")
+            item_rates = request.POST.getlist("item_rate[]")
+            item_amounts = request.POST.getlist("item_amount[]")
+            item_billable = set(request.POST.getlist("item_billable[]"))
+            item_customer_ids = request.POST.getlist("item_customer[]")
+            item_class_ids = request.POST.getlist("item_class[]")
+
+            for idx, prod_id in enumerate(item_product_ids):
+                if not prod_id:
+                    continue
+                product = Product.objects.for_company(company).filter(pk=prod_id).first()
+                if not product:
+                    continue
+                if hasattr(product, "company_id") and product.company_id != company_id:
+                    raise ValueError("Selected product belongs to another company.")
+
+                qty = _dec(item_qtys[idx], "0")
+                rate = _dec(item_rates[idx], "0")
+                amt = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
+                if amt <= 0:
+                    continue
+
+                is_bill = str(idx) in item_billable
+                customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
+                klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+
+                BillItemLine.objects.create(
+                    bill=bill, product=product,
+                    description=(item_descs[idx] or ""),
+                    qty=qty, rate=rate, amount=amt,
+                    is_billable=is_bill, customer=customer, class_field=klass
+                )
+                total += amt
+
+            if total <= 0:
                 return redirect("expenses:bill-edit", pk=bill.pk)
-            bill.bill_no = new_bill_no
 
-        supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
-        bill.supplier = supplier
-        bill.supplier_name = None if supplier else supplier_manual
+            bill.total_amount = total
+            bill.save(update_fields=["total_amount"])
 
-        # Resolve location (fallback to default)
-        location_obj = None
-        if location_id:
-            location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
-        if not location_obj:
-            location_obj = get_default_location(company)
-        bill.location = location_obj
+            _post_bill_to_ledger(bill)
+            rebuild_movements_for_bill(bill)
 
-        if request.FILES.get("attachments"):
-            bill.attachments = request.FILES["attachments"]
+            action = request.POST.get("save_action") or "save"
+            if action == "save&new":
+                return redirect("expenses:add-bill")
+            return redirect("expenses:bills-list")
 
-        bill.save()
-
-        # replace lines
-        BillCategoryLine.objects.filter(bill=bill).delete()
-        BillItemLine.objects.filter(bill=bill).delete()
-
-        total = Decimal("0.00")
-
-        # ---- Category lines ----
-        cat_category_ids = request.POST.getlist("cat_category[]")
-        cat_descs = request.POST.getlist("cat_desc[]")
-        cat_amounts = request.POST.getlist("cat_amount[]")
-        cat_billable = set(request.POST.getlist("cat_billable[]"))
-        cat_customer_ids = request.POST.getlist("cat_customer[]")
-        cat_class_ids = request.POST.getlist("cat_class[]")
-
-        for idx, acc_id in enumerate(cat_category_ids):
-            if not acc_id:
-                continue
-            account = expense_qs.filter(pk=acc_id).first()
-            if not account:
-                continue
-
-            amt = _dec(cat_amounts[idx])
-            if amt <= 0:
-                continue
-
-            is_bill = str(idx) in cat_billable
-            customer = Newcustomer.objects.for_company(company).filter(pk=(cat_customer_ids[idx] or None)).first()
-            klass = Pclass.objects.for_company(company).filter(pk=(cat_class_ids[idx] or None)).first()
-
-            BillCategoryLine.objects.create(
-                bill=bill, category=account,
-                description=(cat_descs[idx] or ""),
-                amount=amt, is_billable=is_bill,
-                customer=customer, class_field=klass
-            )
-            total += amt
-
-        # ---- Item lines ----
-        item_product_ids = request.POST.getlist("item_product[]")
-        item_descs = request.POST.getlist("item_desc[]")
-        item_qtys = request.POST.getlist("item_qty[]")
-        item_rates = request.POST.getlist("item_rate[]")
-        item_amounts = request.POST.getlist("item_amount[]")
-        item_billable = set(request.POST.getlist("item_billable[]"))
-        item_customer_ids = request.POST.getlist("item_customer[]")
-        item_class_ids = request.POST.getlist("item_class[]")
-
-        for idx, prod_id in enumerate(item_product_ids):
-            if not prod_id:
-                continue
-            product = Product.objects.for_company(company).filter(pk=prod_id).first()
-            if not product:
-                continue
-
-            qty = _dec(item_qtys[idx], "0")
-            rate = _dec(item_rates[idx], "0")
-            amt = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
-            if amt <= 0:
-                continue
-
-            is_bill = str(idx) in item_billable
-            customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
-            klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
-
-            BillItemLine.objects.create(
-                bill=bill, product=product,
-                description=(item_descs[idx] or ""),
-                qty=qty, rate=rate, amount=amt,
-                is_billable=is_bill, customer=customer, class_field=klass
-            )
-            total += amt
-
-        if total <= 0:
+        except Exception as e:
+            messages.error(request, f"Could not update bill: {e}")
             return redirect("expenses:bill-edit", pk=bill.pk)
-
-        bill.total_amount = total
-        bill.save(update_fields=["total_amount"])
-
-        _post_bill_to_ledger(bill)
-        rebuild_movements_for_bill(bill)
-
-        action = request.POST.get("save_action") or "save"
-        if action == "save&new":
-            return redirect("expenses:add-bill")
-        return redirect("expenses:bills-list")
 
     expense_qs = expense_accounts_qs()
     if hasattr(expense_qs, "for_company"):
         expense_qs = expense_qs.for_company(company)
     elif hasattr(expense_qs.model, "company_id"):
-        expense_qs = expense_qs.filter(company=company)
+        expense_qs = expense_qs.filter(company_id=company_id)
 
     all_accounts = Account.objects.all()
     if hasattr(Account, "company_id"):
-        all_accounts = all_accounts.filter(company=company)
+        all_accounts = all_accounts.filter(company_id=company_id)
 
     context = {
         "bill": bill,
@@ -2894,13 +2957,11 @@ def bills_list(request):
         qs = qs.filter(bill_date__lte=date_to)
 
     # Simple status chip (Open/Overdue/Closed) computed on the fly:
-    # If you have a stored status field, you can display that instead.
     rows = []
     for b in qs:
         status = "Open"
         if b.due_date and b.due_date < today:
             status = "Overdue"
-        # if you later add payments + balance logic, set "Closed" when fully paid
         rows.append((b, status))
 
     # Totals (for the current filtered set)
@@ -2912,7 +2973,7 @@ def bills_list(request):
     totals["tax"] = Decimal("0.00")
 
     # ----- Pagination -----
-    paginator = Paginator(rows, 25)  # 25 per page
+    paginator = Paginator(rows, 25)
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
@@ -2990,8 +3051,9 @@ def _account_credit_balance(account: "Account", company=None) -> Decimal:
         .filter(account=account)
     )
 
-    if company is not None and hasattr(JournalLine, "company_id"):
-        qs = qs.filter(company=company)
+    if company is not None:
+        company_id = getattr(company, "id", company)
+        qs = qs.filter(entry__company_id=company_id)
 
     agg = qs.aggregate(
         d=Sum("debit"),
@@ -3046,13 +3108,10 @@ def _save_cheque_open_balance(request, cheque: "Cheque"):
     if amt <= 0:
         return
 
-    # NOTE: do NOT clamp. If they enter more than current open balance, that becomes supplier credit.
     ChequeOpenBalanceLine.objects.create(
         cheque=cheque,
         amount_applied=amt
     )
-
-
 @require_GET
 @login_required
 @company_required
@@ -3099,6 +3158,8 @@ def outstanding_bills_api(request):
         "bills": bills_payload,
         "open_balance": str(open_balance),
     })
+
+
 # add cheque
 @login_required
 @company_required
@@ -3106,183 +3167,203 @@ def outstanding_bills_api(request):
 @transaction.atomic
 def add_cheque(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
-        expense_qs = expense_accounts_qs()
-        if hasattr(expense_qs, "for_company"):
-            expense_qs = expense_qs.for_company(company)
-        elif hasattr(expense_qs.model, "company_id"):
-            expense_qs = expense_qs.filter(company=company)
+        try:
+            expense_qs = expense_accounts_qs()
+            if hasattr(expense_qs, "for_company"):
+                expense_qs = expense_qs.for_company(company)
+            elif hasattr(expense_qs.model, "company_id"):
+                expense_qs = expense_qs.filter(company_id=company_id)
 
-        supplier_id = request.POST.get("payee_supplier") or ""
-        payee_name = request.POST.get("payee_name") or ""
-        bank_id = request.POST.get("bank_account") or ""
-        mailing = request.POST.get("mailing_address") or ""
-        payment_date = _parse_ymd(request.POST.get("payment_date"), timezone.localdate())
-        cheque_no = (request.POST.get("cheque_no") or "").strip()
+            supplier_id = request.POST.get("payee_supplier") or ""
+            payee_name = request.POST.get("payee_name") or ""
+            bank_id = request.POST.get("bank_account") or ""
+            mailing = request.POST.get("mailing_address") or ""
+            payment_date = _parse_ymd(request.POST.get("payment_date"), timezone.localdate())
+            cheque_no = (request.POST.get("cheque_no") or "").strip()
 
-        # UPDATED: location FK
-        location_id = request.POST.get("location") or ""
-        location_obj = None
-        if location_id and location_id != "add_new":
-            location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+            # UPDATED: location FK
+            location_id = request.POST.get("location") or ""
+            location_obj = None
+            if location_id and location_id != "add_new":
+                location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
 
-        memo = request.POST.get("memo") or ""
-        attachment = request.FILES.get("attachments")
+            memo = request.POST.get("memo") or ""
+            attachment = request.FILES.get("attachments")
 
-        supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+            supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
-        bank_acc_qs = Account.objects.filter(is_active=True).filter(bankish_q())
-        if hasattr(Account, "company_id"):
-            bank_acc_qs = bank_acc_qs.filter(company=company)
-        bank_acc = bank_acc_qs.filter(pk=bank_id).first() if bank_id else None
+            bank_acc_qs = Account.objects.filter(is_active=True).filter(bankish_q())
+            if hasattr(Account, "company_id"):
+                bank_acc_qs = bank_acc_qs.filter(company_id=company_id)
+            bank_acc = bank_acc_qs.filter(pk=bank_id).first() if bank_id else None
 
-        if not cheque_no:
-            cheque_no = generate_unique_cheque_no(company)
-        elif Cheque.objects.for_company(company).filter(cheque_no=cheque_no).exists():
-            cheque_no = generate_unique_cheque_no(company)
+            if not bank_acc:
+                messages.error(request, "Please select a valid bank/cash account.")
+                return redirect("expenses:add-cheque")
 
-        with transaction.atomic():
-            cheque = Cheque.objects.create(
-                company=company,
-                payee_supplier=supplier,
-                payee_name="" if supplier else (payee_name or ""),
-                bank_account=bank_acc,
-                mailing_address=mailing,
-                payment_date=payment_date,
-                cheque_no=cheque_no,
+            if getattr(bank_acc, "company_id", None) != company_id:
+                messages.error(request, "Selected bank account belongs to another company.")
+                return redirect("expenses:add-cheque")
 
-                # UPDATED
-                location=location_obj,
+            if not cheque_no:
+                cheque_no = generate_unique_cheque_no(company)
+            elif Cheque.objects.for_company(company).filter(cheque_no=cheque_no).exists():
+                cheque_no = generate_unique_cheque_no(company)
 
-                memo=memo,
-                attachments=attachment,
-            )
+            with transaction.atomic():
+                cheque = Cheque.objects.create(
+                    company=company,
+                    payee_supplier=supplier,
+                    payee_name="" if supplier else (payee_name or ""),
+                    bank_account=bank_acc,
+                    mailing_address=mailing,
+                    payment_date=payment_date,
+                    cheque_no=cheque_no,
 
-            total_direct = Decimal("0.00")
+                    # UPDATED
+                    location=location_obj,
 
-            # ---------- Category lines ----------
-            cat_ids = request.POST.getlist("cat_category[]")
-            cat_descs = request.POST.getlist("cat_desc[]")
-            cat_amts = request.POST.getlist("cat_amount[]")
-            cat_billable = set(request.POST.getlist("cat_billable[]"))
-            cat_cust = request.POST.getlist("cat_customer[]")
-            cat_cls = request.POST.getlist("cat_class[]")
-
-            for idx, acc_id in enumerate(cat_ids):
-                if not acc_id:
-                    continue
-
-                acc = expense_qs.filter(pk=acc_id).first()
-                if not acc:
-                    fallback_qs = Account.objects.filter(pk=acc_id)
-                    if hasattr(Account, "company_id"):
-                        fallback_qs = fallback_qs.filter(company=company)
-                    acc = fallback_qs.first()
-
-                if not acc:
-                    continue
-
-                amt = _dec(cat_amts[idx])
-                if amt <= 0:
-                    continue
-
-                is_bill = str(idx) in cat_billable
-                customer = Newcustomer.objects.for_company(company).filter(pk=(cat_cust[idx] or None)).first()
-                klass = Pclass.objects.for_company(company).filter(pk=(cat_cls[idx] or None)).first()
-
-                ChequeCategoryLine.objects.create(
-                    cheque=cheque,
-                    category=acc,
-                    description=(cat_descs[idx] or ""),
-                    amount=amt,
-                    is_billable=is_bill,
-                    customer=customer,
-                    class_field=klass,
+                    memo=memo,
+                    attachments=attachment,
                 )
-                total_direct += amt
 
-            # ---------- Item lines ----------
-            item_prod = request.POST.getlist("item_product[]")
-            item_desc = request.POST.getlist("item_desc[]")
-            item_qty = request.POST.getlist("item_qty[]")
-            item_rate = request.POST.getlist("item_rate[]")
-            item_amt = request.POST.getlist("item_amount[]")
-            item_billable = set(request.POST.getlist("item_billable[]"))
-            item_cust = request.POST.getlist("item_customer[]")
-            item_cls = request.POST.getlist("item_class[]")
+                total_direct = Decimal("0.00")
 
-            for idx, pid in enumerate(item_prod):
-                if not pid:
-                    continue
-                product = Product.objects.for_company(company).filter(pk=pid).first()
-                if not product:
-                    continue
+                # ---------- Category lines ----------
+                cat_ids = request.POST.getlist("cat_category[]")
+                cat_descs = request.POST.getlist("cat_desc[]")
+                cat_amts = request.POST.getlist("cat_amount[]")
+                cat_billable = set(request.POST.getlist("cat_billable[]"))
+                cat_cust = request.POST.getlist("cat_customer[]")
+                cat_cls = request.POST.getlist("cat_class[]")
 
-                qty = _dec(item_qty[idx], "0")
-                rate = _dec(item_rate[idx], "0")
-                amt = _dec(item_amt[idx]) if (idx < len(item_amt) and item_amt[idx]) else (qty * rate)
-                if amt <= 0:
-                    continue
+                for idx, acc_id in enumerate(cat_ids):
+                    if not acc_id:
+                        continue
 
-                is_bill = str(idx) in item_billable
-                customer = Newcustomer.objects.for_company(company).filter(pk=(item_cust[idx] or None)).first()
-                klass = Pclass.objects.for_company(company).filter(pk=(item_cls[idx] or None)).first()
+                    acc = expense_qs.filter(pk=acc_id).first()
+                    if not acc:
+                        fallback_qs = Account.objects.filter(pk=acc_id)
+                        if hasattr(Account, "company_id"):
+                            fallback_qs = fallback_qs.filter(company_id=company_id)
+                        acc = fallback_qs.first()
 
-                ChequeItemLine.objects.create(
-                    cheque=cheque,
-                    product=product,
-                    description=(item_desc[idx] or ""),
-                    qty=qty,
-                    rate=rate,
-                    amount=amt,
-                    is_billable=is_bill,
-                    customer=customer,
-                    class_field=klass,
+                    if not acc:
+                        continue
+
+                    if getattr(acc, "company_id", None) != company_id:
+                        raise ValueError("Selected expense account belongs to another company.")
+
+                    amt = _dec(cat_amts[idx])
+                    if amt <= 0:
+                        continue
+
+                    is_bill = str(idx) in cat_billable
+                    customer = Newcustomer.objects.for_company(company).filter(pk=(cat_cust[idx] or None)).first()
+                    klass = Pclass.objects.for_company(company).filter(pk=(cat_cls[idx] or None)).first()
+
+                    ChequeCategoryLine.objects.create(
+                        cheque=cheque,
+                        category=acc,
+                        description=(cat_descs[idx] or ""),
+                        amount=amt,
+                        is_billable=is_bill,
+                        customer=customer,
+                        class_field=klass,
+                    )
+                    total_direct += amt
+
+                # ---------- Item lines ----------
+                item_prod = request.POST.getlist("item_product[]")
+                item_desc = request.POST.getlist("item_desc[]")
+                item_qty = request.POST.getlist("item_qty[]")
+                item_rate = request.POST.getlist("item_rate[]")
+                item_amt = request.POST.getlist("item_amount[]")
+                item_billable = set(request.POST.getlist("item_billable[]"))
+                item_cust = request.POST.getlist("item_customer[]")
+                item_cls = request.POST.getlist("item_class[]")
+
+                for idx, pid in enumerate(item_prod):
+                    if not pid:
+                        continue
+                    product = Product.objects.for_company(company).filter(pk=pid).first()
+                    if not product:
+                        continue
+
+                    if hasattr(product, "company_id") and product.company_id != company_id:
+                        raise ValueError("Selected product belongs to another company.")
+
+                    qty = _dec(item_qty[idx], "0")
+                    rate = _dec(item_rate[idx], "0")
+                    amt = _dec(item_amt[idx]) if (idx < len(item_amt) and item_amt[idx]) else (qty * rate)
+                    if amt <= 0:
+                        continue
+
+                    is_bill = str(idx) in item_billable
+                    customer = Newcustomer.objects.for_company(company).filter(pk=(item_cust[idx] or None)).first()
+                    klass = Pclass.objects.for_company(company).filter(pk=(item_cls[idx] or None)).first()
+
+                    ChequeItemLine.objects.create(
+                        cheque=cheque,
+                        product=product,
+                        description=(item_desc[idx] or ""),
+                        qty=qty,
+                        rate=rate,
+                        amount=amt,
+                        is_billable=is_bill,
+                        customer=customer,
+                        class_field=klass,
+                    )
+                    total_direct += amt
+
+                # Save allocations (bills)
+                _save_cheque_bill_allocations(request, cheque)
+
+                alloc_total = (
+                    ChequeBillLine.objects.filter(cheque=cheque)
+                    .aggregate(s=Sum("amount_applied"))["s"]
+                    or Decimal("0.00")
                 )
-                total_direct += amt
 
-            # Save allocations (bills)
-            _save_cheque_bill_allocations(request, cheque)
+                # Save open balance amount
+                _save_cheque_open_balance(request, cheque)
 
-            alloc_total = (
-                ChequeBillLine.objects.filter(cheque=cheque)
-                .aggregate(s=Sum("amount_applied"))["s"]
-                or Decimal("0.00")
-            )
+                open_total = (
+                    ChequeOpenBalanceLine.objects.filter(cheque=cheque)
+                    .aggregate(s=Sum("amount_applied"))["s"]
+                    or Decimal("0.00")
+                )
 
-            # Save open balance amount
-            _save_cheque_open_balance(request, cheque)
+                # Total cheque = bills + open balance + direct expenses
+                cheque.total_amount = alloc_total + open_total + total_direct
+                cheque.save(update_fields=["total_amount"])
 
-            open_total = (
-                ChequeOpenBalanceLine.objects.filter(cheque=cheque)
-                .aggregate(s=Sum("amount_applied"))["s"]
-                or Decimal("0.00")
-            )
+                # Post to GL (supports bills + open balance + direct)
+                _post_cheque_to_ledger(cheque)
 
-            # Total cheque = bills + open balance + direct expenses
-            cheque.total_amount = alloc_total + open_total + total_direct
-            cheque.save(update_fields=["total_amount"])
-
-            # Post to GL (supports bills + open balance + direct)
-            _post_cheque_to_ledger(cheque)
-
-        action = request.POST.get("save_action") or "save"
-        if action == "save&new":
-            return redirect("expenses:add-cheque")
-        if action == "save&close":
+            action = request.POST.get("save_action") or "save"
+            if action == "save&new":
+                return redirect("expenses:add-cheque")
+            if action == "save&close":
+                return redirect("expenses:expenses")
             return redirect("expenses:expenses")
-        return redirect("expenses:expenses")
+
+        except Exception as e:
+            messages.error(request, f"Could not save cheque: {e}")
+            return redirect("expenses:add-cheque")
 
     expense_qs = expense_accounts_qs()
     if hasattr(expense_qs, "for_company"):
         expense_qs = expense_qs.for_company(company)
     elif hasattr(expense_qs.model, "company_id"):
-        expense_qs = expense_qs.filter(company=company)
+        expense_qs = expense_qs.filter(company_id=company_id)
 
     bank_accounts = Account.objects.filter(is_active=True).filter(bankish_q())
     if hasattr(Account, "company_id"):
-        bank_accounts = bank_accounts.filter(company=company)
+        bank_accounts = bank_accounts.filter(company_id=company_id)
 
     context = {
         "cheque": None,
@@ -3311,165 +3392,185 @@ def add_cheque(request):
 @module_required("expenses")
 def cheque_edit(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
     cheque = get_object_or_404(Cheque.objects.for_company(company), pk=pk)
 
     if request.method == "POST":
-        expense_qs = expense_accounts_qs()
-        if hasattr(expense_qs, "for_company"):
-            expense_qs = expense_qs.for_company(company)
-        elif hasattr(expense_qs.model, "company_id"):
-            expense_qs = expense_qs.filter(company=company)
+        try:
+            expense_qs = expense_accounts_qs()
+            if hasattr(expense_qs, "for_company"):
+                expense_qs = expense_qs.for_company(company)
+            elif hasattr(expense_qs.model, "company_id"):
+                expense_qs = expense_qs.filter(company_id=company_id)
 
-        supplier_id = request.POST.get("payee_supplier") or ""
-        payee_name = request.POST.get("payee_name") or ""
-        bank_id = request.POST.get("bank_account") or ""
-        mailing = request.POST.get("mailing_address") or ""
-        payment_date = _parse_ymd(request.POST.get("payment_date"), cheque.payment_date)
+            supplier_id = request.POST.get("payee_supplier") or ""
+            payee_name = request.POST.get("payee_name") or ""
+            bank_id = request.POST.get("bank_account") or ""
+            mailing = request.POST.get("mailing_address") or ""
+            payment_date = _parse_ymd(request.POST.get("payment_date"), cheque.payment_date)
 
-        # UPDATED: location FK
-        location_id = request.POST.get("location") or ""
-        location_obj = None
-        if location_id and location_id != "add_new":
-            location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+            # UPDATED: location FK
+            location_id = request.POST.get("location") or ""
+            location_obj = None
+            if location_id and location_id != "add_new":
+                location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
 
-        memo = request.POST.get("memo") or ""
-        attachment = request.FILES.get("attachments")
+            memo = request.POST.get("memo") or ""
+            attachment = request.FILES.get("attachments")
 
-        supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+            supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
-        bank_acc_qs = Account.objects.filter(is_active=True).filter(bankish_q())
-        if hasattr(Account, "company_id"):
-            bank_acc_qs = bank_acc_qs.filter(company=company)
-        bank_acc = bank_acc_qs.filter(pk=bank_id).first() if bank_id else None
+            bank_acc_qs = Account.objects.filter(is_active=True).filter(bankish_q())
+            if hasattr(Account, "company_id"):
+                bank_acc_qs = bank_acc_qs.filter(company_id=company_id)
+            bank_acc = bank_acc_qs.filter(pk=bank_id).first() if bank_id else None
 
-        with transaction.atomic():
-            cheque.payee_supplier = supplier
-            cheque.payee_name = "" if supplier else (payee_name or "")
-            cheque.bank_account = bank_acc
-            cheque.mailing_address = mailing
-            cheque.payment_date = payment_date
+            if not bank_acc:
+                messages.error(request, "Please select a valid bank/cash account.")
+                return redirect("expenses:cheque-edit", pk=cheque.pk)
 
-            # UPDATED
-            cheque.location = location_obj
+            if getattr(bank_acc, "company_id", None) != company_id:
+                messages.error(request, "Selected bank account belongs to another company.")
+                return redirect("expenses:cheque-edit", pk=cheque.pk)
 
-            cheque.memo = memo
-            if attachment:
-                cheque.attachments = attachment
-            cheque.save()
+            with transaction.atomic():
+                cheque.payee_supplier = supplier
+                cheque.payee_name = "" if supplier else (payee_name or "")
+                cheque.bank_account = bank_acc
+                cheque.mailing_address = mailing
+                cheque.payment_date = payment_date
 
-            ChequeCategoryLine.objects.filter(cheque=cheque).delete()
-            ChequeItemLine.objects.filter(cheque=cheque).delete()
+                # UPDATED
+                cheque.location = location_obj
 
-            total_direct = Decimal("0.00")
+                cheque.memo = memo
+                if attachment:
+                    cheque.attachments = attachment
+                cheque.save()
 
-            # ---------- Category lines ----------
-            cat_ids = request.POST.getlist("cat_category[]")
-            cat_descs = request.POST.getlist("cat_desc[]")
-            cat_amts = request.POST.getlist("cat_amount[]")
-            cat_billable = set(request.POST.getlist("cat_billable[]"))
-            cat_cust = request.POST.getlist("cat_customer[]")
-            cat_cls = request.POST.getlist("cat_class[]")
+                ChequeCategoryLine.objects.filter(cheque=cheque).delete()
+                ChequeItemLine.objects.filter(cheque=cheque).delete()
 
-            for idx, acc_id in enumerate(cat_ids):
-                if not acc_id:
-                    continue
+                total_direct = Decimal("0.00")
 
-                acc = expense_qs.filter(pk=acc_id).first()
-                if not acc:
-                    fallback_qs = Account.objects.filter(pk=acc_id)
-                    if hasattr(Account, "company_id"):
-                        fallback_qs = fallback_qs.filter(company=company)
-                    acc = fallback_qs.first()
+                # ---------- Category lines ----------
+                cat_ids = request.POST.getlist("cat_category[]")
+                cat_descs = request.POST.getlist("cat_desc[]")
+                cat_amts = request.POST.getlist("cat_amount[]")
+                cat_billable = set(request.POST.getlist("cat_billable[]"))
+                cat_cust = request.POST.getlist("cat_customer[]")
+                cat_cls = request.POST.getlist("cat_class[]")
 
-                if not acc:
-                    continue
+                for idx, acc_id in enumerate(cat_ids):
+                    if not acc_id:
+                        continue
 
-                amt = _dec(cat_amts[idx])
-                if amt <= 0:
-                    continue
+                    acc = expense_qs.filter(pk=acc_id).first()
+                    if not acc:
+                        fallback_qs = Account.objects.filter(pk=acc_id)
+                        if hasattr(Account, "company_id"):
+                            fallback_qs = fallback_qs.filter(company_id=company_id)
+                        acc = fallback_qs.first()
 
-                is_bill = str(idx) in cat_billable
-                customer = Newcustomer.objects.for_company(company).filter(pk=(cat_cust[idx] or None)).first()
-                klass = Pclass.objects.for_company(company).filter(pk=(cat_cls[idx] or None)).first()
+                    if not acc:
+                        continue
 
-                ChequeCategoryLine.objects.create(
-                    cheque=cheque,
-                    category=acc,
-                    description=(cat_descs[idx] or ""),
-                    amount=amt,
-                    is_billable=is_bill,
-                    customer=customer,
-                    class_field=klass,
+                    if getattr(acc, "company_id", None) != company_id:
+                        raise ValueError("Selected expense account belongs to another company.")
+
+                    amt = _dec(cat_amts[idx])
+                    if amt <= 0:
+                        continue
+
+                    is_bill = str(idx) in cat_billable
+                    customer = Newcustomer.objects.for_company(company).filter(pk=(cat_cust[idx] or None)).first()
+                    klass = Pclass.objects.for_company(company).filter(pk=(cat_cls[idx] or None)).first()
+
+                    ChequeCategoryLine.objects.create(
+                        cheque=cheque,
+                        category=acc,
+                        description=(cat_descs[idx] or ""),
+                        amount=amt,
+                        is_billable=is_bill,
+                        customer=customer,
+                        class_field=klass,
+                    )
+                    total_direct += amt
+
+                # ---------- Item lines ----------
+                item_prod = request.POST.getlist("item_product[]")
+                item_desc = request.POST.getlist("item_desc[]")
+                item_qty = request.POST.getlist("item_qty[]")
+                item_rate = request.POST.getlist("item_rate[]")
+                item_amt = request.POST.getlist("item_amount[]")
+                item_billable = set(request.POST.getlist("item_billable[]"))
+                item_cust = request.POST.getlist("item_customer[]")
+                item_cls = request.POST.getlist("item_class[]")
+
+                for idx, pid in enumerate(item_prod):
+                    if not pid:
+                        continue
+                    product = Product.objects.for_company(company).filter(pk=pid).first()
+                    if not product:
+                        continue
+
+                    if hasattr(product, "company_id") and product.company_id != company_id:
+                        raise ValueError("Selected product belongs to another company.")
+
+                    qty = _dec(item_qty[idx], "0")
+                    rate = _dec(item_rate[idx], "0")
+                    amt = _dec(item_amt[idx]) if (idx < len(item_amt) and item_amt[idx]) else (qty * rate)
+                    if amt <= 0:
+                        continue
+
+                    is_bill = str(idx) in item_billable
+                    customer = Newcustomer.objects.for_company(company).filter(pk=(item_cust[idx] or None)).first()
+                    klass = Pclass.objects.for_company(company).filter(pk=(item_cls[idx] or None)).first()
+
+                    ChequeItemLine.objects.create(
+                        cheque=cheque,
+                        product=product,
+                        description=(item_desc[idx] or ""),
+                        qty=qty,
+                        rate=rate,
+                        amount=amt,
+                        is_billable=is_bill,
+                        customer=customer,
+                        class_field=klass,
+                    )
+                    total_direct += amt
+
+                # Save allocations (bills)
+                _save_cheque_bill_allocations(request, cheque)
+                alloc_total = (
+                    ChequeBillLine.objects.filter(cheque=cheque)
+                    .aggregate(s=Sum("amount_applied"))["s"]
+                    or Decimal("0.00")
                 )
-                total_direct += amt
 
-            # ---------- Item lines ----------
-            item_prod = request.POST.getlist("item_product[]")
-            item_desc = request.POST.getlist("item_desc[]")
-            item_qty = request.POST.getlist("item_qty[]")
-            item_rate = request.POST.getlist("item_rate[]")
-            item_amt = request.POST.getlist("item_amount[]")
-            item_billable = set(request.POST.getlist("item_billable[]"))
-            item_cust = request.POST.getlist("item_customer[]")
-            item_cls = request.POST.getlist("item_class[]")
-
-            for idx, pid in enumerate(item_prod):
-                if not pid:
-                    continue
-                product = Product.objects.for_company(company).filter(pk=pid).first()
-                if not product:
-                    continue
-
-                qty = _dec(item_qty[idx], "0")
-                rate = _dec(item_rate[idx], "0")
-                amt = _dec(item_amt[idx]) if (idx < len(item_amt) and item_amt[idx]) else (qty * rate)
-                if amt <= 0:
-                    continue
-
-                is_bill = str(idx) in item_billable
-                customer = Newcustomer.objects.for_company(company).filter(pk=(item_cust[idx] or None)).first()
-                klass = Pclass.objects.for_company(company).filter(pk=(item_cls[idx] or None)).first()
-
-                ChequeItemLine.objects.create(
-                    cheque=cheque,
-                    product=product,
-                    description=(item_desc[idx] or ""),
-                    qty=qty,
-                    rate=rate,
-                    amount=amt,
-                    is_billable=is_bill,
-                    customer=customer,
-                    class_field=klass,
+                # Save open balance
+                _save_cheque_open_balance(request, cheque)
+                open_total = (
+                    ChequeOpenBalanceLine.objects.filter(cheque=cheque)
+                    .aggregate(s=Sum("amount_applied"))["s"]
+                    or Decimal("0.00")
                 )
-                total_direct += amt
 
-            # Save allocations (bills)
-            _save_cheque_bill_allocations(request, cheque)
-            alloc_total = (
-                ChequeBillLine.objects.filter(cheque=cheque)
-                .aggregate(s=Sum("amount_applied"))["s"]
-                or Decimal("0.00")
-            )
+                cheque.total_amount = alloc_total + open_total + total_direct
+                cheque.save(update_fields=["total_amount"])
 
-            # Save open balance
-            _save_cheque_open_balance(request, cheque)
-            open_total = (
-                ChequeOpenBalanceLine.objects.filter(cheque=cheque)
-                .aggregate(s=Sum("amount_applied"))["s"]
-                or Decimal("0.00")
-            )
+                _post_cheque_to_ledger(cheque)
 
-            cheque.total_amount = alloc_total + open_total + total_direct
-            cheque.save(update_fields=["total_amount"])
-
-            _post_cheque_to_ledger(cheque)
-
-        action = request.POST.get("save_action") or "save"
-        if action == "save&new":
-            return redirect("expenses:add-cheque")
-        if action == "save&close":
+            action = request.POST.get("save_action") or "save"
+            if action == "save&new":
+                return redirect("expenses:add-cheque")
+            if action == "save&close":
+                return redirect("expenses:expenses")
             return redirect("expenses:expenses")
-        return redirect("expenses:expenses")
+
+        except Exception as e:
+            messages.error(request, f"Could not update cheque: {e}")
+            return redirect("expenses:cheque-edit", pk=cheque.pk)
 
     # GET prefill
     cat_lines = list(ChequeCategoryLine.objects.filter(cheque=cheque).values(
@@ -3518,11 +3619,11 @@ def cheque_edit(request, pk: int):
     if hasattr(expense_qs, "for_company"):
         expense_qs = expense_qs.for_company(company)
     elif hasattr(expense_qs.model, "company_id"):
-        expense_qs = expense_qs.filter(company=company)
+        expense_qs = expense_qs.filter(company_id=company_id)
 
     bank_accounts = Account.objects.filter(is_active=True).filter(bankish_q())
     if hasattr(Account, "company_id"):
-        bank_accounts = bank_accounts.filter(company=company)
+        bank_accounts = bank_accounts.filter(company_id=company_id)
 
     context = {
         "cheque": cheque,
@@ -3556,7 +3657,6 @@ def cheque_list(request):
     List of cheques with search, date filter and pagination.
     """
     company = request.company
-    today = timezone.localdate()
     qs = (
         Cheque.objects.for_company(company)
         .select_related("payee_supplier", "bank_account")
@@ -3648,98 +3748,107 @@ def purchase_order(request):
     Non-posting (no GL) – just records the order and shows in All Expenses.
     """
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
-        vendor_id = request.POST.get("vendor_id") or ""
-        vendor_name = request.POST.get("vendor_name") or ""
-        mailing_address = request.POST.get("mailing_address") or ""
-        po_date = _parse_ymd(request.POST.get("po_date"), timezone.localdate())
-        deliver_by = _parse_ymd(request.POST.get("deliver_by"))
-        ship_to = request.POST.get("ship_to") or ""
+        try:
+            vendor_id = request.POST.get("vendor_id") or ""
+            vendor_name = request.POST.get("vendor_name") or ""
+            mailing_address = request.POST.get("mailing_address") or ""
+            po_date = _parse_ymd(request.POST.get("po_date"), timezone.localdate())
+            deliver_by = _parse_ymd(request.POST.get("deliver_by"))
+            ship_to = request.POST.get("ship_to") or ""
 
-        # UPDATED: location FK
-        location_id = request.POST.get("location") or ""
-        location_obj = None
-        if location_id and location_id != "add_new":
-            location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+            # UPDATED: location FK
+            location_id = request.POST.get("location") or ""
+            location_obj = None
+            if location_id and location_id != "add_new":
+                location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
 
-        memo = request.POST.get("memo") or ""
-        attachment = request.FILES.get("attachments")
-        po_number = (request.POST.get("po_number") or "").strip()
+            memo = request.POST.get("memo") or ""
+            attachment = request.FILES.get("attachments")
+            po_number = (request.POST.get("po_number") or "").strip()
 
-        vendor = Newsupplier.objects.for_company(company).filter(pk=vendor_id).first() if vendor_id else None
+            vendor = Newsupplier.objects.for_company(company).filter(pk=vendor_id).first() if vendor_id else None
 
-        if (not po_number) or PurchaseOrder.objects.for_company(company).filter(po_number=po_number).exists():
-            po_number = generate_unique_po_no(company)
+            if (not po_number) or PurchaseOrder.objects.for_company(company).filter(po_number=po_number).exists():
+                po_number = generate_unique_po_no(company)
 
-        po = PurchaseOrder.objects.create(
-            company=company,
-            vendor=vendor,
-            vendor_name=None if vendor else vendor_name,
-            mailing_address=mailing_address,
-            po_date=po_date,
-            deliver_by=deliver_by,
-            ship_to=ship_to,
+            po = PurchaseOrder.objects.create(
+                company=company,
+                vendor=vendor,
+                vendor_name=None if vendor else vendor_name,
+                mailing_address=mailing_address,
+                po_date=po_date,
+                deliver_by=deliver_by,
+                ship_to=ship_to,
 
-            # UPDATED
-            location=location_obj,
+                # UPDATED
+                location=location_obj,
 
-            po_number=po_number,
-            memo=memo,
-            attachments=attachment,
-        )
-
-        total = Decimal("0.00")
-
-        # ----- Item lines -----
-        item_product_ids = request.POST.getlist("item_product[]")
-        item_descs = request.POST.getlist("item_desc[]")
-        item_qtys = request.POST.getlist("item_qty[]")
-        item_rates = request.POST.getlist("item_rate[]")
-        item_amounts = request.POST.getlist("item_amount[]")
-        item_customer_ids = request.POST.getlist("item_customer[]")
-        item_class_ids = request.POST.getlist("item_class[]")
-
-        for idx, prod_id in enumerate(item_product_ids):
-            if not prod_id:
-                continue
-            product = Product.objects.for_company(company).filter(pk=prod_id).first()
-            if not product:
-                continue
-
-            qty = _dec(item_qtys[idx], "0")
-            rate = _dec(item_rates[idx], "0")
-            amt = _dec(item_amounts[idx]) if item_amounts[idx] else (qty * rate)
-            if amt <= 0:
-                continue
-
-            customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
-            klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
-
-            PurchaseOrderLine.objects.create(
-                purchase_order=po,
-                product=product,
-                description=(item_descs[idx] or ""),
-                qty=qty,
-                rate=rate,
-                amount=amt,
-                customer=customer,
-                class_field=klass,
+                po_number=po_number,
+                memo=memo,
+                attachments=attachment,
             )
-            total += amt
 
-        if total <= 0:
-            po.delete()
-            messages.error(request, "You must add at least one line with an amount.")
+            total = Decimal("0.00")
+
+            # ----- Item lines -----
+            item_product_ids = request.POST.getlist("item_product[]")
+            item_descs = request.POST.getlist("item_desc[]")
+            item_qtys = request.POST.getlist("item_qty[]")
+            item_rates = request.POST.getlist("item_rate[]")
+            item_amounts = request.POST.getlist("item_amount[]")
+            item_customer_ids = request.POST.getlist("item_customer[]")
+            item_class_ids = request.POST.getlist("item_class[]")
+
+            for idx, prod_id in enumerate(item_product_ids):
+                if not prod_id:
+                    continue
+                product = Product.objects.for_company(company).filter(pk=prod_id).first()
+                if not product:
+                    continue
+
+                if hasattr(product, "company_id") and product.company_id != company_id:
+                    raise ValueError("Selected product belongs to another company.")
+
+                qty = _dec(item_qtys[idx], "0")
+                rate = _dec(item_rates[idx], "0")
+                amt = _dec(item_amounts[idx]) if item_amounts[idx] else (qty * rate)
+                if amt <= 0:
+                    continue
+
+                customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
+                klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+
+                PurchaseOrderLine.objects.create(
+                    purchase_order=po,
+                    product=product,
+                    description=(item_descs[idx] or ""),
+                    qty=qty,
+                    rate=rate,
+                    amount=amt,
+                    customer=customer,
+                    class_field=klass,
+                )
+                total += amt
+
+            if total <= 0:
+                po.delete()
+                messages.error(request, "You must add at least one line with an amount.")
+                return redirect("expenses:purchase_order")
+
+            po.total_amount = total
+            po.save(update_fields=["total_amount"])
+
+            action = request.POST.get("save_action") or "save"
+            if action == "save&new":
+                return redirect("expenses:purchase_order")
+            return redirect("expenses:expenses")
+
+        except Exception as e:
+            messages.error(request, f"Could not save purchase order: {e}")
             return redirect("expenses:purchase_order")
-
-        po.total_amount = total
-        po.save(update_fields=["total_amount"])
-
-        action = request.POST.get("save_action") or "save"
-        if action == "save&new":
-            return redirect("expenses:purchase_order")
-        return redirect("expenses:expenses")
 
     context = {
         "suppliers": Newsupplier.objects.for_company(company).all().order_by("company_name"),
@@ -3764,96 +3873,105 @@ def purchase_order(request):
 @transaction.atomic
 def purchase_order_edit(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
     po = get_object_or_404(
         PurchaseOrder.objects.for_company(company).prefetch_related("lines__product", "lines__customer", "lines__class_field"),
         pk=pk
     )
 
     if request.method == "POST":
-        vendor_id = request.POST.get("vendor_id") or ""
-        vendor_name = request.POST.get("vendor_name") or ""
-        po.mailing_address = request.POST.get("mailing_address") or ""
-        po.po_date = _parse_ymd(request.POST.get("po_date"), po.po_date or timezone.localdate())
-        po.deliver_by = _parse_ymd(request.POST.get("deliver_by"))
-        po.ship_to = request.POST.get("ship_to") or ""
+        try:
+            vendor_id = request.POST.get("vendor_id") or ""
+            vendor_name = request.POST.get("vendor_name") or ""
+            po.mailing_address = request.POST.get("mailing_address") or ""
+            po.po_date = _parse_ymd(request.POST.get("po_date"), po.po_date or timezone.localdate())
+            po.deliver_by = _parse_ymd(request.POST.get("deliver_by"))
+            po.ship_to = request.POST.get("ship_to") or ""
 
-        # UPDATED: location FK
-        location_id = request.POST.get("location") or ""
-        location_obj = None
-        if location_id and location_id != "add_new":
-            location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
-        po.location = location_obj
+            # UPDATED: location FK
+            location_id = request.POST.get("location") or ""
+            location_obj = None
+            if location_id and location_id != "add_new":
+                location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+            po.location = location_obj
 
-        po.memo = request.POST.get("memo") or ""
+            po.memo = request.POST.get("memo") or ""
 
-        new_po_number = (request.POST.get("po_number") or "").strip()
-        if new_po_number and new_po_number != (po.po_number or ""):
-            if PurchaseOrder.objects.for_company(company).exclude(pk=po.pk).filter(po_number=new_po_number).exists():
-                messages.error(request, "PO No. already exists. Please use another number.")
+            new_po_number = (request.POST.get("po_number") or "").strip()
+            if new_po_number and new_po_number != (po.po_number or ""):
+                if PurchaseOrder.objects.for_company(company).exclude(pk=po.pk).filter(po_number=new_po_number).exists():
+                    messages.error(request, "PO No. already exists. Please use another number.")
+                    return redirect("expenses:purchase-order-edit", pk=po.pk)
+                po.po_number = new_po_number
+
+            vendor = Newsupplier.objects.for_company(company).filter(pk=vendor_id).first() if vendor_id else None
+            po.vendor = vendor
+            po.vendor_name = None if vendor else vendor_name
+
+            if request.FILES.get("attachments"):
+                po.attachments = request.FILES["attachments"]
+
+            po.save()
+
+            # Replace lines
+            PurchaseOrderLine.objects.filter(purchase_order=po).delete()
+
+            total = Decimal("0.00")
+
+            item_product_ids = request.POST.getlist("item_product[]")
+            item_descs = request.POST.getlist("item_desc[]")
+            item_qtys = request.POST.getlist("item_qty[]")
+            item_rates = request.POST.getlist("item_rate[]")
+            item_amounts = request.POST.getlist("item_amount[]")
+            item_customer_ids = request.POST.getlist("item_customer[]")
+            item_class_ids = request.POST.getlist("item_class[]")
+
+            for idx, prod_id in enumerate(item_product_ids):
+                if not prod_id:
+                    continue
+                product = Product.objects.for_company(company).filter(pk=prod_id).first()
+                if not product:
+                    continue
+
+                if hasattr(product, "company_id") and product.company_id != company_id:
+                    raise ValueError("Selected product belongs to another company.")
+
+                qty = _dec(item_qtys[idx], "0")
+                rate = _dec(item_rates[idx], "0")
+                amt = _dec(item_amounts[idx]) if item_amounts[idx] else (qty * rate)
+                if amt <= 0:
+                    continue
+
+                customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
+                klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+
+                PurchaseOrderLine.objects.create(
+                    purchase_order=po,
+                    product=product,
+                    description=(item_descs[idx] or ""),
+                    qty=qty,
+                    rate=rate,
+                    amount=amt,
+                    customer=customer,
+                    class_field=klass,
+                )
+                total += amt
+
+            if total <= 0:
+                messages.error(request, "You must add at least one line with an amount.")
                 return redirect("expenses:purchase-order-edit", pk=po.pk)
-            po.po_number = new_po_number
 
-        vendor = Newsupplier.objects.for_company(company).filter(pk=vendor_id).first() if vendor_id else None
-        po.vendor = vendor
-        po.vendor_name = None if vendor else vendor_name
+            po.total_amount = total
+            po.save(update_fields=["total_amount"])
 
-        if request.FILES.get("attachments"):
-            po.attachments = request.FILES["attachments"]
+            action = request.POST.get("save_action") or "save"
+            if action == "save&new":
+                return redirect("expenses:purchase_order")
+            return redirect("expenses:purchase-order-detail", pk=po.pk)
 
-        po.save()
-
-        # Replace lines
-        PurchaseOrderLine.objects.filter(purchase_order=po).delete()
-
-        total = Decimal("0.00")
-
-        item_product_ids = request.POST.getlist("item_product[]")
-        item_descs = request.POST.getlist("item_desc[]")
-        item_qtys = request.POST.getlist("item_qty[]")
-        item_rates = request.POST.getlist("item_rate[]")
-        item_amounts = request.POST.getlist("item_amount[]")
-        item_customer_ids = request.POST.getlist("item_customer[]")
-        item_class_ids = request.POST.getlist("item_class[]")
-
-        for idx, prod_id in enumerate(item_product_ids):
-            if not prod_id:
-                continue
-            product = Product.objects.for_company(company).filter(pk=prod_id).first()
-            if not product:
-                continue
-
-            qty = _dec(item_qtys[idx], "0")
-            rate = _dec(item_rates[idx], "0")
-            amt = _dec(item_amounts[idx]) if item_amounts[idx] else (qty * rate)
-            if amt <= 0:
-                continue
-
-            customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
-            klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
-
-            PurchaseOrderLine.objects.create(
-                purchase_order=po,
-                product=product,
-                description=(item_descs[idx] or ""),
-                qty=qty,
-                rate=rate,
-                amount=amt,
-                customer=customer,
-                class_field=klass,
-            )
-            total += amt
-
-        if total <= 0:
-            messages.error(request, "You must add at least one line with an amount.")
+        except Exception as e:
+            messages.error(request, f"Could not update purchase order: {e}")
             return redirect("expenses:purchase-order-edit", pk=po.pk)
-
-        po.total_amount = total
-        po.save(update_fields=["total_amount"])
-
-        action = request.POST.get("save_action") or "save"
-        if action == "save&new":
-            return redirect("expenses:purchase_order")
-        return redirect("expenses:purchase-order-detail", pk=po.pk)
 
     context = {
         "po": po,
@@ -3936,6 +4054,11 @@ def purchase_order_list(request):
         "totals": totals,
     }
     return render(request, "purchase_order_list.html", context)
+
+
+
+
+
 
 
 # supplier credit

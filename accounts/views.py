@@ -39,7 +39,6 @@ from reportlab.lib import colors
 # ✅ tenancy decorators (same pattern as sales)
 from tenancy.permissions import company_required, module_required
 
-
 # default visible columns (match the checkboxes in the template)
 DEFAULT_ACCOUNTS_COL_PREFS = {
     "account_name": True,
@@ -61,14 +60,15 @@ def accounts_dropdown_data(request):
     Returns latest income & expense accounts for Product form dropdowns.
     """
     company = request.company
+    company_id = getattr(company, "id", company)
 
     # keep your logic but scope tenant
     try:
         income = income_accounts_qs(company=company).values("id", "account_name")
         expense = expense_accounts_qs(company=company).values("id", "account_name")
     except TypeError:
-        income = income_accounts_qs().filter(company=company).values("id", "account_name")
-        expense = expense_accounts_qs().filter(company=company).values("id", "account_name")
+        income = income_accounts_qs().filter(company_id=company_id).values("id", "account_name")
+        expense = expense_accounts_qs().filter(company_id=company_id).values("id", "account_name")
 
     return JsonResponse({
         "income_accounts": list(income),
@@ -106,12 +106,13 @@ def deposit_accounts_api(request):
     Returns deposit accounts for dropdown refresh.
     """
     company = request.company
+    company_id = getattr(company, "id", company)
 
     # keep your same queryset function but scope by company
     try:
         qs = deposit_accounts_qs(company=company).order_by("account_name")
     except TypeError:
-        qs = deposit_accounts_qs().filter(company=company).order_by("account_name")
+        qs = deposit_accounts_qs().filter(company_id=company_id).order_by("account_name")
 
     data = []
     for a in qs:
@@ -274,21 +275,20 @@ def accounts(request):
         },
     )
 
-
 # audit trail view
-@login_required
-@company_required
-@module_required("accounts")
-def audit_trail(request):
-    company = request.company
+# @login_required
+# @company_required
+# @module_required("accounts")
+# def audit_trail(request):
+#     company = request.company
 
-    logs = AuditTrail.objects.select_related("user").all()
-    if hasattr(AuditTrail, "company_id"):
-        logs = logs.filter(company=company)
+#     logs = AuditTrail.objects.select_related("user").all()
+#     if hasattr(AuditTrail, "company_id"):
+#         logs = logs.filter(company=company)
 
-    return render(request, "audit_trail.html", {
-        "logs": logs
-    })
+#     return render(request, "audit_trail.html", {
+#         "logs": logs
+#     })
 
 
 @login_required
@@ -1959,9 +1959,6 @@ COGS_DETAIL_TYPES = {
     "cost of goods sold",
     "cost of sales",
 }
-from tenancy.permissions import company_required, module_required  # make sure this exists
-from django.contrib.auth.decorators import login_required
-
 
 # Working on the p&l
 def dec(v) -> Decimal:

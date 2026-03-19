@@ -3,9 +3,9 @@ from datetime import timedelta
 from django.utils import timezone
 
 RANGE_LABELS = {
-    "last_30_days": "Last 30 days",
     "this_month": "This month",
     "this_month_to_date": "This month to date",
+    "last_30_days": "Last 30 days",
     "this_fiscal_quarter": "This fiscal quarter",
     "this_fiscal_quarter_to_date": "This fiscal quarter to date",
     "this_financial_year": "This financial year",
@@ -16,9 +16,9 @@ RANGE_LABELS = {
 }
 
 RANGE_OPTIONS = [
-    ("last_30_days", "Last 30 days"),
     ("this_month", "This month"),
     ("this_month_to_date", "This month to date"),
+    ("last_30_days", "Last 30 days"),
     ("this_fiscal_quarter", "This fiscal quarter"),
     ("this_fiscal_quarter_to_date", "This fiscal quarter to date"),
     ("this_financial_year", "This financial year"),

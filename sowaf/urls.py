@@ -10,7 +10,6 @@ urlpatterns = [
     path('assets/', views.assets, name='assets'),
     path('assets/add/asset', views.add_assests, name='add-asset'),
     path('assets/edit/<str:pk>/', views.edit_asset, name='edit-asset'),
-    path('assets/delete/<str:pk>/', views.delete_asset, name='delete-asset'),
     path('assets/import/import-assets', views.import_assets, name='import-assets'),
     path('templates/assets/', views.download_assets_template, name='import_assets_template'),
     

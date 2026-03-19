@@ -55,7 +55,6 @@ from accounts.utils import (
     _get_cogs_account,
     _get_vat_payable_account,
 )
-
 def _as_date(d):
     if isinstance(d, datetime):
         return d.date()
@@ -75,7 +74,10 @@ def _get_or_create_named_account(company, account_name: str, account_type: str, 
     if not company:
         raise ValueError("company is required")
 
-    acc = Account.objects.for_company(company).filter(
+    company_id = getattr(company, "id", company)
+
+    acc = Account.objects.filter(
+        company_id=company_id,
         account_name__iexact=account_name,
         is_active=True
     ).first()
@@ -83,7 +85,7 @@ def _get_or_create_named_account(company, account_name: str, account_type: str, 
         return acc
 
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name=account_name,
         account_type=account_type,
         detail_type=detail_type or None,
@@ -142,11 +144,12 @@ def _account_debit_balance(company, account: "Account") -> Decimal:
     if not company:
         raise ValueError("company is required")
 
+    company_id = getattr(company, "id", company)
     opening = Decimal(str(getattr(account, "opening_balance", 0) or "0"))
 
     agg = (
         JournalLine.objects
-        .filter(entry__company=company, account=account)  # ✅ entry is TenantModel
+        .filter(entry__company_id=company_id, account=account)
         .aggregate(
             d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
             c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
@@ -161,11 +164,12 @@ def _invoice_outstanding(company, inv: "Newinvoice") -> Decimal:
     """
     Outstanding balance for an invoice (tenant-safe).
     """
+    company_id = getattr(company, "id", company)
     total_due = Decimal(str(inv.total_due or "0"))
 
     paid = (
         PaymentInvoice.objects
-        .filter(invoice=inv, invoice__company=company)
+        .filter(invoice=inv, invoice__company_id=company_id)
         .aggregate(s=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["s"]
         or Decimal("0.00")
     )
@@ -182,11 +186,12 @@ def _customer_credit_balance(company, customer) -> Decimal:
     if not company or not customer:
         return Decimal("0.00")
 
+    company_id = getattr(company, "id", company)
     adv = _get_customer_advance_account(company)
 
     agg = (
         JournalLine.objects
-        .filter(entry__company=company, account=adv, customer=customer)
+        .filter(entry__company_id=company_id, account=adv, customer=customer)
         .aggregate(
             d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
             c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
@@ -218,18 +223,18 @@ def _customer_open_balance_amount(company, customer: "Newcustomer") -> Decimal:
     if not company or not customer:
         return Decimal("0.00")
 
-    # NOTE: you referenced _get_or_create_customer_ar_subaccount(customer)
-    # Ensure that function is also tenant-safe and accepts company.
     customer_acc = _get_or_create_customer_ar_subaccount(company, customer)
 
     ar_debit_bal = _account_debit_balance(company, customer_acc)
 
     total_unpaid_invoices = Decimal("0.00")
-    for inv in Newinvoice.objects.for_company(company).filter(customer=customer):
+    company_id = getattr(company, "id", company)
+    for inv in Newinvoice.objects.filter(company_id=company_id, customer=customer):
         total_unpaid_invoices += _invoice_outstanding(company, inv)
 
     open_bal = ar_debit_bal - total_unpaid_invoices
     return open_bal if open_bal > 0 else Decimal("0.00")
+
 
 def apply_audit_fields(obj):
     """
@@ -270,7 +275,8 @@ def _find_control_account(company, detail_type=None, name_contains=None):
     if not company:
         raise ValueError("company is required")
 
-    qs = Account.objects.for_company(company).filter(is_active=True)
+    company_id = getattr(company, "id", company)
+    qs = Account.objects.filter(company_id=company_id, is_active=True)
 
     if detail_type:
         acc = qs.filter(detail_type__iexact=detail_type).first()
@@ -292,6 +298,8 @@ def _get_or_create_ar_control_account(company):
     if not company:
         raise ValueError("company is required")
 
+    company_id = getattr(company, "id", company)
+
     ar = (
         _find_control_account(company, detail_type="Accounts Receivable (A/R)")
         or _find_control_account(company, name_contains="accounts receivable")
@@ -300,9 +308,8 @@ def _get_or_create_ar_control_account(company):
     if ar:
         return ar
 
-    # Auto-create (per company)
     ar = Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Accounts Receivable",
         account_number="1100",
         account_type="CURRENT_ASSET",
@@ -321,37 +328,51 @@ def _get_or_create_customer_ar_subaccount(company, customer: Newcustomer) -> Acc
     """
     Creates/gets a CUSTOMER subaccount under A/R control (per company).
     This is your customer subledger.
+    Also links back to customer.ar_account.
     """
     if not company:
         raise ValueError("company is required")
     if not customer:
         raise ValueError("customer is required")
 
+    company_id = getattr(company, "id", company)
+
+    if getattr(customer, "company_id", None) and customer.company_id != company_id:
+        raise ValueError("Customer company mismatch.")
+
     ar_control = _get_or_create_ar_control_account(company)
+
+    if getattr(customer, "ar_account_id", None):
+        linked = customer.ar_account
+        if linked and linked.company_id == company_id:
+            return linked
 
     name = _safe_name(getattr(customer, "customer_name", "")) or _safe_name(getattr(customer, "company_name", "")) or f"Customer {customer.id}"
     sub_name = f"{name}"
 
-    acc = Account.objects.for_company(company).filter(
+    acc = Account.objects.filter(
+        company_id=company_id,
         parent=ar_control,
         account_name__iexact=sub_name,
         is_active=True,
     ).first()
-    if acc:
-        return acc
+    if not acc:
+        acc = Account.objects.create(
+            company_id=company_id,
+            account_name=sub_name,
+            account_type=ar_control.account_type,
+            detail_type="Customer Subledger (A/R)",
+            is_active=True,
+            is_subaccount=True,
+            parent=ar_control,
+            opening_balance=Decimal("0.00"),
+            as_of=timezone.localdate(),
+        )
 
-    # Create subaccount
-    acc = Account.objects.create(
-        company=company,
-        account_name=sub_name,
-        account_type=ar_control.account_type,  # still current asset
-        detail_type="Customer Subledger (A/R)",
-        is_active=True,
-        is_subaccount=True,
-        parent=ar_control,
-        opening_balance=Decimal("0.00"),
-        as_of=timezone.localdate(),
-    )
+    if customer.ar_account_id != acc.id:
+        customer.ar_account = acc
+        customer.save(update_fields=["ar_account"])
+
     return acc
 
 
@@ -363,77 +384,40 @@ def _get_sales_income_account(company) -> "Account":
     if not company:
         raise ValueError("company is required")
 
+    company_id = getattr(company, "id", company)
+
     acc = (
-        Account.objects.for_company(company)
-        .filter(is_active=True, account_name__iexact="Sales")
+        Account.objects
+        .filter(company_id=company_id, is_active=True, account_name__iexact="Sales")
         .first()
     )
     if acc:
         return acc
 
     acc = (
-        Account.objects.for_company(company)
-        .filter(is_active=True, account_name__icontains="Sales")
+        Account.objects
+        .filter(company_id=company_id, is_active=True, account_name__icontains="Sales")
         .first()
     )
     if acc:
         return acc
 
     acc = (
-        Account.objects.for_company(company)
-        .filter(is_active=True, account_name__icontains="Revenue")
+        Account.objects
+        .filter(company_id=company_id, is_active=True, account_name__icontains="Revenue")
         .first()
     )
     if acc:
         return acc
 
-    # fallback create
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="Sales",
         account_type="OPERATING_INCOME",
         detail_type="Sales",
         is_active=True,
         as_of=timezone.localdate(),
         opening_balance=Decimal("0.00"),
-    )
-
-
-def _get_or_create_named_account(company, account_name: str, account_type: str, detail_type: str = "") -> Account:
-    """
-    Tenant-safe named account creator.
-    """
-    if not company:
-        raise ValueError("company is required")
-
-    acc = Account.objects.for_company(company).filter(
-        account_name__iexact=account_name,
-        is_active=True,
-    ).first()
-    if acc:
-        return acc
-
-    return Account.objects.create(
-        company=company,
-        account_name=account_name,
-        account_type=account_type,
-        detail_type=detail_type or None,
-        is_active=True,
-        opening_balance=Decimal("0.00"),
-        as_of=timezone.localdate(),
-    )
-
-
-def _get_customer_advance_account(company) -> "Account":
-    """
-    Customer Advances = LIABILITY account (customer credit balance).
-    Tenant-safe.
-    """
-    return _get_or_create_named_account(
-        company=company,
-        account_name="Customer Advances",
-        account_type="CURRENT_LIABILITY",
-        detail_type="Customer Advances",
     )
 
 
@@ -448,19 +432,22 @@ def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
     if not refund:
         return
 
+    company_id = getattr(company, "id", company)
     amt = Decimal(str(getattr(refund, "amount", None) or "0.00"))
     if amt <= 0:
-        JournalEntry.objects.filter(company=company, source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
+        JournalEntry.objects.filter(company_id=company_id, source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
         return
 
-    # delete & recreate
-    JournalEntry.objects.filter(company=company, source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
+    JournalEntry.objects.filter(company_id=company_id, source_type="CUSTOMER_REFUND", source_id=refund.id).delete()
 
     adv = _get_customer_advance_account(company)
     bank = refund.paid_from
 
+    if getattr(bank, "company_id", None) != company_id:
+        raise ValueError("Refund bank/cash account must belong to the same company.")
+
     entry = JournalEntry.objects.create(
-        company=company,
+        company_id=company_id,
         date=refund.refund_date or timezone.localdate(),
         description=f"Customer Refund {refund.id:04d} – {refund.customer.customer_name}",
         source_type="CUSTOMER_REFUND",
@@ -469,7 +456,6 @@ def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
 
     # DR Customer Advances (reduce credit)
     JournalLine.objects.create(
-        company=company,
         entry=entry,
         account=adv,
         debit=amt,
@@ -480,7 +466,6 @@ def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
 
     # CR Bank/Cash
     JournalLine.objects.create(
-        company=company,
         entry=entry,
         account=bank,
         debit=Decimal("0.00"),
@@ -488,6 +473,7 @@ def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
         customer=refund.customer,
         supplier=None,
     )
+
 
 # posting invoice to ledger
 def _post_invoice_to_ledger(company, invoice: Newinvoice):
@@ -503,17 +489,19 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
     if not invoice:
         return
 
+    company_id = getattr(company, "id", company)
+
     # safety: don’t post wrong-company invoice
-    if getattr(invoice, "company_id", None) and invoice.company_id != company.id:
+    if getattr(invoice, "company_id", None) and invoice.company_id != company_id:
         raise ValueError("Invoice company mismatch.")
 
     total_due = Decimal(str(getattr(invoice, "total_due", None) or "0"))
     if total_due <= 0:
-        JournalEntry.objects.filter(company=company, source_type="invoice", source_id=invoice.id).delete()
+        JournalEntry.objects.filter(company_id=company_id, source_type="invoice", source_id=invoice.id).delete()
         return
 
     # delete & recreate style
-    JournalEntry.objects.filter(company=company, source_type="invoice", source_id=invoice.id).delete()
+    JournalEntry.objects.filter(company_id=company_id, source_type="invoice", source_id=invoice.id).delete()
 
     revenue_by_account = defaultdict(lambda: Decimal("0.00"))
     vat_total = Decimal("0.00")
@@ -524,7 +512,7 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
         or _get_sales_income_account(company)
     )
 
-    items_qs = invoice.items.select_related("product").all()  # related_name='items'
+    items_qs = invoice.items.select_related("product").all()
     for line in items_qs:
         line_amount = Decimal(str(getattr(line, "amount", None) or "0"))
         line_discount = Decimal(str(getattr(line, "discount_amount", None) or "0"))
@@ -537,9 +525,11 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
         if not income_acc:
             income_acc = default_income_acc
 
-        # optional safety (if product is tenant-scoped)
-        if prod and hasattr(prod, "company_id") and prod.company_id and prod.company_id != company.id:
+        if prod and hasattr(prod, "company_id") and prod.company_id and prod.company_id != company_id:
             raise ValueError("Invoice contains a product from a different company.")
+
+        if income_acc and getattr(income_acc, "company_id", None) != company_id:
+            raise ValueError("Income account belongs to a different company.")
 
         if income_acc and net_amount > 0:
             revenue_by_account[income_acc] += net_amount
@@ -555,19 +545,19 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
 
     customer_acc = _get_or_create_customer_ar_subaccount(company, invoice.customer)
 
-    # Prefer your util (it should be tenant-safe), fallback to search
+    # Prefer your util if it exists, fallback to search/create
     vat_account = None
     try:
         vat_account = _get_vat_payable_account(company)
     except Exception:
-        vat_account = _find_control_account(company, name_contains="VAT")
+        vat_account = _find_control_account(company, detail_type="Taxes payable") or _find_control_account(company, name_contains="VAT")
 
     entry_date = invoice.date_created.date() if getattr(invoice, "date_created", None) else timezone.localdate()
     cust_name = getattr(invoice.customer, "customer_name", None) or getattr(invoice.customer, "company_name", None) or ""
     desc = f"Invoice {invoice.id:04d} – {cust_name}".strip(" –")
 
     entry = JournalEntry.objects.create(
-        company=company,
+        company_id=company_id,
         date=entry_date,
         description=desc,
         source_type="invoice",
@@ -576,7 +566,6 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
 
     # DR Customer A/R (with customer link)
     JournalLine.objects.create(
-        company=company,
         entry=entry,
         account=customer_acc,
         debit=total_due,
@@ -589,7 +578,6 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
     for acc, amt in revenue_by_account.items():
         if acc and amt > 0:
             JournalLine.objects.create(
-                company=company,
                 entry=entry,
                 account=acc,
                 debit=Decimal("0.00"),
@@ -600,8 +588,10 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
 
     # CR VAT
     if vat_total > 0 and vat_account:
+        if getattr(vat_account, "company_id", None) != company_id:
+            raise ValueError("VAT payable account belongs to a different company.")
+
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=vat_account,
             debit=Decimal("0.00"),
@@ -624,20 +614,22 @@ def _post_payment_to_ledger(company, payment: Payment):
     if not payment:
         return
 
+    company_id = getattr(company, "id", company)
+
     # safety: prevent cross-company posting
-    if getattr(payment, "company_id", None) and payment.company_id != company.id:
+    if getattr(payment, "company_id", None) and payment.company_id != company_id:
         raise ValueError("Payment company mismatch.")
 
     invoice_total = (
         PaymentInvoice.objects
-        .filter(payment=payment, payment__company=company)
+        .filter(payment=payment, payment__company_id=company_id)
         .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["total"]
         or Decimal("0.00")
     )
 
     ob_total = (
         PaymentOpenBalanceLine.objects
-        .filter(payment=payment, payment__company=company)
+        .filter(payment=payment, payment__company_id=company_id)
         .aggregate(total=Coalesce(Sum("amount_applied"), Value(Decimal("0.00"))))["total"]
         or Decimal("0.00")
     )
@@ -673,18 +665,18 @@ def _post_payment_to_ledger(company, payment: Payment):
 
         # keep payment record in sync (tenant-safe)
         try:
-            Payment.objects.filter(pk=payment.pk, company=company).update(unapplied_amount=unapplied)
+            Payment.objects.filter(pk=payment.pk, company_id=company_id).update(unapplied_amount=unapplied)
             payment.unapplied_amount = unapplied
         except Exception:
             pass
 
     # if nothing meaningful, remove journal
     if amount_received <= 0:
-        JournalEntry.objects.filter(company=company, source_type="payment", source_id=payment.id).delete()
+        JournalEntry.objects.filter(company_id=company_id, source_type="payment", source_id=payment.id).delete()
         return
 
     # clear existing journal for this payment
-    JournalEntry.objects.filter(company=company, source_type="payment", source_id=payment.id).delete()
+    JournalEntry.objects.filter(company_id=company_id, source_type="payment", source_id=payment.id).delete()
 
     if not payment.customer_id:
         raise ValueError("Payment must have a customer.")
@@ -693,6 +685,9 @@ def _post_payment_to_ledger(company, payment: Payment):
     deposit_acc = payment.deposit_to
     if not deposit_acc:
         return
+
+    if getattr(deposit_acc, "company_id", None) != company_id:
+        raise ValueError("Deposit account belongs to another company.")
 
     # if unapplied exists, we need customer advances account
     advance_acc = None
@@ -710,7 +705,7 @@ def _post_payment_to_ledger(company, payment: Payment):
     description = " ".join(bits)
 
     entry = JournalEntry.objects.create(
-        company=company,
+        company_id=company_id,
         date=entry_date,
         description=description,
         source_type="payment",
@@ -719,7 +714,6 @@ def _post_payment_to_ledger(company, payment: Payment):
 
     # DR Bank/Cash = full amount received
     JournalLine.objects.create(
-        company=company,
         entry=entry,
         account=deposit_acc,
         debit=amount_received,
@@ -731,7 +725,6 @@ def _post_payment_to_ledger(company, payment: Payment):
     # CR A/R = what was applied to invoices + open balance
     if total_applied_to_ar > 0:
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=customer_ar,
             debit=Decimal("0.00"),
@@ -743,7 +736,6 @@ def _post_payment_to_ledger(company, payment: Payment):
     # CR Customer Advances = excess/credit
     if advance_acc and unapplied > 0:
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=advance_acc,
             debit=Decimal("0.00"),
@@ -779,8 +771,10 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     if not receipt:
         return
 
+    company_id = getattr(company, "id", company)
+
     # safety: prevent cross-company posting
-    if getattr(receipt, "company_id", None) and receipt.company_id != company.id:
+    if getattr(receipt, "company_id", None) and receipt.company_id != company_id:
         raise ValueError("SalesReceipt company mismatch.")
 
     # ----------------------------
@@ -796,7 +790,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
 
     # If nothing meaningful, delete JE and return
     if total_amount <= 0 and amount_paid <= 0:
-        JournalEntry.objects.filter(company=company, source_type="sales_receipt", source_id=receipt.id).delete()
+        JournalEntry.objects.filter(company_id=company_id, source_type="sales_receipt", source_id=receipt.id).delete()
         return
 
     # ----------------------------
@@ -829,12 +823,15 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         prod = getattr(line, "product", None)
 
         # optional safety (if product is tenant scoped)
-        if prod and hasattr(prod, "company_id") and prod.company_id and prod.company_id != company.id:
+        if prod and hasattr(prod, "company_id") and prod.company_id and prod.company_id != company_id:
             raise ValueError("Receipt contains a product from a different company.")
 
         income_acc = getattr(prod, "income_account", None) if prod else None
         if not income_acc:
             income_acc = default_income_acc
+
+        if income_acc and getattr(income_acc, "company_id", None) != company_id:
+            raise ValueError("Income account belongs to another company.")
 
         if income_acc and line_amount > 0:
             revenue_by_account[income_acc] += line_amount
@@ -877,6 +874,9 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     if not deposit_acc:
         return
 
+    if getattr(deposit_acc, "company_id", None) != company_id:
+        raise ValueError("Deposit account belongs to another company.")
+
     if not getattr(receipt, "customer_id", None):
         raise ValueError("Sales receipt must have a customer.")
 
@@ -888,6 +888,9 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     except Exception:
         vat_account = _find_control_account(company, name_contains="VAT")
 
+    if vat_account and getattr(vat_account, "company_id", None) != company_id:
+        raise ValueError("VAT payable account belongs to another company.")
+
     advance_acc = None
     if excess > 0:
         advance_acc = _get_customer_advance_account(company)
@@ -895,7 +898,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     # ----------------------------
     # Recreate JE
     # ----------------------------
-    JournalEntry.objects.filter(company=company, source_type="sales_receipt", source_id=receipt.id).delete()
+    JournalEntry.objects.filter(company_id=company_id, source_type="sales_receipt", source_id=receipt.id).delete()
 
     entry_date = _safe_date(getattr(receipt, "receipt_date", None), timezone.localdate())
     bits = [f"Receipt {receipt.id:04d}"]
@@ -908,7 +911,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     description = " ".join(bits)
 
     entry = JournalEntry.objects.create(
-        company=company,
+        company_id=company_id,
         date=entry_date,
         description=description,
         source_type="sales_receipt",
@@ -920,7 +923,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     # ----------------------------
     if amount_paid > 0:
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=deposit_acc,
             debit=amount_paid,
@@ -931,7 +933,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
 
     if balance > 0:
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=ar_posting_account,
             debit=balance,
@@ -947,9 +948,11 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         if not acc or amt == 0:
             continue
 
+        if getattr(acc, "company_id", None) != company_id:
+            raise ValueError("Revenue account belongs to another company.")
+
         if amt > 0:
             JournalLine.objects.create(
-                company=company,
                 entry=entry,
                 account=acc,
                 debit=Decimal("0.00"),
@@ -959,7 +962,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
             )
         else:
             JournalLine.objects.create(
-                company=company,
                 entry=entry,
                 account=acc,
                 debit=abs(amt),
@@ -971,7 +973,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     # VAT payable
     if vat_total > 0 and vat_account:
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=vat_account,
             debit=Decimal("0.00"),
@@ -983,7 +984,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     # Customer Advances (excess)
     if advance_acc and excess > 0:
         JournalLine.objects.create(
-            company=company,
             entry=entry,
             account=advance_acc,
             debit=Decimal("0.00"),
@@ -1002,7 +1002,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
 
     movs = (
         InventoryMovement.objects
-        .filter(company=company, source_type="SALES_RECEIPT", source_id=receipt.id, qty_out__gt=0)
+        .filter(company_id=company_id, source_type="SALES_RECEIPT", source_id=receipt.id, qty_out__gt=0)
         .select_related("product", "product__cogs_account", "product__inventory_asset_account")
     )
 
@@ -1014,12 +1014,17 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
                 continue
 
             # safety: movement tenant match
-            if hasattr(p, "company_id") and p.company_id and p.company_id != company.id:
+            if hasattr(p, "company_id") and p.company_id and p.company_id != company_id:
                 raise ValueError("InventoryMovement product belongs to another company.")
 
             cogs_acc = getattr(p, "cogs_account", None)
             inv_acc = getattr(p, "inventory_asset_account", None)
             val = Decimal(str(getattr(m, "value", None) or "0"))
+
+            if cogs_acc and getattr(cogs_acc, "company_id", None) != company_id:
+                raise ValueError("COGS account belongs to another company.")
+            if inv_acc and getattr(inv_acc, "company_id", None) != company_id:
+                raise ValueError("Inventory asset account belongs to another company.")
 
             if val <= 0 or not cogs_acc or not inv_acc:
                 continue
@@ -1042,6 +1047,11 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
             if not cogs_acc or not inv_acc:
                 continue
 
+            if getattr(cogs_acc, "company_id", None) != company_id:
+                raise ValueError("COGS account belongs to another company.")
+            if getattr(inv_acc, "company_id", None) != company_id:
+                raise ValueError("Inventory asset account belongs to another company.")
+
             unit_cost = Decimal(str(getattr(p, "avg_cost", None) or "0"))
             val = qty * unit_cost
             if val <= 0:
@@ -1054,7 +1064,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     for acc, amt in cogs_by_acc.items():
         if acc and amt > 0:
             JournalLine.objects.create(
-                company=company,
                 entry=entry,
                 account=acc,
                 debit=amt,
@@ -1067,7 +1076,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     for acc, amt in inv_by_acc.items():
         if acc and amt > 0:
             JournalLine.objects.create(
-                company=company,
                 entry=entry,
                 account=acc,
                 debit=Decimal("0.00"),
@@ -1075,6 +1083,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
                 customer=None,
                 supplier=None,
             )
+
 
 # ----------------------------
 # VAT Payable (tenant-safe)
@@ -1087,9 +1096,11 @@ def _get_vat_payable_account(company) -> "Account":
     if not company:
         raise ValueError("company is required")
 
+    company_id = getattr(company, "id", company)
+
     acc = (
-        Account.objects.for_company(company)
-        .filter(is_active=True)
+        Account.objects
+        .filter(company_id=company_id, is_active=True)
         .filter(account_name__iexact="VAT Payable")
         .first()
     )
@@ -1097,8 +1108,8 @@ def _get_vat_payable_account(company) -> "Account":
         return acc
 
     acc = (
-        Account.objects.for_company(company)
-        .filter(is_active=True)
+        Account.objects
+        .filter(company_id=company_id, is_active=True)
         .filter(account_name__icontains="VAT")
         .filter(account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"])
         .first()
@@ -1108,7 +1119,7 @@ def _get_vat_payable_account(company) -> "Account":
 
     # optional fallback create (recommended so VAT always has a home)
     return Account.objects.create(
-        company=company,
+        company_id=company_id,
         account_name="VAT Payable",
         account_type="CURRENT_LIABILITY",
         detail_type="VAT Payable",
@@ -1124,10 +1135,12 @@ def _get_vat_payable_account(company) -> "Account":
 # ----------------------------
 
 def _invoice_analytics(company):
+    company_id = getattr(company, "id", company)
     today = timezone.localdate()
 
     invs = (
-        Newinvoice.objects.for_company(company)
+        Newinvoice.objects
+        .filter(company_id=company_id)
         .prefetch_related("payments_applied")
         .only("id", "total_due", "due_date")
     )
@@ -1140,7 +1153,7 @@ def _invoice_analytics(company):
         paid = sum((_dec(p.amount_paid) for p in inv.payments_applied.all()), Decimal("0"))
         bal = total - paid
 
-        due = _as_date(getattr(inv, "due_date", None))  # normalize
+        due = _as_date(getattr(inv, "due_date", None))
 
         if bal <= Decimal("0.00001"):
             paid_cnt += 1
@@ -1171,14 +1184,16 @@ def _invoice_analytics(company):
 @module_required("sales")
 def sales(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     products = Product.objects.for_company(company).all()
 
     # You already use this:
     invoices = (
-        Newinvoice.objects.for_company(company)
+        Newinvoice.objects
+        .filter(company_id=company_id)
         .all()
-        .prefetch_related("items")  # ✅ your related_name is items
+        .prefetch_related("items")
     )
     inv_analytics = _invoice_analytics(company)
 
@@ -1186,7 +1201,8 @@ def sales(request):
 
     # ---- Invoices ----
     inv_qs = (
-        Newinvoice.objects.for_company(company)
+        Newinvoice.objects
+        .filter(company_id=company_id)
         .select_related("customer")
         .prefetch_related("payments_applied")
         .order_by("-date_created", "-id")
@@ -1212,7 +1228,8 @@ def sales(request):
 
     # ---- Payments ----
     pay_qs = (
-        Payment.objects.for_company(company)
+        Payment.objects
+        .filter(company_id=company_id)
         .select_related("customer", "deposit_to")
         .annotate(
             applied_total=Coalesce(Sum("applied_invoices__amount_paid"), Value(Decimal("0.00"))),
@@ -1235,7 +1252,8 @@ def sales(request):
 
     # ---- Sales Receipts ----
     sr_qs = (
-        SalesReceipt.objects.for_company(company)
+        SalesReceipt.objects
+        .filter(company_id=company_id)
         .select_related("customer", "deposit_to")
         .annotate(
             total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2)),
@@ -1249,7 +1267,7 @@ def sales(request):
     for r in sr_qs:
         total = _dec(r.total_amount)
         paid = _dec(r.amount_paid)
-        status = _receipt_status(r)  # you already have this
+        status = _receipt_status(r)
 
         rows.append({
             "date": r.receipt_date,
@@ -1281,8 +1299,6 @@ def sales(request):
             "sales_rows": rows,
         },
     )
-
-
 # ----------------------------
 # Invoice form view: product details (tenant-safe)
 # ----------------------------
@@ -1296,7 +1312,9 @@ def get_product_details(request, pk):
     Tenant-safe: only products from this company.
     """
     company = request.company
-    product = Product.objects.for_company(company).filter(pk=pk).first()
+    company_id = getattr(company, "id", company)
+
+    product = Product.objects.filter(company_id=company_id, pk=pk).first()
     if not product:
         return JsonResponse({"error": "Product not found"}, status=404)
 
@@ -1349,6 +1367,7 @@ def to_pos_int_or_none(val):
 @transaction.atomic
 def add_invoice(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         raw_date_created = (request.POST.get("date_created") or "").strip()
@@ -1357,7 +1376,7 @@ def add_invoice(request):
         customer_id = request.POST.get("customer")
         customer = None
         if customer_id:
-            customer = Newcustomer.objects.for_company(company).filter(pk=customer_id).first()
+            customer = Newcustomer.objects.filter(company_id=company_id, pk=customer_id).first()
 
         email = request.POST.get("email")
         billing_address = request.POST.get("billing_address")
@@ -1368,7 +1387,7 @@ def add_invoice(request):
         class_field_id = request.POST.get("class_field")
         class_field = None
         if class_field_id:
-            class_field = Pclass.objects.for_company(company).filter(pk=class_field_id).first()
+            class_field = Pclass.objects.filter(company_id=company_id, pk=class_field_id).first()
 
         tags = request.POST.get("tags")
         po_num = to_pos_int_or_none(request.POST.get("po_number"))
@@ -1388,7 +1407,7 @@ def add_invoice(request):
 
         # ✅ Create invoice (company scoped)
         invoice = Newinvoice.objects.create(
-            company=company,
+            company_id=company_id,
             customer=customer,
             email=email,
             date_created=as_aware_datetime(created_dt),
@@ -1425,9 +1444,8 @@ def add_invoice(request):
             if not products[i]:
                 continue
 
-            product = Product.objects.for_company(company).filter(pk=products[i]).first()
+            product = Product.objects.filter(company_id=company_id, pk=products[i]).first()
             if not product:
-                # prevent cross-company product usage
                 continue
 
             qty_val = Decimal(qtys[i] or "0") if i < len(qtys) else Decimal("0")
@@ -1472,11 +1490,11 @@ def add_invoice(request):
 
         return redirect("sales:add-invoice")
 
-    products = Product.objects.for_company(company).all()
-    customers = Newcustomer.objects.for_company(company).all()
-    classes = Pclass.objects.for_company(company).all()
+    products = Product.objects.filter(company_id=company_id).all()
+    customers = Newcustomer.objects.filter(company_id=company_id).all()
+    classes = Pclass.objects.filter(company_id=company_id).all()
 
-    last_invoice = Newinvoice.objects.for_company(company).order_by("-id").first()
+    last_invoice = Newinvoice.objects.filter(company_id=company_id).order_by("-id").first()
     next_id = 1 if not last_invoice else last_invoice.id + 1
     next_invoice_id = f"{next_id:03d}"
 
@@ -1495,6 +1513,7 @@ def add_invoice(request):
 @login_required
 @company_required
 @module_required("sales")
+@transaction.atomic
 def edit_invoice(request, pk: int):
     """
     Edit an invoice:
@@ -1502,9 +1521,10 @@ def edit_invoice(request, pk: int):
       - POST: update header + replace line items, recompute totals on the server
     """
     company = request.company
+    company_id = getattr(company, "id", company)
 
     inv = get_object_or_404(
-        Newinvoice.objects.for_company(company).select_related("customer", "class_field"),
+        Newinvoice.objects.filter(company_id=company_id).select_related("customer", "class_field"),
         pk=pk
     )
 
@@ -1527,11 +1547,11 @@ def edit_invoice(request, pk: int):
 
         customer = None
         if customer_id:
-            customer = Newcustomer.objects.for_company(company).filter(pk=customer_id).first()
+            customer = Newcustomer.objects.filter(company_id=company_id, pk=customer_id).first()
 
         class_field = None
         if class_id:
-            class_field = Pclass.objects.for_company(company).filter(pk=class_id).first()
+            class_field = Pclass.objects.filter(company_id=company_id, pk=class_id).first()
 
         created_dt = parse_date_flexible(request.POST.get("date_created"))
         due_dt = parse_date_flexible(request.POST.get("due_date"))
@@ -1562,7 +1582,7 @@ def edit_invoice(request, pk: int):
                 continue
 
             # ✅ tenant-safe product lookup
-            product = get_object_or_404(Product.objects.for_company(company), pk=products[i])
+            product = get_object_or_404(Product.objects.filter(company_id=company_id), pk=products[i])
 
             desc = descriptions[i] if i < len(descriptions) else ""
             qty = Decimal((qtys[i] or "0").strip() if i < len(qtys) else "0")
@@ -1608,7 +1628,7 @@ def edit_invoice(request, pk: int):
         inv.terms = terms
         inv.sales_rep = sales_rep
         inv.tags = tags
-        inv.po_num = po_num  # ✅ safe
+        inv.po_num = po_num
         inv.memo = memo
         inv.customs_notes = customs_notes
 
@@ -1627,9 +1647,9 @@ def edit_invoice(request, pk: int):
         return redirect("sales:invoice-detail", pk=inv.pk)
 
     # ----- GET: prefill form -----
-    products = Product.objects.for_company(company).all()
-    customers = Newcustomer.objects.for_company(company).all()
-    classes = Pclass.objects.for_company(company).all()
+    products = Product.objects.filter(company_id=company_id).all()
+    customers = Newcustomer.objects.filter(company_id=company_id).all()
+    classes = Pclass.objects.filter(company_id=company_id).all()
     items = InvoiceItem.objects.filter(invoice=inv).select_related("product").order_by("id")
 
     return render(request, "invoice_form.html", {
@@ -1652,13 +1672,17 @@ def edit_invoice(request, pk: int):
 @module_required("sales")
 def add_class_ajax(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         name = request.POST.get("name")
         if not name:
             return JsonResponse({"success": False, "error": "Class name required"})
 
-        cls, created = Pclass.objects.for_company(company).get_or_create(class_name=name)
+        cls = Pclass.objects.filter(company_id=company_id, class_name=name).first()
+        if not cls:
+            cls = Pclass.objects.create(company_id=company_id, class_name=name)
+
         return JsonResponse({
             "success": True,
             "id": cls.id,
@@ -1707,6 +1731,7 @@ def _is_overdue_status(s: str) -> bool:
 @module_required("sales")
 def invoice_list(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     q = (request.GET.get("q") or "").strip()
     status_filter = (request.GET.get("status") or "all").lower()
@@ -1728,10 +1753,11 @@ def invoice_list(request):
             cleaned_order.append(c)
     column_order = cleaned_order
 
-    total_all = Newinvoice.objects.for_company(company).count()
+    total_all = Newinvoice.objects.filter(company_id=company_id).count()
 
     invoices_qs = (
-        Newinvoice.objects.for_company(company)
+        Newinvoice.objects
+        .filter(company_id=company_id)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)),
@@ -1789,11 +1815,19 @@ def invoice_list(request):
     if is_ajax:
         rows = []
         for inv in invoices:
+            created_val = getattr(inv, "date_created", None)
+            due_val = getattr(inv, "due_date", None)
+
+            if hasattr(created_val, "date"):
+                created_val = created_val.date()
+            if hasattr(due_val, "date"):
+                due_val = due_val.date()
+
             rows.append({
                 "id": f"{inv.id:04d}",
                 "customer": inv.customer.customer_name if inv.customer else "—",
-                "created": inv.date_created.strftime("%d/%m/%Y") if inv.date_created else "—",
-                "due": inv.due_date.strftime("%d/%m/%Y") if inv.due_date else "—",
+                "created": created_val.strftime("%d/%m/%Y") if created_val else "—",
+                "due": due_val.strftime("%d/%m/%Y") if due_val else "—",
                 "email": inv.email or "—",
                 "billing": inv.billing_address or "—",
                 "status": inv.status or "—",
@@ -1803,7 +1837,7 @@ def invoice_list(request):
             })
         return JsonResponse({"rows": rows})
 
-    customers = Newcustomer.objects.for_company(company).all()
+    customers = Newcustomer.objects.filter(company_id=company_id).all()
 
     return render(request, "invoice_lists.html", {
         "invoices": invoices,
@@ -1869,17 +1903,22 @@ def invoice_columns_save(request):
 @module_required("sales")
 def invoice_detail(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     inv = get_object_or_404(
-        Newinvoice.objects.for_company(company).select_related("customer", "class_field"),
+        Newinvoice.objects.filter(company_id=company_id).select_related("customer", "class_field"),
         pk=pk
     )
 
     agg = (
-        Newinvoice.objects.for_company(company).filter(pk=pk)
+        Newinvoice.objects.filter(company_id=company_id, pk=pk)
         .annotate(
             total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
-            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            ),
         )
         .values("total_due_dec", "total_paid")
         .first()
@@ -1933,7 +1972,7 @@ def invoice_detail(request, pk: int):
 
     payments = (
         PaymentInvoice.objects
-        .filter(invoice=inv, payment__company=company)  # ✅ tenant-safe
+        .filter(invoice=inv, payment__company_id=company_id)
         .select_related("payment", "payment__deposit_to")
         .order_by("-payment__payment_date", "-id")
     )
@@ -1967,17 +2006,22 @@ def invoice_detail(request, pk: int):
 @module_required("sales")
 def invoice_print(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     inv = get_object_or_404(
-        Newinvoice.objects.for_company(company).select_related("customer", "class_field"),
+        Newinvoice.objects.filter(company_id=company_id).select_related("customer", "class_field"),
         pk=pk
     )
 
     agg = (
-        Newinvoice.objects.for_company(company).filter(pk=pk)
+        Newinvoice.objects.filter(company_id=company_id, pk=pk)
         .annotate(
             total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
-            total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+            total_paid=Coalesce(
+                Sum("payments_applied__amount_paid"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            ),
         )
         .values("total_due_dec", "total_paid")
         .first()
@@ -1992,7 +2036,7 @@ def invoice_print(request, pk: int):
 
     payments = (
         PaymentInvoice.objects
-        .filter(invoice=inv, payment__company=company)  # ✅ tenant-safe
+        .filter(invoice=inv, payment__company_id=company_id)
         .select_related("payment", "payment__deposit_to")
         .order_by("-payment__payment_date", "-id")
     )
@@ -2025,7 +2069,6 @@ def invoice_print(request, pk: int):
         "payment_rows": payment_rows,
         "org": org,
     })
-
 # ------------------------------------------------------------
 # RECEIVE PAYMENT (CREATE)
 # ------------------------------------------------------------
@@ -2036,11 +2079,15 @@ def invoice_print(request, pk: int):
 @transaction.atomic
 def receive_payment_view(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
 
     # IMPORTANT: scope deposit accounts to this company
-    accounts = deposit_accounts_qs().filter(company=company)
+    try:
+        accounts = deposit_accounts_qs(company=company)
+    except TypeError:
+        accounts = deposit_accounts_qs().filter(company_id=company_id)
 
     if request.method == "POST":
         customer_id = (request.POST.get("customer") or "").strip()
@@ -2067,7 +2114,7 @@ def receive_payment_view(request):
             reference_no = generate_unique_ref_no()
 
         # ✅ IMPORTANT: unique within company
-        if Payment.objects.for_company(company).filter(reference_no=reference_no).exists():
+        if Payment.objects.filter(company_id=company_id, reference_no=reference_no).exists():
             reference_no = generate_unique_ref_no()
 
         if not (customer_id.isdigit() and payment_date and deposit_account):
@@ -2087,7 +2134,7 @@ def receive_payment_view(request):
             })
 
         # ✅ customer must belong to this company
-        customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=int(customer_id))
+        customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=int(customer_id))
 
         # --------------------------
         # invoice allocations: amount_paid_<invoice_id>
@@ -2118,10 +2165,9 @@ def receive_payment_view(request):
             invoice_ids = [i for i, _ in allocations]
 
             balances = (
-                Newinvoice.objects.for_company(company)
-                .filter(id__in=invoice_ids, customer=customer)
+                Newinvoice.objects
+                .filter(company_id=company_id, id__in=invoice_ids, customer=customer)
                 .annotate(
-                    # If total_due is FloatField in DB, cast it to Decimal for safe math
                     total_due_dec=Cast(F("total_due"), output_field=dec_out),
                     total_paid=Coalesce(
                         Sum("payments_applied__amount_paid", output_field=dec_out),
@@ -2153,7 +2199,7 @@ def receive_payment_view(request):
         invoice_total = sum((amt for _, amt in allocations), Decimal("0.00"))
 
         # current open balance BEFORE this payment
-        current_open_balance = _customer_open_balance_amount(customer)
+        current_open_balance = _customer_open_balance_amount(company, customer)
 
         # remaining after invoices
         remaining_after_invoices = amount_received - invoice_total
@@ -2190,7 +2236,7 @@ def receive_payment_view(request):
             })
 
         payment = Payment.objects.create(
-            company=company,  # ✅ tenant set
+            company_id=company_id,
             customer=customer,
             payment_date=payment_date,
             payment_method=payment_method,
@@ -2198,14 +2244,13 @@ def receive_payment_view(request):
             reference_no=reference_no,
             tags=tags,
             memo=memo,
-            amount_received=amount_received,  # stored
-            unapplied_amount=unapplied,       # stored
+            amount_received=amount_received,
+            unapplied_amount=unapplied,
         )
         apply_audit_fields(payment)
         payment.save()
 
         if allocations:
-            # ✅ ensure invoices exist in same company
             PaymentInvoice.objects.bulk_create([
                 PaymentInvoice(payment=payment, invoice_id=inv_id, amount_paid=amt)
                 for inv_id, amt in allocations
@@ -2214,8 +2259,8 @@ def receive_payment_view(request):
         # save open balance line
         _save_payment_open_balance(payment, open_balance_apply)
 
-        # Post to GL (DR Bank, CR Customer AR) for full amount_received
-        _post_payment_to_ledger(payment)
+        # Post to GL (DR Bank, CR Customer AR / Advances)
+        _post_payment_to_ledger(company, payment)
 
         return redirect(f"{request.path}?ok=1")
 
@@ -2237,14 +2282,18 @@ def receive_payment_view(request):
 @transaction.atomic
 def payment_edit(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     payment = get_object_or_404(
-        Payment.objects.for_company(company).select_related("customer", "deposit_to"),
+        Payment.objects.filter(company_id=company_id).select_related("customer", "deposit_to"),
         pk=pk
     )
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
-    accounts = deposit_accounts_qs().filter(company=company)
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
+    try:
+        accounts = deposit_accounts_qs(company=company)
+    except TypeError:
+        accounts = deposit_accounts_qs().filter(company_id=company_id)
 
     if request.method == "POST":
         customer_id = (request.POST.get("customer") or "").strip()
@@ -2281,7 +2330,7 @@ def payment_edit(request, pk: int):
                 "form_error": "Enter Amount Received (must be > 0).",
             })
 
-        customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=int(customer_id))
+        customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=int(customer_id))
         deposit_account = get_object_or_404(accounts, pk=int(deposit_to_id))
 
         # allocations
@@ -2308,15 +2357,25 @@ def payment_edit(request, pk: int):
 
         if allocations:
             invoice_ids = [i for i, _ in allocations]
+            dec_out = DecimalField(max_digits=18, decimal_places=2)
 
             balances = (
-                Newinvoice.objects.for_company(company)
-                .filter(id__in=invoice_ids, customer=customer)  # ✅ must match customer + company
+                Newinvoice.objects
+                .filter(company_id=company_id, id__in=invoice_ids, customer=customer)
                 .annotate(
-                    total_due_dec=F("total_due"),
-                    total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+                    total_due_dec=Cast(F("total_due"), output_field=dec_out),
+                    total_paid=Coalesce(
+                        Sum("payments_applied__amount_paid", output_field=dec_out),
+                        Value(Decimal("0.00"), output_field=dec_out),
+                        output_field=dec_out,
+                    ),
                 )
-                .annotate(outstanding_balance=F("total_due_dec") - F("total_paid"))
+                .annotate(
+                    outstanding_balance=ExpressionWrapper(
+                        F("total_due_dec") - F("total_paid"),
+                        output_field=dec_out,
+                    )
+                )
                 .values_list("id", "outstanding_balance")
             )
 
@@ -2338,7 +2397,7 @@ def payment_edit(request, pk: int):
 
         invoice_total = sum((amt for _, amt in allocations), Decimal("0.00"))
 
-        current_open_balance = _customer_open_balance_amount(customer)
+        current_open_balance = _customer_open_balance_amount(company, customer)
         if open_balance_amount > current_open_balance:
             return render(request, "receive_payment.html", {
                 "customers": customers,
@@ -2403,7 +2462,7 @@ def payment_edit(request, pk: int):
 
         _save_payment_open_balance(payment, open_balance_amount)
 
-        _post_payment_to_ledger(payment)
+        _post_payment_to_ledger(company, payment)
 
         return redirect('sales:payment-detail', pk=payment.pk)
 
@@ -2429,12 +2488,13 @@ def payment_edit(request, pk: int):
 @require_GET
 def outstanding_invoices_api(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     customer_id = request.GET.get("customer")
     if not customer_id:
         return JsonResponse({"invoices": [], "open_balance": "0.00"})
 
-    customer = Newcustomer.objects.for_company(company).filter(pk=customer_id).first()
+    customer = Newcustomer.objects.filter(company_id=company_id).filter(pk=customer_id).first()
     if not customer:
         return JsonResponse({"invoices": [], "open_balance": "0.00"})
 
@@ -2442,28 +2502,36 @@ def outstanding_invoices_api(request):
 
     applied_map = dict(
         PaymentInvoice.objects
-        .filter(invoice__company=company, invoice__customer_id=customer_id)
+        .filter(invoice__company_id=company_id, invoice__customer_id=customer_id)
         .values("invoice_id")
         .annotate(s=Sum("amount_paid"))
         .values_list("invoice_id", "s")
     )
 
-    for inv in Newinvoice.objects.for_company(company).filter(customer_id=customer_id).order_by("-date_created"):
+    for inv in Newinvoice.objects.filter(company_id=company_id, customer_id=customer_id).order_by("-date_created"):
         total = Decimal(str(inv.total_due or "0"))
         applied = Decimal(str(applied_map.get(inv.id) or "0"))
         balance = total - applied
         if balance <= 0:
             continue
 
+        created_val = inv.date_created
+        due_val = getattr(inv, "due_date", None)
+
+        if hasattr(created_val, "date"):
+            created_val = created_val.date()
+        if hasattr(due_val, "date"):
+            due_val = due_val.date()
+
         invoices_payload.append({
             "id": inv.id,
-            "date_created": inv.date_created.strftime("%Y-%m-%d") if inv.date_created else None,
-            "due_date": inv.due_date.strftime("%Y-%m-%d") if getattr(inv, "due_date", None) else None,
+            "date_created": created_val.strftime("%Y-%m-%d") if created_val else None,
+            "due_date": due_val.strftime("%Y-%m-%d") if due_val else None,
             "total_due": str(total),
             "balance": str(balance),
         })
 
-    open_balance = _customer_open_balance_amount(customer)
+    open_balance = _customer_open_balance_amount(company, customer)
 
     return JsonResponse({
         "invoices": invoices_payload,
@@ -2480,9 +2548,11 @@ def outstanding_invoices_api(request):
 @module_required("sales")
 def payments_list(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     payments = (
-        Payment.objects.for_company(company)
+        Payment.objects
+        .filter(company_id=company_id)
         .select_related("customer", "deposit_to")
         .prefetch_related("applied_invoices__invoice")
         .order_by("-payment_date", "-id")
@@ -2497,14 +2567,14 @@ def payments_list(request):
     # total paid to date per invoice (tenant-safe)
     totals = (
         PaymentInvoice.objects
-        .filter(invoice_id__in=invoice_ids, invoice__company=company)
+        .filter(invoice_id__in=invoice_ids, invoice__company_id=company_id)
         .values("invoice_id")
         .annotate(total_paid=Sum("amount_paid"))
     )
     total_paid_map = {row["invoice_id"]: row["total_paid"] for row in totals}
 
     # fetch invoice objects (tenant-safe)
-    invoices_by_id = Newinvoice.objects.for_company(company).in_bulk(invoice_ids)
+    invoices_by_id = Newinvoice.objects.filter(company_id=company_id).in_bulk(invoice_ids)
 
     rows = []
     for p in payments:
@@ -2551,9 +2621,10 @@ def payments_list(request):
 @module_required("sales")
 def payment_detail(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     payment = get_object_or_404(
-        Payment.objects.for_company(company).select_related("customer", "deposit_to"),
+        Payment.objects.filter(company_id=company_id).select_related("customer", "deposit_to"),
         pk=pk
     )
     group = _payment_prefill_rows(payment)
@@ -2575,6 +2646,7 @@ def _lines_for_payment(payment: Payment):
       - outstanding_now
     """
     company = payment.company
+    company_id = getattr(company, "id", company)
 
     ids = list(
         PaymentInvoice.objects.filter(payment=payment).values_list("invoice_id", flat=True)
@@ -2593,7 +2665,7 @@ def _lines_for_payment(payment: Payment):
         row["invoice_id"]: row["paid_before"]
         for row in PaymentInvoice.objects.filter(
             invoice_id__in=ids,
-            payment__company=company,
+            payment__company_id=company_id,
             payment__id__lt=payment.id
         )
         .values("invoice_id")
@@ -2601,8 +2673,9 @@ def _lines_for_payment(payment: Payment):
     }
 
     invoices = (
-        Newinvoice.objects.for_company(company).filter(id__in=ids)
-        .annotate(total_due_dec=F("total_due"))
+        Newinvoice.objects
+        .filter(company_id=company_id, id__in=ids)
+        .annotate(total_due_dec=Cast(F("total_due"), DecimalField(max_digits=18, decimal_places=2)))
         .select_related("customer")
         .order_by("id")
     )
@@ -2644,9 +2717,10 @@ def payment_print(request, pk: int):
     Printable Payment Receipt.
     """
     company_obj = request.company
+    company_id = getattr(company_obj, "id", company_obj)
 
     payment = get_object_or_404(
-        Payment.objects.for_company(company_obj).select_related("customer", "deposit_to"),
+        Payment.objects.filter(company_id=company_id).select_related("customer", "deposit_to"),
         pk=pk
     )
     lines, applied_total, remaining_total, outstanding_total = _lines_for_payment(payment)
@@ -2694,18 +2768,22 @@ def coerce_decimal(val, default="0.00") -> Decimal:
         return Decimal(s)
     except (InvalidOperation, ValueError):
         return Decimal(default)
-
-
 @login_required
 @company_required
 @module_required("sales")
 @transaction.atomic
 def sales_receipt_new(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
-    accounts = deposit_accounts_qs().filter(company=company)
-    products = Product.objects.filter(company=company) if hasattr(Product, "company") else Product.objects.all()
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
+
+    try:
+        accounts = deposit_accounts_qs(company=company)
+    except TypeError:
+        accounts = deposit_accounts_qs().filter(company_id=company_id)
+
+    products = Product.objects.filter(company_id=company_id) if hasattr(Product, "company") else Product.objects.all()
 
     if request.method == "POST":
         customer_id = (request.POST.get("customer") or "").strip()
@@ -2725,7 +2803,7 @@ def sales_receipt_new(request):
                 "form_error": "Please select customer, date and a deposit account.",
             })
 
-        customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=int(customer_id))
+        customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=int(customer_id))
         deposit_to = get_object_or_404(accounts, pk=int(deposit_to_id))
 
         subtotal = coerce_decimal(request.POST.get("subtotal"))
@@ -2751,13 +2829,13 @@ def sales_receipt_new(request):
 
         # ✅ uniqueness check WITHIN company
         if (
-            Payment.objects.for_company(company).filter(reference_no=reference_no).exists()
-            or SalesReceipt.objects.for_company(company).filter(reference_no=reference_no).exists()
+            Payment.objects.filter(company_id=company_id, reference_no=reference_no).exists()
+            or SalesReceipt.objects.filter(company_id=company_id, reference_no=reference_no).exists()
         ):
             reference_no = generate_unique_ref_no()
 
         receipt = SalesReceipt.objects.create(
-            company=company,  # ✅ tenant set
+            company_id=company_id,
             customer=customer,
             receipt_date=receipt_date,
             payment_method=payment_method,
@@ -2791,7 +2869,7 @@ def sales_receipt_new(request):
 
             if prod_id and str(prod_id).isdigit():
                 if hasattr(Product, "company"):
-                    product = Product.objects.filter(company=company, pk=prod_id).first()
+                    product = Product.objects.filter(company_id=company_id, pk=prod_id).first()
                 else:
                     product = Product.objects.filter(pk=prod_id).first()
             else:
@@ -2829,7 +2907,7 @@ def sales_receipt_new(request):
         receipt.total_vat = total_vat
         receipt.save(update_fields=["total_vat"])
 
-        _post_sales_receipt_to_ledger(receipt)
+        _post_sales_receipt_to_ledger(company, receipt)
         rebuild_movements_for_sales_receipt(receipt)
 
         action = request.POST.get("save_action")
@@ -2856,15 +2934,21 @@ def sales_receipt_new(request):
 @transaction.atomic
 def sales_receipt_edit(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     receipt = get_object_or_404(
-        SalesReceipt.objects.for_company(company).select_related("customer", "deposit_to"),
+        SalesReceipt.objects.filter(company_id=company_id).select_related("customer", "deposit_to"),
         pk=pk
     )
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
-    accounts = deposit_accounts_qs().filter(company=company)
-    products = Product.objects.filter(company=company) if hasattr(Product, "company") else Product.objects.all()
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
+
+    try:
+        accounts = deposit_accounts_qs(company=company)
+    except TypeError:
+        accounts = deposit_accounts_qs().filter(company_id=company_id)
+
+    products = Product.objects.filter(company_id=company_id) if hasattr(Product, "company") else Product.objects.all()
 
     if request.method == "POST":
         customer_id = (request.POST.get("customer") or "").strip()
@@ -2876,11 +2960,11 @@ def sales_receipt_edit(request, pk: int):
         memo = (request.POST.get("memo") or "").strip()
 
         errors = []
-        if not (customer_id.isdigit()):
+        if not customer_id.isdigit():
             errors.append("customer")
         if not receipt_date:
             errors.append("date")
-        if not (deposit_to_id.isdigit()):
+        if not deposit_to_id.isdigit():
             errors.append("deposit account")
 
         if errors:
@@ -2895,7 +2979,7 @@ def sales_receipt_edit(request, pk: int):
                 "form_error": "Please select: " + ", ".join(errors) + ".",
             })
 
-        receipt.customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=int(customer_id))
+        receipt.customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=int(customer_id))
         receipt.receipt_date = receipt_date
         receipt.payment_method = payment_method
         receipt.deposit_to = get_object_or_404(accounts, pk=int(deposit_to_id))
@@ -2921,7 +3005,7 @@ def sales_receipt_edit(request, pk: int):
         if receipt.balance < 0:
             receipt.balance = Decimal("0.00")
 
-        receipt.total_vat = Decimal("0.00")  # set after lines
+        receipt.total_vat = Decimal("0.00")
         apply_audit_fields(receipt)
         receipt.save()
 
@@ -2943,7 +3027,7 @@ def sales_receipt_edit(request, pk: int):
 
             if prod_id and str(prod_id).isdigit():
                 if hasattr(Product, "company"):
-                    product = Product.objects.filter(company=company, pk=prod_id).first()
+                    product = Product.objects.filter(company_id=company_id, pk=prod_id).first()
                 else:
                     product = Product.objects.filter(pk=prod_id).first()
             else:
@@ -2981,7 +3065,7 @@ def sales_receipt_edit(request, pk: int):
         receipt.total_vat = total_vat
         receipt.save(update_fields=["total_vat"])
 
-        _post_sales_receipt_to_ledger(receipt)
+        _post_sales_receipt_to_ledger(company, receipt)
         rebuild_movements_for_sales_receipt(receipt)
         return redirect("sales:receipt-detail", pk=receipt.pk)
 
@@ -3003,9 +3087,10 @@ def sales_receipt_edit(request, pk: int):
 @module_required("sales")
 def sales_receipt_detail(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     receipt = get_object_or_404(
-        SalesReceipt.objects.for_company(company).select_related("customer", "deposit_to"),
+        SalesReceipt.objects.filter(company_id=company_id).select_related("customer", "deposit_to"),
         pk=pk
     )
     lines = receipt.lines.select_related("product").all()
@@ -3055,9 +3140,11 @@ def sales_receipt_list(request):
     plus Actions (Edit | View | Print).
     """
     company = request.company
+    company_id = getattr(company, "id", company)
 
     qs = (
-        SalesReceipt.objects.for_company(company)
+        SalesReceipt.objects
+        .filter(company_id=company_id)
         .select_related("customer", "deposit_to")
         .annotate(
             total_amount_dec=Cast("total_amount", DecimalField(max_digits=18, decimal_places=2)),
@@ -3095,9 +3182,10 @@ def sales_receipt_list(request):
 @module_required("sales")
 def receipt_print(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     receipt = get_object_or_404(
-        SalesReceipt.objects.for_company(company).select_related("customer", "deposit_to"),
+        SalesReceipt.objects.filter(company_id=company_id).select_related("customer", "deposit_to"),
         pk=pk
     )
     lines = receipt.lines.select_related("product").all()
@@ -3105,7 +3193,6 @@ def receipt_print(request, pk: int):
     context = {
         "receipt": receipt,
         "lines": lines,
-        # header info (use your real settings if you have them)
         "logo_url": request.build_absolute_uri(static("sowaf/images/yo-logo.png")),
         "company_name": getattr(company, "name", None) or "YoAccountant",
         "company_address": getattr(company, "address", "") or "Kampala, Uganda",
@@ -3123,9 +3210,11 @@ def _customer_opening_balance(company, customer_id, start_date):
     Opening balance = (all invoice totals before start) - (all credits before start).
     Credits = payments applied to those invoices + sales receipts amounts.
     """
+    company_id = getattr(company, "id", company)
+
     inv_total = (
-        Newinvoice.objects.for_company(company)
-        .filter(customer_id=customer_id, date_created__lt=start_date)
+        Newinvoice.objects
+        .filter(company_id=company_id, customer_id=customer_id, date_created__lt=start_date)
         .aggregate(total=Coalesce(
             Sum(Cast("total_due", DecimalField(max_digits=18, decimal_places=2))),
             Value(Decimal("0.00"))
@@ -3136,15 +3225,15 @@ def _customer_opening_balance(company, customer_id, start_date):
     paid_total = (
         PaymentInvoice.objects
         .filter(invoice__customer_id=customer_id, payment__payment_date__lt=start_date)
-        .filter(invoice__company=company)  # company scoping
+        .filter(invoice__company_id=company_id)
         .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["total"]
         or Decimal("0.00")
     )
 
     # Treat Sales Receipts as immediate credits to A/R
     receipts_total = (
-        SalesReceipt.objects.for_company(company)
-        .filter(customer_id=customer_id, receipt_date__lt=start_date)
+        SalesReceipt.objects
+        .filter(company_id=company_id, customer_id=customer_id, receipt_date__lt=start_date)
         .aggregate(total=Coalesce(Sum("amount_paid"), Value(Decimal("0.00"))))["total"]
         or Decimal("0.00")
     )
@@ -3157,12 +3246,13 @@ def _period_rows(company, customer_id, start_date, end_date):
     Build period activity rows across invoices, payments (applied), and sales receipts.
     Amount sign convention: +invoice total, -payment amount, -receipt amount.
     """
+    company_id = getattr(company, "id", company)
     rows = []
 
     # Invoices in range
     inv_qs = (
-        Newinvoice.objects.for_company(company)
-        .filter(customer_id=customer_id, date_created__gte=start_date, date_created__lte=end_date)
+        Newinvoice.objects
+        .filter(company_id=company_id, customer_id=customer_id, date_created__gte=start_date, date_created__lte=end_date)
         .annotate(total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)))
         .order_by("date_created", "id")
     )
@@ -3180,7 +3270,7 @@ def _period_rows(company, customer_id, start_date, end_date):
     # Payments (use applied part only) in range
     pay_lines = (
         PaymentInvoice.objects
-        .filter(invoice__company=company)
+        .filter(invoice__company_id=company_id)
         .filter(
             invoice__customer_id=customer_id,
             payment__payment_date__gte=start_date,
@@ -3203,8 +3293,8 @@ def _period_rows(company, customer_id, start_date, end_date):
 
     # Sales Receipts in range (reduce A/R)
     rec_qs = (
-        SalesReceipt.objects.for_company(company)
-        .filter(customer_id=customer_id, receipt_date__gte=start_date, receipt_date__lte=end_date)
+        SalesReceipt.objects
+        .filter(company_id=company_id, customer_id=customer_id, receipt_date__gte=start_date, receipt_date__lte=end_date)
         .order_by("receipt_date", "id")
     )
     for r in rec_qs:
@@ -3226,15 +3316,26 @@ def _filter_by_type(rows, statement_type, company, customer_id, start_date):
     """
     Adapts the period rows for the selected statement type.
     """
+    company_id = getattr(company, "id", company)
+
     if statement_type == Statement.StatementType.OPEN_ITEM:
         inv_open = (
-            Newinvoice.objects.for_company(company)
-            .filter(customer_id=customer_id)
+            Newinvoice.objects
+            .filter(company_id=company_id, customer_id=customer_id)
             .annotate(
                 total_due_dec=Cast("total_due", DecimalField(max_digits=18, decimal_places=2)),
-                total_paid=Coalesce(Sum("payments_applied__amount_paid"), Value(Decimal("0.00"))),
+                total_paid=Coalesce(
+                    Sum("payments_applied__amount_paid"),
+                    Value(Decimal("0.00")),
+                    output_field=DecimalField(max_digits=18, decimal_places=2),
+                ),
             )
-            .annotate(outstanding=F("total_due_dec") - F("total_paid"))
+            .annotate(
+                outstanding=ExpressionWrapper(
+                    F("total_due_dec") - F("total_paid"),
+                    output_field=DecimalField(max_digits=18, decimal_places=2),
+                )
+            )
             .filter(outstanding__gt=0)
         )
         ids = set(inv_open.values_list("id", flat=True))
@@ -3265,14 +3366,16 @@ def _customer_ar_balance_as_of(company, customer_id: int, as_of_date):
     LIVE A/R balance (Customer Subledger A/R) up to and including as_of_date.
     A/R is Asset => debit - credit
     """
+    company_id = getattr(company, "id", company)
     as_of_date = _to_date(as_of_date)
 
     cust = get_object_or_404(
-        Newcustomer.objects.for_company(company).only("customer_name"),
+        Newcustomer.objects.filter(company_id=company_id).only("customer_name"),
         pk=customer_id
     )
 
     qs = JournalLine.objects.filter(
+        entry__company_id=company_id,
         account__detail_type="Customer Subledger (A/R)",
         account__account_name=cust.customer_name,
     )
@@ -3305,10 +3408,11 @@ def _customer_opening_balance_live(company, customer_id: int, statement_start_da
 @require_http_methods(["GET", "POST"])
 def statement_new(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     customer_id = request.GET.get("customer_id") or request.POST.get("customer_id")
     customer = (
-        get_object_or_404(Newcustomer.objects.for_company(company), pk=int(customer_id))
+        get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=int(customer_id))
         if customer_id and str(customer_id).isdigit()
         else None
     )
@@ -3382,7 +3486,7 @@ def statement_new(request):
             return redirect(request.path)
 
         st = Statement.objects.create(
-            company=company,  # ✅ tenant set
+            company_id=company_id,
             customer=customer,
             statement_date=statement_date,
             start_date=start_date,
@@ -3471,9 +3575,10 @@ def _build_statement_rows(company, st):
 @module_required("sales")
 def statement_detail(request, pk):
     company = request.company
+    company_id = getattr(company, "id", company)
 
     st = get_object_or_404(
-        Statement.objects.for_company(company).select_related("customer").prefetch_related("lines"),
+        Statement.objects.filter(company_id=company_id).select_related("customer").prefetch_related("lines"),
         pk=pk
     )
 
@@ -3510,8 +3615,9 @@ def statement_export_excel(request, pk):
     from openpyxl.utils import get_column_letter
 
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    st = get_object_or_404(Statement.objects.for_company(company).select_related("customer"), pk=pk)
+    st = get_object_or_404(Statement.objects.filter(company_id=company_id).select_related("customer"), pk=pk)
 
     rows, live_opening, live_closing = _build_statement_rows(company, st)
 
@@ -3563,8 +3669,9 @@ def statement_export_excel(request, pk):
 @module_required("sales")
 def statement_export_pdf(request, pk: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    st = get_object_or_404(Statement.objects.for_company(company), pk=pk)
+    st = get_object_or_404(Statement.objects.filter(company_id=company_id), pk=pk)
 
     lines = (
         StatementLine.objects
@@ -3621,11 +3728,12 @@ def statement_export_pdf(request, pk: int):
 @module_required("sales")
 def customer_credits_list(request):
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
     rows = []
     for c in customers:
-        bal = _customer_credit_balance(c)
+        bal = _customer_credit_balance(company, c)
         if bal > 0:
             rows.append({"customer": c, "credit": bal})
 
@@ -3639,11 +3747,16 @@ def customer_credits_list(request):
 @transaction.atomic
 def customer_refund_new(request, customer_id: int):
     company = request.company
+    company_id = getattr(company, "id", company)
 
-    customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=customer_id)
-    accounts = deposit_accounts_qs().filter(company=company)
+    customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=customer_id)
 
-    max_refundable = _customer_credit_balance(customer)
+    try:
+        accounts = deposit_accounts_qs(company=company)
+    except TypeError:
+        accounts = deposit_accounts_qs().filter(company_id=company_id)
+
+    max_refundable = _customer_credit_balance(company, customer)
 
     if request.method == "POST":
         refund_date = parse_date(request.POST.get("refund_date") or "") or timezone.localdate()
@@ -3681,7 +3794,7 @@ def customer_refund_new(request, customer_id: int):
             })
 
         refund = CustomerRefund.objects.create(
-            company=company,  # ✅ tenant set
+            company_id=company_id,
             customer=customer,
             refund_date=refund_date,
             paid_from=paid_from,
@@ -3690,7 +3803,7 @@ def customer_refund_new(request, customer_id: int):
             reference_no=reference_no,
         )
 
-        _post_customer_refund_to_ledger(refund)
+        _post_customer_refund_to_ledger(company, refund)
         return redirect("sales:customer-credits-list")
 
     return render(request, "customer_refund_form.html", {
@@ -3708,13 +3821,14 @@ def customer_refund_new(request, customer_id: int):
 @module_required("sales")
 def sales_receipt_list_report(request):
     company = request.company
+    company_id = getattr(company, "id", company)
     today = timezone.localdate()
 
     customer_id = (request.GET.get("customer") or "").strip()
     date_from = (request.GET.get("from") or "").strip()
     date_to = (request.GET.get("to") or "").strip()
 
-    qs = SalesReceipt.objects.for_company(company).select_related("customer").all().order_by("-receipt_date", "-id")
+    qs = SalesReceipt.objects.filter(company_id=company_id).select_related("customer").all().order_by("-receipt_date", "-id")
 
     if customer_id.isdigit():
         qs = qs.filter(customer_id=int(customer_id))
@@ -3742,7 +3856,7 @@ def sales_receipt_list_report(request):
             "total": _dec(r.total_amount),
         })
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
 
     return render(request, "sales_receipt_list_report.html", {
         "today": today,
@@ -3763,6 +3877,7 @@ def sales_receipt_list_export(request, fmt: str):
     fmt = excel | pdf
     """
     company = request.company
+    company_id = getattr(company, "id", company)
     fmt = (fmt or "").lower()
     today = timezone.localdate()
 
@@ -3770,7 +3885,7 @@ def sales_receipt_list_export(request, fmt: str):
     date_from = (request.GET.get("from") or "").strip()
     date_to = (request.GET.get("to") or "").strip()
 
-    qs = SalesReceipt.objects.for_company(company).select_related("customer").all().order_by("-receipt_date", "-id")
+    qs = SalesReceipt.objects.filter(company_id=company_id).select_related("customer").all().order_by("-receipt_date", "-id")
     if customer_id.isdigit():
         qs = qs.filter(customer_id=int(customer_id))
     if date_from:
@@ -3856,13 +3971,14 @@ def sales_receipt_list_export(request, fmt: str):
 @module_required("sales")
 def customer_statements_report(request):
     company = request.company
+    company_id = getattr(company, "id", company)
     today = timezone.localdate()
 
     customer_id = (request.GET.get("customer") or "").strip()
     date_from = (request.GET.get("from") or "").strip()
     date_to = (request.GET.get("to") or "").strip()
 
-    qs = Statement.objects.for_company(company).select_related("customer").all().order_by("-statement_date", "-id")
+    qs = Statement.objects.filter(company_id=company_id).select_related("customer").all().order_by("-statement_date", "-id")
 
     if customer_id.isdigit():
         qs = qs.filter(customer_id=int(customer_id))
@@ -3885,7 +4001,7 @@ def customer_statements_report(request):
             "email_to": s.email_to,
         })
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
 
     return render(request, "customer_statements_report.html", {
         "today": today,
@@ -3902,6 +4018,7 @@ def customer_statements_report(request):
 @module_required("sales")
 def customer_statements_export(request, fmt: str):
     company = request.company
+    company_id = getattr(company, "id", company)
     fmt = (fmt or "").lower()
     today = timezone.localdate()
 
@@ -3909,7 +4026,7 @@ def customer_statements_export(request, fmt: str):
     date_from = (request.GET.get("from") or "").strip()
     date_to = (request.GET.get("to") or "").strip()
 
-    qs = Statement.objects.for_company(company).select_related("customer").all().order_by("-statement_date", "-id")
+    qs = Statement.objects.filter(company_id=company_id).select_related("customer").all().order_by("-statement_date", "-id")
     if customer_id.isdigit():
         qs = qs.filter(customer_id=int(customer_id))
     if date_from:
@@ -3993,6 +4110,7 @@ def customer_statements_export(request, fmt: str):
 @module_required("sales")
 def sales_by_customer_report(request):
     company = request.company
+    company_id = getattr(company, "id", company)
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
@@ -4001,7 +4119,8 @@ def sales_by_customer_report(request):
     date_to = (request.GET.get("to") or "").strip()
 
     qs = (
-        Newinvoice.objects.for_company(company)
+        Newinvoice.objects
+        .filter(company_id=company_id)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -4011,7 +4130,7 @@ def sales_by_customer_report(request):
                 output_field=dec_out
             ),
         )
-        .annotate(balance_db=F("total_due_dec") - F("total_paid"))
+        .annotate(balance_db=ExpressionWrapper(F("total_due_dec") - F("total_paid"), output_field=dec_out))
         .only("id", "customer_id", "date_created", "total_due")
         .order_by("customer__customer_name", "date_created", "id")
     )
@@ -4055,7 +4174,7 @@ def sales_by_customer_report(request):
     rows = list(rows_map.values())
     rows.sort(key=lambda r: (getattr(r["customer"], "customer_name", "") or "").lower())
 
-    customers = Newcustomer.objects.for_company(company).order_by("customer_name")
+    customers = Newcustomer.objects.filter(company_id=company_id).order_by("customer_name")
 
     return render(request, "sales_by_customer_report.html", {
         "today": today,
@@ -4073,6 +4192,7 @@ def sales_by_customer_report(request):
 @module_required("sales")
 def sales_by_customer_export(request, fmt: str):
     company = request.company
+    company_id = getattr(company, "id", company)
     fmt = (fmt or "").lower()
     today = timezone.localdate()
     dec_out = DecimalField(max_digits=18, decimal_places=2)
@@ -4082,7 +4202,8 @@ def sales_by_customer_export(request, fmt: str):
     date_to = (request.GET.get("to") or "").strip()
 
     qs = (
-        Newinvoice.objects.for_company(company)
+        Newinvoice.objects
+        .filter(company_id=company_id)
         .select_related("customer")
         .annotate(
             total_due_dec=Cast(F("total_due"), output_field=dec_out),
@@ -4092,7 +4213,7 @@ def sales_by_customer_export(request, fmt: str):
                 output_field=dec_out
             ),
         )
-        .annotate(balance_db=F("total_due_dec") - F("total_paid"))
+        .annotate(balance_db=ExpressionWrapper(F("total_due_dec") - F("total_paid"), output_field=dec_out))
         .only("id", "customer_id", "date_created", "total_due")
         .order_by("customer__customer_name", "date_created", "id")
     )
@@ -4212,7 +4333,8 @@ def invoice_payments_report(request):
 @module_required("sales")
 def recurring_invoice_list(request):
     company = request.company
-    recs = RecurringInvoice.objects.for_company(company).select_related("customer").order_by("-id")
+    company_id = getattr(company, "id", company)
+    recs = RecurringInvoice.objects.filter(company_id=company_id).select_related("customer").order_by("-id")
     return render(request, "recurring_invoice_list.html", {"recs": recs})
 
 
@@ -4227,13 +4349,14 @@ def recurring_invoice_new(request):
     from inventory.models import Product, Pclass  # keep same pattern
 
     company = request.company
+    company_id = getattr(company, "id", company)
 
     if request.method == "POST":
         customer_id = request.POST.get("customer")
-        customer = get_object_or_404(Newcustomer.objects.for_company(company), pk=customer_id)
+        customer = get_object_or_404(Newcustomer.objects.filter(company_id=company_id), pk=customer_id)
 
         class_field_id = request.POST.get("class_field")
-        class_field = get_object_or_404(Pclass, pk=class_field_id)
+        class_field = get_object_or_404(Pclass.objects.filter(company_id=company_id), pk=class_field_id)
 
         email = request.POST.get("email")
         billing_address = request.POST.get("billing_address")
@@ -4269,7 +4392,7 @@ def recurring_invoice_new(request):
         shipping_fee = Decimal(request.POST.get("shipping_fee") or "0")
 
         rec = RecurringInvoice.objects.create(
-            company=company,  # ✅ tenant set
+            company_id=company_id,
             customer=customer,
             email=email,
             billing_address=billing_address,
@@ -4304,7 +4427,7 @@ def recurring_invoice_new(request):
 
             # company-safe product lookup (if Product has company)
             if hasattr(Product, "company"):
-                product = get_object_or_404(Product, company=company, pk=products[i])
+                product = get_object_or_404(Product.objects.filter(company_id=company_id), pk=products[i])
             else:
                 product = get_object_or_404(Product, pk=products[i])
 
@@ -4327,9 +4450,9 @@ def recurring_invoice_new(request):
 
         return redirect("sales:recurring-invoices")
 
-    products = Product.objects.filter(company=request.company) if hasattr(Product, "company") else Product.objects.all()
-    customers = Newcustomer.objects.for_company(request.company).all()
-    classes = Pclass.objects.all()
+    products = Product.objects.filter(company_id=company_id) if hasattr(Product, "company") else Product.objects.all()
+    customers = Newcustomer.objects.filter(company_id=company_id).all()
+    classes = Pclass.objects.filter(company_id=company_id).all()
 
     return render(request, "recurring_invoice_form.html", {
         "customers": customers,
@@ -4350,7 +4473,7 @@ def recurring_run_today(request):
 
     result = generate_recurring_invoices_for_date(
         run_date=timezone.localdate(),
-        company=company,  # ✅ pass company if your service supports it
+        company=company,
         apply_audit_fields=apply_audit_fields,
         _post_invoice_to_ledger=_post_invoice_to_ledger,
         as_aware_datetime=as_aware_datetime,
@@ -4369,7 +4492,7 @@ def sync_sales_receipt_inventory(sr):
             "product": p,
             "qty_in": 0,
             "qty_out": line.qty,
-            "unit_cost": p.avg_cost,   # cost at sale time
+            "unit_cost": p.avg_cost,
         })
 
     rebuild_inventory_movements(
