@@ -7,9 +7,12 @@ class TenantModel(models.Model):
     company = models.ForeignKey(
         "tenancy.Company",
         on_delete=models.CASCADE,
-        related_name="+",   # ✅ prevents reverse accessor clashes
-        db_index=True, null= True, blank=True
+        related_name="+",
+        db_index=True,
+        null=True,
+        blank=True,
     )
+
     objects = TenantManager()
 
     class Meta:

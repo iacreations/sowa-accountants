@@ -1,14 +1,13 @@
-# tenamcy/permissions.py
 from functools import wraps
 from django.shortcuts import redirect
 from django.contrib import messages
 from .models import CompanyMember
 
 
-def is_sowa_user(user) -> bool:
+def is_sowa_user(user):
     """
     SOWA internal admin users.
-    They must never be blocked by tenant role/module restrictions.
+    They bypass tenant role/module restrictions.
     """
     if not user or not getattr(user, "is_authenticated", False):
         return False
@@ -18,7 +17,6 @@ def is_sowa_user(user) -> bool:
 def get_membership(request):
     """
     Returns the active membership for the currently selected company.
-    Assumes CompanyMiddleware sets request.company from session["company_id"].
     """
     company = getattr(request, "company", None)
     if not company or not request.user.is_authenticated:
@@ -34,7 +32,6 @@ def get_membership(request):
 def company_required(view_func):
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
-        # SOWA bypass first
         if is_sowa_user(request.user):
             return view_func(request, *args, **kwargs)
 
@@ -52,7 +49,6 @@ def module_required(module_key: str):
     def decorator(view_func):
         @wraps(view_func)
         def _wrapped(request, *args, **kwargs):
-            # SOWA bypass first
             if is_sowa_user(request.user):
                 return view_func(request, *args, **kwargs)
 
@@ -81,7 +77,6 @@ def role_required(roles):
     def decorator(view_func):
         @wraps(view_func)
         def _wrapped(request, *args, **kwargs):
-            # SOWA bypass first
             if is_sowa_user(request.user):
                 return view_func(request, *args, **kwargs)
 

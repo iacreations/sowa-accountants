@@ -5,7 +5,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import InventoryMovement, InventoryLocation, Product
+from .models import InventoryMovement, InventoryLocation, Product, MainStore
 
 ZERO = Decimal("0.00")
 
@@ -36,43 +36,99 @@ def safe_cost(v) -> Decimal:
     return c if c >= ZERO else ZERO
 
 
-def get_default_location() -> InventoryLocation:
+def get_main_store() -> MainStore:
     """
-    Ensures there is always exactly one default active location.
+    Always return one active main store.
     """
-    loc = InventoryLocation.objects.filter(is_default=True, is_active=True).first()
-    if not loc:
-        loc = InventoryLocation.objects.create(name="Main Store", is_default=True, is_active=True)
-        return loc
+    store = MainStore.objects.filter(is_active=True).first()
+    if not store:
+        store = MainStore.objects.create(name="Main Store", is_active=True)
+    return store
 
-    # Safety: if multiple defaults exist, keep the first and clear the rest
-    InventoryLocation.objects.filter(is_default=True).exclude(id=loc.id).update(is_default=False)
+
+def get_default_location(company=None) -> InventoryLocation:
+    """
+    Ensures there is always one default active location.
+    Supports tenant-aware InventoryLocation if company exists on the model.
+    """
+    store = get_main_store()
+
+    qs = InventoryLocation.objects.filter(store=store, is_active=True)
+    if company is not None and hasattr(InventoryLocation, "company_id"):
+        qs = qs.filter(company=company)
+
+    loc = qs.filter(is_default=True).first()
+
+    if not loc:
+        create_kwargs = {
+            "store": store,
+            "name": "Main Store",
+            "is_default": True,
+            "is_active": True,
+        }
+        if company is not None and hasattr(InventoryLocation, "company_id"):
+            create_kwargs["company"] = company
+
+        loc = InventoryLocation.objects.create(**create_kwargs)
+
+    # Safety: keep only one default
+    cleanup_qs = InventoryLocation.objects.filter(store=store, is_default=True)
+    if company is not None and hasattr(InventoryLocation, "company_id"):
+        cleanup_qs = cleanup_qs.filter(company=company)
+
+    cleanup_qs.exclude(id=loc.id).update(is_default=False)
+
     return loc
 
 
 def resolve_location_from_doc(doc) -> InventoryLocation:
     """
-    Uses doc.location (TEXT FIELD) to create/select InventoryLocation.
+    Resolve location from document.
 
-    Client requirement: every input form has a location field.
-    This works if:
-      - your forms submit a 'location' string (e.g. "Main Store", "Branch A")
-      - you want the system to auto-create locations as users type them
-
-    If doc.location is empty -> default location is used.
+    NEW LOGIC:
+    - If doc.location is already an InventoryLocation FK, use it
+    - If doc.location is empty, fall back to default location
+    - If doc.location is a string somehow, try to find/create a location by that name
     """
-    name = (getattr(doc, "location", "") or "").strip()
-    if name:
-        loc, _ = InventoryLocation.objects.get_or_create(
-            name=name,
-            defaults={"is_default": False, "is_active": True},
-        )
-        # If it existed but was inactive, re-activate it (nice UX)
-        if not loc.is_active:
-            loc.is_active = True
-            loc.save(update_fields=["is_active"])
+    company = getattr(doc, "company", None)
+    loc = getattr(doc, "location", None)
+
+    # FK already set
+    if isinstance(loc, InventoryLocation):
         return loc
-    return get_default_location()
+
+    # If location is just an ID somehow
+    if loc and hasattr(loc, "id"):
+        return loc
+
+    # If old code still passes text
+    if isinstance(loc, str):
+        name = loc.strip()
+        if name:
+            store = get_main_store()
+            qs = InventoryLocation.objects.filter(store=store, name__iexact=name)
+            if company is not None and hasattr(InventoryLocation, "company_id"):
+                qs = qs.filter(company=company)
+
+            found = qs.first()
+            if found:
+                if not found.is_active:
+                    found.is_active = True
+                    found.save(update_fields=["is_active"])
+                return found
+
+            create_kwargs = {
+                "store": store,
+                "name": name,
+                "is_default": False,
+                "is_active": True,
+            }
+            if company is not None and hasattr(InventoryLocation, "company_id"):
+                create_kwargs["company"] = company
+
+            return InventoryLocation.objects.create(**create_kwargs)
+
+    return get_default_location(company=company)
 
 
 def qty_on_hand(product: Product, location: Optional[InventoryLocation] = None) -> Decimal:
@@ -126,6 +182,7 @@ def rebuild_inventory_movements(
     date=None,
     rows: Optional[Iterable[Dict[str, Any]]] = None,
     location: Optional[InventoryLocation] = None,
+    company=None,
 ):
     """
     rows = [
@@ -140,7 +197,7 @@ def rebuild_inventory_movements(
     """
     date = date or timezone.localdate()
     rows = rows or []
-    default_location = location or get_default_location()
+    default_location = location or get_default_location(company=company)
 
     InventoryMovement.objects.filter(source_type=source_type, source_id=source_id).delete()
 
@@ -159,25 +216,25 @@ def rebuild_inventory_movements(
         if qty_in <= ZERO and qty_out <= ZERO:
             continue
 
-        # allow per-row location override (needed for transfers)
         row_loc = r.get("location") or default_location
-
         qty = qty_in if qty_in > ZERO else qty_out
         value = qty * unit_cost
 
-        movements.append(
-            InventoryMovement(
-                product=p,
-                location=row_loc,
-                date=date,
-                qty_in=qty_in,
-                qty_out=qty_out,
-                unit_cost=unit_cost,
-                value=value,
-                source_type=source_type,
-                source_id=source_id,
-            )
-        )
+        movement_kwargs = {
+            "product": p,
+            "location": row_loc,
+            "date": date,
+            "qty_in": qty_in,
+            "qty_out": qty_out,
+            "unit_cost": unit_cost,
+            "value": value,
+            "source_type": source_type,
+            "source_id": source_id,
+        }
+        if company is not None and hasattr(InventoryMovement, "company_id"):
+            movement_kwargs["company"] = company
+
+        movements.append(InventoryMovement(**movement_kwargs))
         affected.add(p.id)
 
     if movements:
@@ -192,6 +249,7 @@ def rebuild_inventory_movements(
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_bill(bill):
+    company = getattr(bill, "company", None)
     loc = resolve_location_from_doc(bill)
 
     rows = []
@@ -205,28 +263,35 @@ def rebuild_movements_for_bill(bill):
         if qty <= ZERO:
             continue
 
-        rows.append({"product": p, "qty_in": qty, "qty_out": ZERO, "unit_cost": cost, "location": loc})
+        rows.append({
+            "product": p,
+            "qty_in": qty,
+            "qty_out": ZERO,
+            "unit_cost": cost,
+            "location": loc,
+        })
 
     rebuild_inventory_movements(
         "BILL",
         bill.id,
         date=bill.bill_date or timezone.localdate(),
         rows=rows,
+        company=company,
     )
 
 
 # -----------------------
 # Expenses (Stock IN)
 # -----------------------
-
 @transaction.atomic
 def rebuild_movements_for_expense(expense):
     """
     Stock IN for Inventory items on Expense.
     Uses ExpenseItemLine.qty and rate as unit_cost.
-    Uses expense.location (FK InventoryLocation)
+    Uses expense.location FK if available.
     """
-    loc = getattr(expense, "location", None)  # may be null
+    company = getattr(expense, "company", None)
+    loc = getattr(expense, "location", None) or get_default_location(company=company)
 
     rows = []
     for line in expense.item_lines.select_related("product").all():
@@ -244,7 +309,7 @@ def rebuild_movements_for_expense(expense):
             "qty_in": qty,
             "qty_out": ZERO,
             "unit_cost": cost,
-            "location": loc,   # can be None; your engine will fallback to default if you coded it that way
+            "location": loc,
         })
 
     rebuild_inventory_movements(
@@ -252,6 +317,7 @@ def rebuild_movements_for_expense(expense):
         expense.id,
         date=expense.payment_date or timezone.localdate(),
         rows=rows,
+        company=company,
     )
 
 
@@ -260,6 +326,7 @@ def rebuild_movements_for_expense(expense):
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_cheque(cheque):
+    company = getattr(cheque, "company", None)
     loc = resolve_location_from_doc(cheque)
 
     rows = []
@@ -273,13 +340,20 @@ def rebuild_movements_for_cheque(cheque):
         if qty <= ZERO:
             continue
 
-        rows.append({"product": p, "qty_in": qty, "qty_out": ZERO, "unit_cost": cost, "location": loc})
+        rows.append({
+            "product": p,
+            "qty_in": qty,
+            "qty_out": ZERO,
+            "unit_cost": cost,
+            "location": loc,
+        })
 
     rebuild_inventory_movements(
         "CHEQUE",
         cheque.id,
         date=cheque.payment_date or timezone.localdate(),
         rows=rows,
+        company=company,
     )
 
 
@@ -288,6 +362,7 @@ def rebuild_movements_for_cheque(cheque):
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_invoice(invoice):
+    company = getattr(invoice, "company", None)
     loc = resolve_location_from_doc(invoice)
     inv_date = invoice.date_created.date() if invoice.date_created else timezone.localdate()
 
@@ -302,13 +377,20 @@ def rebuild_movements_for_invoice(invoice):
             continue
 
         unit_cost = safe_cost(getattr(p, "avg_cost", ZERO))
-        rows.append({"product": p, "qty_in": ZERO, "qty_out": qty, "unit_cost": unit_cost, "location": loc})
+        rows.append({
+            "product": p,
+            "qty_in": ZERO,
+            "qty_out": qty,
+            "unit_cost": unit_cost,
+            "location": loc,
+        })
 
     rebuild_inventory_movements(
         "INVOICE",
         invoice.id,
         date=inv_date,
         rows=rows,
+        company=company,
     )
 
 
@@ -319,17 +401,12 @@ def rebuild_movements_for_invoice(invoice):
 def rebuild_movements_for_sales_receipt(receipt):
     """
     Stock OUT for Inventory items on Sales Receipt.
-    Uses receipt.lines.qty and CURRENT product.avg_cost as unit_cost (Average Cost).
-
-    Expected:
-      - receipt.lines related_name exists and each line has: product, qty
-      - receipt has receipt_date OR we fall back to today
-      - receipt has location (text) OR we fall back to default location
+    Uses receipt.lines.qty and CURRENT product.avg_cost as unit_cost.
     """
+    company = getattr(receipt, "company", None)
     loc = resolve_location_from_doc(receipt)
     rcpt_date = getattr(receipt, "receipt_date", None) or timezone.localdate()
 
-    # if receipt_date is datetime, convert to date
     if hasattr(rcpt_date, "date"):
         try:
             rcpt_date = rcpt_date.date()
@@ -347,18 +424,25 @@ def rebuild_movements_for_sales_receipt(receipt):
             continue
 
         unit_cost = safe_cost(getattr(p, "avg_cost", ZERO))
-        rows.append({"product": p, "qty_in": ZERO, "qty_out": qty, "unit_cost": unit_cost, "location": loc})
+        rows.append({
+            "product": p,
+            "qty_in": ZERO,
+            "qty_out": qty,
+            "unit_cost": unit_cost,
+            "location": loc,
+        })
 
     rebuild_inventory_movements(
         "SALES_RECEIPT",
         receipt.id,
         date=rcpt_date,
         rows=rows,
+        company=company,
     )
 
 
 # -----------------------
-# Stock Transfer (OUT from A, IN to B) - DOES NOT TOUCH GL
+# Stock Transfer (OUT from A, IN to B)
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_stock_transfer(transfer):
@@ -366,8 +450,8 @@ def rebuild_movements_for_stock_transfer(transfer):
     Creates 2 movements per line:
       - qty_out at from_location
       - qty_in  at to_location
-    Unit cost uses product.avg_cost (transfer is not a purchase).
     """
+    company = getattr(transfer, "company", None)
     from_loc = transfer.from_location
     to_loc = transfer.to_location
     tdate = transfer.transfer_date or timezone.localdate()
@@ -382,7 +466,6 @@ def rebuild_movements_for_stock_transfer(transfer):
         if qty <= ZERO:
             continue
 
-        # Optional: prevent negative stock at FROM location
         available = qty_on_hand(p, location=from_loc)
         if qty > available:
             raise ValueError(
@@ -392,7 +475,6 @@ def rebuild_movements_for_stock_transfer(transfer):
 
         unit_cost = safe_cost(getattr(p, "avg_cost", ZERO))
 
-        # OUT movement at FROM
         rows.append({
             "product": p,
             "qty_in": ZERO,
@@ -400,8 +482,6 @@ def rebuild_movements_for_stock_transfer(transfer):
             "unit_cost": unit_cost,
             "location": from_loc,
         })
-
-        # IN movement at TO
         rows.append({
             "product": p,
             "qty_in": qty,
@@ -415,20 +495,5 @@ def rebuild_movements_for_stock_transfer(transfer):
         transfer.id,
         date=tdate,
         rows=rows,
+        company=company,
     )
-
-from .models import MainStore, InventoryLocation
-
-def get_main_store() -> MainStore:
-    store = MainStore.objects.filter(is_active=True).first()
-    if not store:
-        store = MainStore.objects.create(name="Main Store", is_active=True)
-    return store
-
-def get_default_location() -> InventoryLocation:
-    store = get_main_store()
-    loc = InventoryLocation.objects.filter(store=store, is_default=True, is_active=True).first()
-    if not loc:
-        loc = InventoryLocation.objects.create(store=store, name="Main Store", is_default=True, is_active=True)
-    InventoryLocation.objects.filter(store=store).exclude(id=loc.id).update(is_default=False)
-    return loc

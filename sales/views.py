@@ -45,7 +45,7 @@ from .services import (
     _payment_prefill_rows, _coerce_decimal, as_aware_datetime
 )
 from accounts.utils import deposit_accounts_qs
-from accounts.middleware import get_current_user, get_current_ip
+
 from .recurring_service import generate_recurring_invoices_for_date
 from inventory.services import rebuild_movements_for_sales_receipt, rebuild_inventory_movements
 
@@ -234,25 +234,6 @@ def _customer_open_balance_amount(company, customer: "Newcustomer") -> Decimal:
 
     open_bal = ar_debit_bal - total_unpaid_invoices
     return open_bal if open_bal > 0 else Decimal("0.00")
-
-
-def apply_audit_fields(obj):
-    """
-    Safely attach audit fields if the model supports them.
-    Does NOT break models that don't have audit columns.
-    """
-    user = get_current_user()
-    ip = get_current_ip()
-
-    if hasattr(obj, "created_by") and not obj.pk:
-        obj.created_by = user
-    if hasattr(obj, "updated_by"):
-        obj.updated_by = user
-
-    if hasattr(obj, "created_ip") and not obj.pk:
-        obj.created_ip = ip
-    if hasattr(obj, "updated_ip"):
-        obj.updated_ip = ip
 
 
 def _safe_name(s: str) -> str:
@@ -1474,7 +1455,6 @@ def add_invoice(request):
         total_due = (subtotal - total_discount) + shipping_fee + total_vat
         invoice.total_vat = total_vat
         invoice.total_due = total_due
-        apply_audit_fields(invoice)
         invoice.save()
 
         # ✅ Tenant-safe ledger posting
@@ -1637,8 +1617,6 @@ def edit_invoice(request, pk: int):
         inv.total_vat = total_vat
         inv.shipping_fee = shipping_fee
         inv.total_due = (subtotal - total_discount + total_vat + shipping_fee).quantize(Decimal("0.01"))
-
-        apply_audit_fields(inv)
         inv.save()
 
         # ⇨ Re-post to General Ledger (tenant-safe)
@@ -2247,7 +2225,6 @@ def receive_payment_view(request):
             amount_received=amount_received,
             unapplied_amount=unapplied,
         )
-        apply_audit_fields(payment)
         payment.save()
 
         if allocations:
@@ -2449,7 +2426,6 @@ def payment_edit(request, pk: int):
         payment.memo = memo
         payment.amount_received = amount_received
         payment.unapplied_amount = unapplied
-        apply_audit_fields(payment)
         payment.save()
 
         # replace allocations
@@ -2851,7 +2827,6 @@ def sales_receipt_new(request):
             amount_paid=amount_paid,
             balance=balance,
         )
-        apply_audit_fields(receipt)
         receipt.save()
 
         products_ids = request.POST.getlist("product[]")
@@ -3006,7 +2981,6 @@ def sales_receipt_edit(request, pk: int):
             receipt.balance = Decimal("0.00")
 
         receipt.total_vat = Decimal("0.00")
-        apply_audit_fields(receipt)
         receipt.save()
 
         # replace lines
@@ -4474,7 +4448,6 @@ def recurring_run_today(request):
     result = generate_recurring_invoices_for_date(
         run_date=timezone.localdate(),
         company=company,
-        apply_audit_fields=apply_audit_fields,
         _post_invoice_to_ledger=_post_invoice_to_ledger,
         as_aware_datetime=as_aware_datetime,
     )

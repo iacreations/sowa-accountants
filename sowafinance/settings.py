@@ -63,7 +63,6 @@ MIDDLEWARE = [
     'tenancy.middleware.CompanyMiddleware', #for client books
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'accounts.middleware.AuditMiddleware',
 ]
 
 ROOT_URLCONF = 'sowafinance.urls'

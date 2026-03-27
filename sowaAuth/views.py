@@ -16,7 +16,6 @@ User = get_user_model()
 
 STAFF_LOGIN_OTP_TTL_MINUTES = 5
 STAFF_LOGIN_OTP_RESEND_COOLDOWN_SECONDS = 45
-SOWA_COMPANY_ID = 12
 
 
 def sowa_staff_admin_required(view_func):
@@ -24,7 +23,7 @@ def sowa_staff_admin_required(view_func):
         if not request.user.is_authenticated:
             return redirect("sowaAuth:login")
 
-        if not (request.user.is_superuser or request.user.can_manage_staff):
+        if not (request.user.is_superuser or getattr(request.user, "can_manage_staff", False)):
             messages.error(request, "Not allowed.")
             return redirect("sowaf:home")
 
@@ -76,7 +75,7 @@ def accept_staff_invite(request, token):
 
         has_error = False
 
-        if email != invite.email.lower():
+        if email != (invite.email or "").lower():
             has_error = True
             messages.error(request, "This invite is only valid for the invited email.")
 
@@ -84,14 +83,24 @@ def accept_staff_invite(request, token):
             has_error = True
             messages.error(request, "Name is required.")
 
-        existing_other_username = User.objects.filter(username__iexact=username).exclude(email__iexact=email).exists()
+        existing_other_username = (
+            User.objects
+            .filter(username__iexact=username)
+            .exclude(email__iexact=email)
+            .exists()
+        )
         if existing_other_username:
             has_error = True
             messages.error(request, "Username already exists.")
 
         existing_other_contact = False
         if contact:
-            existing_other_contact = User.objects.filter(contact__iexact=contact).exclude(email__iexact=email).exists()
+            existing_other_contact = (
+                User.objects
+                .filter(contact__iexact=contact)
+                .exclude(email__iexact=email)
+                .exists()
+            )
         if existing_other_contact:
             has_error = True
             messages.error(request, "Phone number already exists.")
@@ -125,7 +134,7 @@ def accept_staff_invite(request, token):
             user = User.objects.create_user(
                 username=username,
                 email=email,
-                password=password
+                password=password,
             )
             user.contact = contact if contact else None
             user.is_staff = True
@@ -162,6 +171,9 @@ def login_user(request):
         messages.error(request, "Invalid credentials")
         return redirect("sowaAuth:login")
 
+    # -------------------------------------------------
+    # STAFF / SOWA LOGIN FLOW => OTP FIRST
+    # -------------------------------------------------
     if user.is_staff or user.is_superuser:
         email = (user.email or "").strip().lower()
         if not email:
@@ -206,20 +218,29 @@ def login_user(request):
         messages.success(request, f"OTP sent to {email}.")
         return redirect("sowaAuth:staff_otp_verify")
 
+    # -------------------------------------------------
+    # CLIENT LOGIN FLOW => DIRECT LOGIN
+    # -------------------------------------------------
     login(request, user)
     messages.success(request, "Login successful")
 
     memberships = CompanyMember.objects.filter(
-        user=user, is_active=True, company__is_active=True
+        user=user,
+        is_active=True,
+        company__is_active=True
     ).select_related("company")
 
     request.session["workspace_mode"] = "client"
 
     if memberships.count() == 1:
-        request.session["company_id"] = memberships.first().company_id
+        request.session["active_company_id"] = memberships.first().company_id
+        request.session.modified = True
         return redirect("sowaf:home")
 
+    request.session["active_company_id"] = None
+    request.session.modified = True
     return redirect("tenancy:choose_company")
+
 
 @require_http_methods(["GET", "POST"])
 def staff_otp_verify(request):
@@ -266,17 +287,22 @@ def staff_otp_verify(request):
         otp.save(update_fields=["is_used"])
 
         login(request, user, backend="sowaAuth.backends.UsernameEmailPhoneBackend")
-        request.session["company_id"] = SOWA_COMPANY_ID
+
+        # IMPORTANT:
+        # Sowa workspace should NOT set a client company.
+        request.session["active_company_id"] = None
         request.session["workspace_mode"] = "sowa"
 
         request.session.pop("staff_login_user_id", None)
         request.session.pop("staff_login_otp_id", None)
         request.session.pop("staff_login_email", None)
+        request.session.modified = True
 
         messages.success(request, "Login successful.")
         return redirect("sowaf:home")
 
     return render(request, "registration/staff_otp_verify.html", {"email": email})
+
 
 @login_required
 @sowa_staff_admin_required
@@ -361,5 +387,11 @@ def staff_toggle_manager(request, user_id):
 
 
 def logout_user(request):
+    request.session.pop("active_company_id", None)
+    request.session.pop("workspace_mode", None)
+    request.session.pop("staff_login_user_id", None)
+    request.session.pop("staff_login_otp_id", None)
+    request.session.pop("staff_login_email", None)
+
     logout(request)
     return redirect("sowaAuth:login")

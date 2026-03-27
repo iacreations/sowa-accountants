@@ -9,6 +9,11 @@ from tenancy.base import TenantModel
 
 
 class Account(TenantModel):
+    def save(self, *args, **kwargs):
+        import logging
+        logger = logging.getLogger("accounts.models")
+        logger.debug(f"[Account.save] Saving account: {self.account_name}, company: {self.company}")
+        super().save(*args, **kwargs)
     # Store CODES internally, show labels in UI
     ACCOUNT_TYPES = [
         ("NON_CURRENT_ASSET", "Non current assets"),
@@ -182,7 +187,6 @@ class Account(TenantModel):
             return None
         return self.ACCOUNT_LEVEL2_MAP.get(self.account_type)
 
-
 class ColumnPreference(TenantModel):
     """
     IMPORTANT: Must be tenant-scoped so the same user can have different
@@ -327,6 +331,13 @@ class AuditTrail(models.Model):
         ("LOGOUT", "Logout"),
     )
 
+    company = models.ForeignKey(
+        "tenancy.Company",
+        on_delete=models.CASCADE,
+        null=True, blank=True,
+        related_name="audit_trails",
+        help_text="Company (tenant) for this audit log entry. Null for system/global events."
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True, blank=True,

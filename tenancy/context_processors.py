@@ -1,3 +1,4 @@
+# context_processors.py
 def current_company(request):
     user = getattr(request, "user", None)
 

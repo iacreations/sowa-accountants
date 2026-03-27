@@ -1707,7 +1707,7 @@ def payments_to_vendors_report(request):
 
     dec_out = DecimalField(max_digits=18, decimal_places=2)
 
-    qs = Cheque.objects.for_company(company).select_related("payee_supplier").all().order_by("-payment_date", "-id")
+    qs = Cheque.objects.for_company(company, user=request.user).select_related("payee_supplier").all().order_by("-payment_date", "-id")
 
     if date_from:
         qs = qs.filter(payment_date__gte=date_from)
@@ -1797,7 +1797,7 @@ def expenses(request):
 
     # ---------------- Expenses ----------------
     exp_qs = (
-        Expense.objects.for_company(company)
+        Expense.objects.for_company(company, user=request.user)
         .select_related("payee_supplier")
         .prefetch_related("cat_lines__category", "item_lines__product")
         .order_by("-payment_date", "-id")
@@ -1808,7 +1808,7 @@ def expenses(request):
 
     # ---------------- Bills ----------------
     bill_qs = (
-        Bill.objects.for_company(company)
+        Bill.objects.for_company(company, user=request.user)
         .select_related("supplier")
         .prefetch_related("category_lines__category", "item_lines__product")
         .order_by("-bill_date", "-id")
@@ -1816,7 +1816,7 @@ def expenses(request):
 
     # ---------------- Cheques ----------------
     cheque_qs = (
-        Cheque.objects.for_company(company)
+        Cheque.objects.for_company(company, user=request.user)
         .select_related("payee_supplier", "bank_account")
         .prefetch_related("category_lines__category", "item_lines__product")
         .order_by("-payment_date", "-id")
@@ -1824,7 +1824,7 @@ def expenses(request):
 
     # ---------------- Purchase Orders ----------------
     po_qs = (
-        PurchaseOrder.objects.for_company(company)
+        PurchaseOrder.objects.for_company(company, user=request.user)
         .select_related("vendor")
         .prefetch_related("lines__product")
         .order_by("-po_date", "-id")
@@ -1832,7 +1832,7 @@ def expenses(request):
 
     # ---------------- Supplier Credits ----------------
     supplier_credit_qs = (
-        SupplierCredit.objects.for_company(company)
+        SupplierCredit.objects.for_company(company, user=request.user)
         .select_related("supplier")
         .prefetch_related("lines__category")
         .order_by("-credit_date", "-id")
@@ -1840,14 +1840,14 @@ def expenses(request):
 
     # ---------------- Pay Down Credit ----------------
     paydown_qs = (
-        PayDownCredit.objects.for_company(company)
+        PayDownCredit.objects.for_company(company, user=request.user)
         .select_related("credit_card", "bank_account", "payee_supplier")
         .order_by("-payment_date", "-id")
     )
 
     # ---------------- Credit Card Credits ----------------
     cc_credit_qs = (
-        CreditCardCredit.objects.for_company(company)
+        CreditCardCredit.objects.for_company(company, user=request.user)
         .select_related("credit_card", "payee_supplier")
         .prefetch_related("category_lines__category", "item_lines__product")
         .order_by("-credit_date", "-id")

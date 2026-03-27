@@ -1,49 +1,53 @@
 import random
-from . models import Expense
 from decimal import Decimal
-from django.db.models import Sum
-from django.http import JsonResponse
 
-from django.db.models import Q
-from .models import Bill, ChequeBillLine, Cheque
-from sowaf.models import Newsupplier
+from django.db.models import Sum, Q
+
+from .models import Expense, Bill, ChequeBillLine, Cheque
+
+
 def _dec(x, default="0.00") -> Decimal:
     try:
         return Decimal(str(x if x not in (None, "") else default))
     except Exception:
         return Decimal(default)
-def generate_unique_ref_no() -> str:
-    """Return an 8-digit, zero-padded, numeric reference that isn't used yet."""
-    for _ in range(10):  # a few attempts in case of a rare collision
+
+
+def generate_unique_ref_no(company) -> str:
+    """
+    Return an 8-digit, zero-padded numeric reference unique per company for Expenses.
+    """
+    for _ in range(20):
         ref = f"{random.randrange(10**8):08d}"
-        if not Expense.objects.filter(ref_no=ref).exists():
+        if not Expense.objects.for_company(company).filter(ref_no=ref).exists():
             return ref
-    # If we somehow failed 10 times, raise; caller can handle or retry
-    raise RuntimeError("Could not generate a unique reference number.")
+    raise RuntimeError("Could not generate a unique expense reference number.")
 
-def generate_unique_bill_no() -> str:
-    """Return an 8-digit, zero-padded, numeric reference that isn't used yet."""
-    for _ in range(10):  # a few attempts in case of a rare collision
+
+def generate_unique_bill_no(company) -> str:
+    """
+    Return an 8-digit, zero-padded numeric bill number unique per company for Bills.
+    """
+    for _ in range(20):
         ref = f"{random.randrange(10**8):08d}"
-        if not Expense.objects.filter(ref_no=ref).exists():
+        if not Bill.objects.for_company(company).filter(bill_no=ref).exists():
             return ref
-    # If we somehow failed 10 times, raise; caller can handle or retry
-    raise RuntimeError("Could not generate a unique reference number.")
+    raise RuntimeError("Could not generate a unique bill number.")
 
-# bills helpers
 
-def _bill_balance(bill: Bill) -> Decimal:
+def _bill_balance(bill: Bill, exclude_cheque_id=None) -> Decimal:
     """
     Bill balance = total_amount - sum(applied via cheques).
-    (You don't store balance on the Bill model.)
+    Tenant-safe because bill already belongs to one company.
+    Optionally exclude one cheque during edit calculations.
     """
     total = _dec(bill.total_amount)
-    applied = (
-        ChequeBillLine.objects
-        .filter(bill=bill)
-        .aggregate(s=Sum("amount_applied"))["s"]
-        or Decimal("0.00")
-    )
+
+    qs = ChequeBillLine.objects.filter(bill=bill)
+    if exclude_cheque_id:
+        qs = qs.exclude(cheque_id=exclude_cheque_id)
+
+    applied = qs.aggregate(s=Sum("amount_applied"))["s"] or Decimal("0.00")
     bal = total - _dec(applied)
     return bal if bal > 0 else Decimal("0.00")
 
@@ -65,23 +69,33 @@ def bankish_q():
 def _save_cheque_bill_allocations(request, cheque: Cheque):
     """
     Reads posted fields: amount_paid_<bill_id>
-    Creates ChequeBillLine rows for amounts > 0
+    Creates ChequeBillLine rows for amounts > 0.
     Replaces existing allocations for this cheque (safe for edits).
+
+    Tenant-safe:
+    - only bills from cheque.company
+    - only bills for cheque.payee_supplier
     """
+    company = getattr(cheque, "company", None)
+
     # wipe old allocations for this cheque (edit-safe)
     ChequeBillLine.objects.filter(cheque=cheque).delete()
 
-    if not cheque.payee_supplier_id:
+    if not cheque.payee_supplier_id or not company:
         return
 
     supplier_id = cheque.payee_supplier_id
 
-    # compute current balances per bill (excluding this cheque since we deleted its allocations already)
-    bills = Bill.objects.filter(supplier_id=supplier_id)
+    # Only this company's bills for this supplier
+    bills = Bill.objects.for_company(company).filter(supplier_id=supplier_id)
 
+    # Current applied totals after deleting this cheque's old allocations
     applied_map = dict(
         ChequeBillLine.objects
-        .filter(bill__supplier_id=supplier_id)
+        .filter(
+            bill__company=company,
+            bill__supplier_id=supplier_id,
+        )
         .values("bill_id")
         .annotate(s=Sum("amount_applied"))
         .values_list("bill_id", "s")
@@ -90,18 +104,19 @@ def _save_cheque_bill_allocations(request, cheque: Cheque):
     for b in bills:
         field = f"amount_paid_{b.id}"
         raw = request.POST.get(field)
-        if raw is None or raw == "":
+
+        if raw in (None, ""):
             continue
 
-        amt = _dec(raw, "0")
+        amt = _dec(raw, "0.00")
         if amt <= 0:
             continue
 
-        total = Decimal(str(b.total_amount or "0"))
-        already_applied = Decimal(str(applied_map.get(b.id) or "0"))
+        total = _dec(b.total_amount)
+        already_applied = _dec(applied_map.get(b.id), "0.00")
         balance = total - already_applied
 
-        # clamp to balance to prevent overpaying
+        # clamp to outstanding balance
         if amt > balance:
             amt = balance
 
@@ -111,7 +126,5 @@ def _save_cheque_bill_allocations(request, cheque: Cheque):
         ChequeBillLine.objects.create(
             cheque=cheque,
             bill=b,
-            amount_applied=amt
+            amount_applied=amt,
         )
-
-

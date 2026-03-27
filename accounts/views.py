@@ -143,7 +143,7 @@ def accounts(request):
     company = request.company
 
     # tenant base qs
-    base_qs = Account.objects.for_company(company)
+    base_qs = Account.objects.for_company(company, user=request.user)
 
     # status filter
     if status == "inactive":
@@ -1944,7 +1944,7 @@ def report_trial_balance(request):
     # NORMAL PAGE RENDER
     # =========================================================
     context = {
-        "company_name": company.name,
+        "company_name": getattr(company, "name", "No Company Selected"),
         "reporting_currency": getattr(company, "currency", "UGX"),
         "rows": rows,
         "total_debit": total_debit,
@@ -1952,6 +1952,9 @@ def report_trial_balance(request):
         "dfrom": dfrom,
         "dto": dto,
     }
+    if company is None:
+        from django.contrib import messages
+        messages.error(request, "No company is selected or available. Please select a company to view reports.")
     return render(request, "trial_balance.html", context)
 
 
@@ -2420,7 +2423,7 @@ def report_pnl(request):
 
     # ---------- 10. Normal HTML render ----------
     context = {
-        "company_name": company.name,
+        "company_name": getattr(company, "name", "No Company Selected"),
         "reporting_currency": getattr(company, "currency", "UGX"),
         "basis": basis,
 
@@ -2435,6 +2438,9 @@ def report_pnl(request):
         "dfrom": date_from,
         "dto": date_to,
     }
+    if company is None:
+        from django.contrib import messages
+        messages.error(request, "No company is selected or available. Please select a company to view reports.")
 
     return render(request, "pnl.html", context)
 # balance sheet
@@ -2710,8 +2716,11 @@ def report_balance_sheet(request):
     # =========================================================
     export = (request.GET.get("export") or "").strip().lower()
     reporting_currency = getattr(company, "currency", "UGX")
-    company_name = company.name
+    company_name = getattr(company, "name", "No Company Selected")
     filename_base = f"balance_sheet_{asof.strftime('%Y%m%d')}_{method}"
+    if company is None:
+        from django.contrib import messages
+        messages.error(request, "No company is selected or available. Please select a company to view reports.")
 
     def money(x: Decimal) -> str:
         try:
@@ -3279,8 +3288,11 @@ def report_cashflow(request):
     net_change = (cash_from_ops + cash_from_investing + cash_from_financing).quantize(Decimal("0.01"))
     recon_ok = (cash_start + net_change).quantize(Decimal("0.01")) == cash_end.quantize(Decimal("0.01"))
 
-    company_name = company.name
+    company_name = getattr(company, "name", "No Company Selected")
     reporting_currency = getattr(company, "currency", "UGX")
+    if company is None:
+        from django.contrib import messages
+        messages.error(request, "No company is selected or available. Please select a company to view reports.")
 
     # =========================================================
     # EXPORT ROWS + BOLD ROWS LIST

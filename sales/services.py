@@ -1,17 +1,19 @@
 # sales/services.py
 import logging
-from decimal import Decimal, InvalidOperation
-from django.db import transaction
-from django.db.models import Sum, Value, DecimalField, F
-from datetime import datetime, date
-from django.db.models.functions import Coalesce, Cast
 import random
-from django.db.models import Q
+from decimal import Decimal, InvalidOperation
+from datetime import datetime, date, time
+
+from django.db import transaction
+from django.db.models import Sum, Value, DecimalField, F, Q
+from django.db.models.functions import Coalesce, Cast
+from django.utils import timezone
+
 from accounts.models import Account
 from .models import Payment
-from datetime import datetime, date, time
-from django.utils import timezone
+
 logger = logging.getLogger(__name__)
+
 
 def as_aware_datetime(value):
     """
@@ -31,54 +33,89 @@ def as_aware_datetime(value):
         return timezone.make_aware(value, timezone.get_current_timezone())
     return value
 
-def ensure_default_accounts():
+
+def ensure_default_accounts(company=None):
     """
     Ensure minimal accounts exist. Creates them if missing.
     Adjust account_type codes if your Account model uses different choice keys.
+
+    TENANT SAFE when company is provided.
     """
     defaults = [
-        ("Accounts Receivable", "AR"),
-        ("Sales Income", "INCOME"),
+        ("Accounts Receivable", "CURRENT_ASSET"),
+        ("Sales Income", "OPERATING_INCOME"),
     ]
 
     created = []
     for name, acct_type in defaults:
-        acct, was_created = Account.objects.get_or_create(
-            account_name=name,
-            defaults={"account_type": acct_type},
-        )
-        if was_created:
+        qs = Account.objects.all()
+        if company is not None and hasattr(Account.objects, "for_company"):
+            qs = Account.objects.for_company(company)
+        elif company is not None and hasattr(Account, "company_id"):
+            qs = qs.filter(company=company)
+
+        acct = qs.filter(account_name=name).first()
+        if not acct:
+            create_kwargs = {
+                "account_name": name,
+                "account_type": acct_type,
+                "is_active": True,
+                "opening_balance": Decimal("0.00"),
+                "as_of": timezone.localdate(),
+            }
+            if company is not None and hasattr(Account, "company_id"):
+                create_kwargs["company"] = company
+
+            acct = Account.objects.create(**create_kwargs)
             created.append(acct)
             logger.info("Created default account: %s", acct.account_name)
             print("Created default account:", acct.account_name)
+
     return created
 
 
-
-def get_ar_account():
+def get_ar_account(company=None):
     """
     Locate the control Accounts Receivable account.
     Adjust logic if your naming/type codes differ.
+
+    TENANT SAFE when company is provided.
     """
-    ar = Account.objects.filter(account_type__iexact="AR").order_by("id").first()
-    if not ar:
-        ar = Account.objects.filter(account_name__iexact="Accounts Receivable").order_by("id").first()
+    qs = Account.objects.all()
+    if company is not None and hasattr(Account.objects, "for_company"):
+        qs = Account.objects.for_company(company)
+    elif company is not None and hasattr(Account, "company_id"):
+        qs = qs.filter(company=company)
+
+    ar = (
+        qs.filter(detail_type__iexact="Accounts Receivable (A/R)", is_active=True).order_by("id").first()
+        or qs.filter(account_name__iexact="Accounts Receivable", is_active=True).order_by("id").first()
+        or qs.filter(account_name__icontains="receivable", is_active=True).order_by("id").first()
+    )
     return ar
 
 
-
-def generate_unique_ref_no() -> str:
-    """Return an 8-digit, zero-padded, numeric reference that isn't used yet."""
+def generate_unique_ref_no(company=None) -> str:
+    """
+    Return an 8-digit, zero-padded, numeric reference that isn't used yet.
+    TENANT SAFE when company is provided.
+    """
     for _ in range(10):  # a few attempts in case of a rare collision
         ref = f"{random.randrange(10**8):08d}"
-        if not Payment.objects.filter(reference_no=ref).exists():
+
+        qs = Payment.objects.all()
+        if company is not None and hasattr(Payment.objects, "for_company"):
+            qs = Payment.objects.for_company(company)
+        elif company is not None and hasattr(Payment, "company_id"):
+            qs = qs.filter(company=company)
+
+        if not qs.filter(reference_no=ref).exists():
             return ref
-    # If we somehow failed 10 times, raise; caller can handle or retry
+
     raise RuntimeError("Could not generate a unique reference number.")
 
 
 # date prefixes
-
 def parse_date_flexible(s):
     if not s:
         return None
@@ -89,14 +126,21 @@ def parse_date_flexible(s):
             continue
     return None
 
+
 TERMS_DAYS = {
-    "due_on_receipt": 0, "one_day": 1, "two_days": 2, "net_7": 7,
-    "net_15": 15, "net_30": 30, "net_60": 60,
-    "credit_limit": 27, "credit_allowance": 29,
+    "due_on_receipt": 0,
+    "one_day": 1,
+    "two_days": 2,
+    "net_7": 7,
+    "net_15": 15,
+    "net_30": 30,
+    "net_60": 60,
+    "credit_limit": 27,
+    "credit_allowance": 29,
 }
 
-# util for invoice status
 
+# util for invoice status
 def _as_date(d):
     """
     Normalize a value that could be:
@@ -171,7 +215,11 @@ def _payment_prefill_rows(payment):
         "remaining_total_this_payment": Decimal,
         "outstanding_total_now": Decimal,
       }
+
+    TENANT SAFE using payment.company.
     """
+    company = getattr(payment, "company", None)
+
     qs = payment.applied_invoices.select_related("invoice").order_by("id")
 
     lines = []
@@ -181,12 +229,16 @@ def _payment_prefill_rows(payment):
 
     for pi in qs:
         inv = pi.invoice
-        total_due = Decimal(inv.total_due or 0)
-        amount_applied = Decimal(pi.amount_paid or 0)
+        total_due = Decimal(str(getattr(inv, "total_due", 0) or 0))
+        amount_applied = Decimal(str(getattr(pi, "amount_paid", 0) or 0))
 
         remaining_this_payment = Decimal("0.00")
 
-        total_paid_now = inv.payments_applied.aggregate(
+        total_paid_qs = inv.payments_applied.all()
+        if company is not None and hasattr(inv, "company_id"):
+            total_paid_qs = total_paid_qs.filter(invoice__company=company)
+
+        total_paid_now = total_paid_qs.aggregate(
             s=Coalesce(Sum("amount_paid"), Value(Decimal("0.00")))
         )["s"] or Decimal("0.00")
 
@@ -216,20 +268,32 @@ def _payment_prefill_rows(payment):
 
 
 # working on the sales receipt
-
-def _get_sales_income_account():
+def _get_sales_income_account(company=None):
     """
-    Try to find a 'Sales Income' account; fallback to the first INCOME account.
+    Try to find a 'Sales Income' account; fallback to the first income account.
+    TENANT SAFE when company is provided.
     """
-    acc = Account.objects.filter(account_name__iexact="Sales Income").first()
-    if acc:
-        return acc
-    return Account.objects.filter(Q(account_type__iexact="INCOME") | Q(account_type__icontains="income")).first()
+    qs = Account.objects.all()
+    if company is not None and hasattr(Account.objects, "for_company"):
+        qs = Account.objects.for_company(company)
+    elif company is not None and hasattr(Account, "company_id"):
+        qs = qs.filter(company=company)
 
+    acc = (
+        qs.filter(account_name__iexact="Sales Income", is_active=True).first()
+        or qs.filter(account_name__icontains="Sales", is_active=True).first()
+        or qs.filter(account_name__icontains="Revenue", is_active=True).first()
+        or qs.filter(
+            Q(account_type="OPERATING_INCOME") |
+            Q(account_type="INVESTING_INCOME"),
+            is_active=True
+        ).first()
+    )
+    return acc
 
 
 def _coerce_decimal(x, default="0"):
     try:
-        return Decimal(x or default)
+        return Decimal(str(x or default))
     except Exception:
         return Decimal(default)

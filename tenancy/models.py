@@ -5,7 +5,6 @@ from django.utils import timezone
 from django.contrib.auth.hashers import make_password, check_password
 import secrets
 
-
 class Company(models.Model):
     name = models.CharField(max_length=255,null=True,blank=True)
     company_kind = models.CharField(

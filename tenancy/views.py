@@ -1,6 +1,6 @@
+# tenancy/views.py
 from decimal import Decimal, InvalidOperation
 from functools import wraps
-
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, login
@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import Company, CompanyMember, Subscription, EmailOTP, CompanyInvite
-from .permissions import module_required, role_required, get_membership
+from .permissions import module_required, get_membership
 
 User = get_user_model()
 
@@ -163,12 +163,12 @@ def _get_default_client_company_for_user(user):
 @login_required
 def choose_company(request):
     """
-    Silent mode:
-    - Staff users remain in SOWA mode unless they switch into a client.
-    - Client users auto-enter their assigned company.
+    Staff users go to SOWA workspace by default.
+    Client users are assigned a default active company if needed.
     """
     if request.user.is_staff or request.user.is_superuser:
         request.session["active_company_id"] = None
+        request.session["workspace_mode"] = "sowa"
         request.session.modified = True
         return redirect("sowaf:home")
 
@@ -177,6 +177,9 @@ def choose_company(request):
         messages.error(request, "You are not assigned to any company yet.")
         return redirect("sowaAuth:login")
 
+    request.session["active_company_id"] = company.id
+    request.session["workspace_mode"] = "client"
+    request.session.modified = True
     return redirect("sowaf:home")
 
 
@@ -186,6 +189,7 @@ def switch_company(request, company_id):
 
     if request.user.is_staff or request.user.is_superuser:
         request.session["active_company_id"] = company.id
+        request.session["workspace_mode"] = "client"
         request.session.modified = True
         messages.success(request, f"Switched to {company.name}")
         return redirect("sowaf:home")
@@ -199,6 +203,10 @@ def switch_company(request, company_id):
     if not is_member:
         messages.error(request, "You are not allowed to access that company.")
         return redirect("sowaf:home")
+
+    request.session["active_company_id"] = company.id
+    request.session["workspace_mode"] = "client"
+    request.session.modified = True
 
     messages.success(request, f"Switched to {company.name}")
     return redirect("sowaf:home")
@@ -214,6 +222,7 @@ def exit_company(request):
         return redirect("sowaf:home")
 
     request.session["active_company_id"] = None
+    request.session["workspace_mode"] = "sowa"
     request.session.modified = True
 
     messages.success(request, "Returned to Sowa workspace.")
@@ -287,28 +296,21 @@ def company_create(request):
             country=company_country,
             business_reg_no=business_reg_no,
             business_start_date=business_start_date or None,
-
             contact_name=contact_name,
             contact_position=contact_position,
             contact_phone=contact_phone,
             contact_email=contact_email,
-
             tax_id=tax_id,
             credit_limit=credit_limit,
             payment_terms=payment_terms,
-
             currency="UGX",
-
             industry=industry,
             notes=notes,
-
             billing_cycle=billing_cycle,
             bill_to=bill_to,
             primary_admin=primary_admin,
-
             payment_method=None,
             payment_reference=None,
-
             created_by=request.user,
             is_active=True,
         )
@@ -348,11 +350,10 @@ def company_create(request):
             owner_user.set_unusable_password()
             owner_user.save()
 
-        CompanyMember.objects.create(
+        CompanyMember.objects.get_or_create(
             company=company,
             user=owner_user,
-            role="OWNER",
-            is_active=True,
+            defaults={"role": "OWNER", "is_active": True},
         )
 
         invite = CompanyInvite.create(company, company_email, role="OWNER", hours=24, created_by=request.user)
@@ -369,31 +370,18 @@ def company_create(request):
 
 @require_http_methods(["GET", "POST"])
 def client_invite(request, token):
-    """
-    Invite link entry point.
-    - DO NOT mark used yet.
-    - Store token in session.
-    - Redirect to OTP login (prefill email).
-    """
     invite = CompanyInvite.objects.filter(token=token).select_related("company").first()
     if not invite or not invite.is_valid():
         messages.error(request, "Invite link invalid or expired.")
         return redirect("tenancy:client_otp_login")
 
     request.session["invite_token"] = invite.token
-
     url = reverse("tenancy:client_otp_login") + f"?email={invite.email}"
     return redirect(url)
 
 
 @require_http_methods(["GET", "POST"])
 def client_otp_login(request):
-    """
-    OTP request screen.
-    - Allows login by email IF:
-        a) they are already a member of any active company OR
-        b) they have a valid invite_token session
-    """
     if request.method == "POST":
         email = (request.POST.get("email") or "").strip().lower()
         if not email:
@@ -472,12 +460,6 @@ def client_otp_login(request):
 
 @require_http_methods(["GET", "POST"])
 def client_otp_verify(request):
-    """
-    OTP verify screen.
-    After success:
-      - if invite_token exists -> accept invite
-      - else -> normal login for existing member
-    """
     otp_id = request.session.get("otp_login_id")
     email = request.session.get("otp_login_email")
 
@@ -532,6 +514,9 @@ def client_otp_verify(request):
 
                 login(request, user, backend="django.contrib.auth.backends.ModelBackend")
 
+                request.session["active_company_id"] = invite.company.id
+                request.session["workspace_mode"] = "client"
+
                 request.session.pop("otp_login_id", None)
                 request.session.pop("otp_login_email", None)
                 request.session.pop("invite_token", None)
@@ -555,6 +540,10 @@ def client_otp_verify(request):
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
 
+        company = _get_default_client_company_for_user(user)
+        request.session["active_company_id"] = company.id if company else None
+        request.session["workspace_mode"] = "client"
+
         request.session.pop("otp_login_id", None)
         request.session.pop("otp_login_email", None)
 
@@ -567,9 +556,6 @@ def client_otp_verify(request):
 @login_required
 @module_required("settings")
 def client_settings_users(request):
-    """
-    Owner/Manager sees company users, invite new, update roles, deactivate.
-    """
     company = getattr(request, "company", None)
     if not company:
         messages.error(request, "Select a company first.")
