@@ -118,6 +118,14 @@
 
 <div class="action">
   <h1 style="color: #39B54B;">REPORTS</h1>
+  <div class="rep-sub" style="color:#6b7280; font-size:13px; margin-top:-4px;">
+    Company:
+    {% if current_company %}
+      {% if current_company.company_kind == "SOWA" %}Sowa Accountants{% else %}{{ current_company.name }}{% endif %}
+    {% else %}
+      No Company Selected
+    {% endif %}
+  </div>
   <div class="search_bar">
     <input type="text" placeholder="Search Reports" />
   </div>

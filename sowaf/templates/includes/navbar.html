@@ -248,7 +248,7 @@
 
       <div class="workspace-wrap">
         {% if current_company %}
-          <div class="company-pill" title="{{ current_company.name }}">
+          <div class="company-pill" title="{% if in_sowa_workspace or current_company.company_kind == 'SOWA' %}Sowa Accountants{% else %}{{ current_company.name }}{% endif %}">
             <div class="company-pill-logo">
               {% if current_company.logo %}
                 <img src="{{ current_company.logo.url }}" alt="{{ current_company.name }}">
@@ -257,8 +257,12 @@
               {% endif %}
             </div>
             <div class="company-pill-text">
-              <div class="company-pill-name">{{ current_company.name }}</div>
-              <div class="company-pill-sub">{{ current_company.email|default:"No email" }}</div>
+              <div class="company-pill-name">{% if in_sowa_workspace or current_company.company_kind == 'SOWA' %}Sowa Accountants{% else %}{{ current_company.name }}{% endif %}</div>
+              {% if in_sowa_workspace %}
+                <div class="company-pill-sub">{{ request.user.email|default:"No user email" }}</div>
+              {% else %}
+                <div class="company-pill-sub">{{ current_company.email|default:"No email" }}</div>
+              {% endif %}
             </div>
           </div>
 
@@ -269,13 +273,13 @@
           {% endif %}
 
         {% elif in_sowa_workspace %}
-          <div class="company-pill" title="Sowa Workspace">
+          <div class="company-pill" title="Sowa Accountants">
             <div class="company-pill-logo">
               <i class='bx bx-briefcase' style="font-size:18px; color:#39B54B;"></i>
             </div>
             <div class="company-pill-text">
-              <div class="company-pill-name">Sowa Workspace</div>
-              <div class="company-pill-sub">Internal staff space</div>
+              <div class="company-pill-name">Sowa Accountants</div>
+              <div class="company-pill-sub">{{ request.user.email|default:"No user email" }}</div>
             </div>
           </div>
         {% endif %}
@@ -361,11 +365,15 @@
             <div class="settings-center-col-title">Your company</div>
 
             {% if current_company %}
-              <div style="font-size:14px; font-weight:700;">{{ current_company.name }}</div>
-              <div style="font-size:12px; color:#6b7280;">{{ current_company.email|default:"—" }}</div>
+              <div style="font-size:14px; font-weight:700;">{% if in_sowa_workspace or current_company.company_kind == 'SOWA' %}Sowa Accountants{% else %}{{ current_company.name }}{% endif %}</div>
+              {% if in_sowa_workspace %}
+                <div style="font-size:12px; color:#6b7280;">{{ request.user.email|default:"—" }}</div>
+              {% else %}
+                <div style="font-size:12px; color:#6b7280;">{{ current_company.email|default:"—" }}</div>
+              {% endif %}
             {% elif in_sowa_workspace %}
-              <div style="font-size:14px; font-weight:700;">Sowa Workspace</div>
-              <div style="font-size:12px; color:#6b7280;">Internal staff space</div>
+              <div style="font-size:14px; font-weight:700;">Sowa Accountants</div>
+              <div style="font-size:12px; color:#6b7280;">{{ request.user.email|default:"—" }}</div>
             {% else %}
               <div style="font-size:12px; color:#6b7280;">No company selected</div>
             {% endif %}

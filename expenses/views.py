@@ -272,6 +272,25 @@ def _save_cheque_open_balance(request, cheque: "Cheque"):
     )
 
 
+def _assert_balanced_journal_entry(entry: JournalEntry, source_label: str = ""):
+    """Guarantee posted entries are balanced before financial reports consume them."""
+    totals = (
+        JournalLine.objects
+        .filter(entry=entry)
+        .aggregate(
+            d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+    )
+    debit_total = Decimal(str(totals.get("d") or "0.00"))
+    credit_total = Decimal(str(totals.get("c") or "0.00"))
+    if abs(debit_total - credit_total) > Decimal("0.01"):
+        raise ValueError(
+            f"Unbalanced journal entry for {source_label or 'transaction'} "
+            f"(entry={entry.id}): debit={debit_total}, credit={credit_total}"
+        )
+
+
 # posting to the chart of accounts
 
 def _post_supplier_refund_to_ledger(refund: SupplierRefund):
@@ -336,6 +355,8 @@ def _post_supplier_refund_to_ledger(refund: SupplierRefund):
         supplier=refund.supplier,
         customer=None,
     )
+
+    _assert_balanced_journal_entry(entry, "supplier_refund")
 
 
 def _post_expense_to_ledger(expense: Expense):
@@ -442,8 +463,15 @@ def _post_expense_to_ledger(expense: Expense):
             credit=Decimal("0.00"),
         )
 
+    debit_total = sum((amt for amt in debits_by_account.values()), Decimal("0.00"))
+    if debit_total <= 0:
+        return
+
     # 4) Credit payment account (cash / bank)
-    if expense.payment_account and total > 0:
+    if not expense.payment_account:
+        raise ValueError("Expense payment account is required for GL posting.")
+
+    if expense.payment_account and debit_total > 0:
         if getattr(expense.payment_account, "company_id", None) != company_id:
             raise ValueError("Expense payment account belongs to another company.")
 
@@ -451,8 +479,10 @@ def _post_expense_to_ledger(expense: Expense):
             entry=entry,
             account=expense.payment_account,
             debit=Decimal("0.00"),
-            credit=total,
+            credit=debit_total,
         )
+
+    _assert_balanced_journal_entry(entry, "expense")
 
 
 # post bill to ledger
@@ -678,6 +708,8 @@ def _post_bill_to_ledger(bill: "Bill"):
         supplier=bill.supplier,
     )
 
+    _assert_balanced_journal_entry(entry, "bill")
+
 
 # posting cheque to ledger
 # ============================
@@ -837,6 +869,8 @@ def _post_cheque_to_ledger(cheq: "Cheque"):
         credit=total_bank_credit,
         supplier=supplier_ref,
     )
+
+    _assert_balanced_journal_entry(entry, "cheque")
 
 
 # ageing reports

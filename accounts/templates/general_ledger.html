@@ -196,9 +196,9 @@
     </div>
 
     <div class="gl-actions">
-      <a href="?view=summary{% if account_id %}&account_id={{ account_id }}&include_children=1{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Summary View</a>
+      <a href="?view=summary{% if account_id %}&account_id={{ account_id }}&include_children=1{% elif account_ids %}&account_ids={{ account_ids }}&include_children=1{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Summary View</a>
 
-<a href="?view=detail{% if account_id %}&account_id={{ account_id }}&include_children=1{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Detail View</a>
+    <a href="?view=detail{% if account_id %}&account_id={{ account_id }}&include_children=1{% elif account_ids %}&account_ids={{ account_ids }}&include_children=1{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Detail View</a>
 
       <a href="#" id="openPrintView">Print / PDF</a>
       <a href="#" id="exportExcelBtn">Export Excel</a>
@@ -232,6 +232,9 @@
         {% endfor %}
       </datalist>
       <input type="hidden" name="account_id" id="accountIdField" value="{{ account_id }}">
+      {% if account_ids and not account_id %}
+      <input type="hidden" name="account_ids" id="accountIdsField" value="{{ account_ids }}">
+      {% endif %}
     </div>
 
     <input type="date" name="date_from" value="{{ date_from }}">
@@ -441,11 +444,11 @@
   {% if page_obj and page_obj.paginator.num_pages > 1 %}
   <div class="pagination">
     {% if page_obj.has_previous %}
-      <a href="?page={{ page_obj.previous_page_number }}&view={{ view_mode }}{% if account_id %}&account_id={{ account_id }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">« Prev</a>
+      <a href="?page={{ page_obj.previous_page_number }}&view={{ view_mode }}{% if account_id %}&account_id={{ account_id }}{% elif account_ids %}&account_ids={{ account_ids }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">« Prev</a>
     {% endif %}
     <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
     {% if page_obj.has_next %}
-      <a href="?page={{ page_obj.next_page_number }}&view={{ view_mode }}{% if account_id %}&account_id={{ account_id }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Next »</a>
+      <a href="?page={{ page_obj.next_page_number }}&view={{ view_mode }}{% if account_id %}&account_id={{ account_id }}{% elif account_ids %}&account_ids={{ account_ids }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}{% if query %}&search={{ query }}{% endif %}">Next »</a>
     {% endif %}
   </div>
   {% endif %}
@@ -460,7 +463,7 @@ document.addEventListener("DOMContentLoaded", function() {
     e.preventDefault();
     const params = new URLSearchParams(new FormData(filterForm));
 
-    ["account_id", "date_from", "date_to"].forEach(k => {
+    ["account_id", "account_ids", "date_from", "date_to"].forEach(k => {
       const v = params.get(k);
       if (v === "None" || v === "null" || v === "") params.delete(k);
     });
@@ -480,7 +483,7 @@ document.addEventListener("DOMContentLoaded", function() {
     e.preventDefault();
     const params = new URLSearchParams(new FormData(filterForm));
 
-    ["account_id", "date_from", "date_to"].forEach(k => {
+    ["account_id", "account_ids", "date_from", "date_to"].forEach(k => {
       const v = params.get(k);
       if (v === "None" || v === "null" || v === "") params.delete(k);
     });

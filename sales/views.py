@@ -402,6 +402,25 @@ def _get_sales_income_account(company) -> "Account":
     )
 
 
+def _assert_balanced_journal_entry(entry: JournalEntry, source_label: str = ""):
+    """Ensure every posted transaction is balanced before reports consume it."""
+    totals = (
+        JournalLine.objects
+        .filter(entry=entry)
+        .aggregate(
+            d=Coalesce(Sum("debit"), Value(Decimal("0.00"))),
+            c=Coalesce(Sum("credit"), Value(Decimal("0.00"))),
+        )
+    )
+    debit_total = Decimal(str(totals.get("d") or "0.00"))
+    credit_total = Decimal(str(totals.get("c") or "0.00"))
+    if abs(debit_total - credit_total) > Decimal("0.01"):
+        raise ValueError(
+            f"Unbalanced journal entry for {source_label or 'transaction'} "
+            f"(entry={entry.id}): debit={debit_total}, credit={credit_total}"
+        )
+
+
 def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
     """
     Tenant-safe posting:
@@ -454,6 +473,8 @@ def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
         customer=refund.customer,
         supplier=None,
     )
+
+    _assert_balanced_journal_entry(entry, "customer_refund")
 
 
 # posting invoice to ledger
@@ -580,6 +601,8 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
             customer=None,
             supplier=None,
         )
+
+    _assert_balanced_journal_entry(entry, "invoice")
 
 # posting payments to ledger 
 def _post_payment_to_ledger(company, payment: Payment):
@@ -724,6 +747,8 @@ def _post_payment_to_ledger(company, payment: Payment):
             customer=payment.customer,
             supplier=None,
         )
+
+    _assert_balanced_journal_entry(entry, "payment")
 
 
 def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
@@ -1064,6 +1089,8 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
                 customer=None,
                 supplier=None,
             )
+
+    _assert_balanced_journal_entry(entry, "sales_receipt")
 
 
 # ----------------------------

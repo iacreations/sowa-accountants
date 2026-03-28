@@ -47,6 +47,26 @@ class CompanyMiddleware:
 
         return Company.objects.filter(id=active_company_id, is_active=True).first()
 
+    def _get_or_create_sowa_company(self):
+        """
+        Ensures there is always one active internal SOWA tenant.
+        This keeps request.company non-null in SOWA workspace even after DB reset/flush.
+        """
+        sowa_company = (
+            Company.objects
+            .filter(company_kind="SOWA", is_active=True)
+            .order_by("id")
+            .first()
+        )
+        if sowa_company:
+            return sowa_company
+
+        return Company.objects.create(
+            name="SOWA Internal",
+            company_kind="SOWA",
+            is_active=True,
+        )
+
     def __call__(self, request):
         import logging
         logger = logging.getLogger("tenancy.middleware")
@@ -72,9 +92,8 @@ class CompanyMiddleware:
                 request.in_sowa_workspace = False
                 request.workspace_mode = "client"
             else:
-                # Set to SOWA company if in sowa workspace
-                sowa_company = Company.objects.filter(company_kind="SOWA", is_active=True).first()
-                request.company = sowa_company
+                # In SOWA workspace, always attach internal SOWA tenant.
+                request.company = self._get_or_create_sowa_company()
                 request.in_client_workspace = False
                 request.in_sowa_workspace = True
                 request.workspace_mode = "sowa"

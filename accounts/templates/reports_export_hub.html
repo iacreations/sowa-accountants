@@ -76,6 +76,14 @@
     <div>
       <h2>Select Report to Export ({{ fmt|upper }})</h2>
       <div class="hub-sub">
+        Company:
+        {% if current_company %}
+          {% if current_company.company_kind == "SOWA" %}Sowa Accountants{% else %}{{ current_company.name }}{% endif %}
+        {% else %}
+          No Company Selected
+        {% endif %}
+      </div>
+      <div class="hub-sub">
         Choose the report. You will then use the report’s own Export {{ fmt|upper }} button.
       </div>
 

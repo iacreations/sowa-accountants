@@ -35,6 +35,14 @@
   <div class="rep-title">
     <div>
       <h2>Collections Report</h2>
+      <div class="rep-sub">
+        Company:
+        {% if current_company %}
+          {% if current_company.company_kind == "SOWA" %}Sowa Accountants{% else %}{{ current_company.name }}{% endif %}
+        {% else %}
+          No Company Selected
+        {% endif %}
+      </div>
       <div class="rep-sub">From {{ date_from }} to {{ date_to }}</div>
 
       <!-- ✅ EXPORTS (NEW) -->

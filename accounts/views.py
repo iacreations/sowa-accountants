@@ -756,6 +756,7 @@ def general_ledger(request):
 
     # -------- filters ----------
     account_id = request.GET.get("account_id")
+    account_ids_raw = (request.GET.get("account_ids") or "").strip()
     query = request.GET.get("search", "")
     date_from = parse_ymd(request.GET.get("date_from"))
     date_to = parse_ymd(request.GET.get("date_to"))
@@ -775,6 +776,15 @@ def general_ledger(request):
     if not customer_id or customer_id in ("None", "null", ""):
         customer_id = None
 
+    selected_multi_ids = []
+    if account_ids_raw:
+        for token in account_ids_raw.split(","):
+            token = (token or "").strip()
+            if token.isdigit():
+                selected_multi_ids.append(int(token))
+        # keep order but dedupe
+        selected_multi_ids = list(dict.fromkeys(selected_multi_ids))
+
     view_mode = (request.GET.get("view") or "detail").lower()
     if view_mode not in ["summary", "detail"]:
         view_mode = "detail"
@@ -789,6 +799,7 @@ def general_ledger(request):
     # ---------------------------------------------------------
     account_label = None
     selected_account = None
+    selected_accounts = []
     if account_id:
         selected_account = (
             Account.objects.for_company(company)
@@ -798,6 +809,19 @@ def general_ledger(request):
         )
         if selected_account:
             account_label = selected_account.account_name
+    elif selected_multi_ids:
+        selected_accounts = list(
+            Account.objects.for_company(company)
+            .filter(pk__in=selected_multi_ids)
+            .order_by("account_name")
+        )
+        if selected_accounts:
+            selected_multi_ids = [a.id for a in selected_accounts]
+            names = [a.account_name for a in selected_accounts if a.account_name]
+            if len(names) > 3:
+                account_label = f"{', '.join(names[:3])} (+{len(names) - 3} more)"
+            else:
+                account_label = ", ".join(names)
 
     # -----------------------------
     # Accounting logic (unchanged)
@@ -882,6 +906,14 @@ def general_ledger(request):
 
         if include_children or is_arap_parent:
             selected_account_ids = collect_subtree_ids(selected_account.id)
+    elif selected_multi_ids:
+        selected_account_ids = []
+        for sid in selected_multi_ids:
+            if include_children:
+                selected_account_ids.extend(collect_subtree_ids(sid))
+            else:
+                selected_account_ids.append(sid)
+        selected_account_ids = list(dict.fromkeys(selected_account_ids))
 
     # =====================================================================
     # BASE QUERYSETS (TENANT SAFE)
@@ -1078,6 +1110,7 @@ def general_ledger(request):
             "view_mode": view_mode,
             "accounts": accounts,
             "account_id": account_id,
+            "account_ids": ",".join(str(i) for i in selected_multi_ids),
             "account_label": account_label,
             "date_from": date_from,
             "date_to": date_to,
@@ -1312,6 +1345,7 @@ def general_ledger(request):
         "view_mode": view_mode,
         "accounts": accounts,
         "account_id": account_id,
+        "account_ids": ",".join(str(i) for i in selected_multi_ids),
         "account_label": account_label,
         "date_from": date_from,
         "date_to": date_to,
@@ -1775,7 +1809,7 @@ def report_trial_balance(request):
         if acc.id not in visible_ids:
             return
 
-        children = [c for c in children_by_parent.get(acc.id) if c.id in visible_ids]
+        children = [c for c in children_by_parent.get(acc.id, []) if c.id in visible_ids]
         if children:
             # show ONLY parent (rolled-up), do NOT show children
             ending = rolled_up_ending(acc)
@@ -1818,6 +1852,36 @@ def report_trial_balance(request):
 
     for r in roots:
         walk_parent_only(r, 0)
+
+    # Consolidate duplicate display names so each account label appears once.
+    # Keep first account_id for drill-down links and sum debit/credit values.
+    merged_rows = {}
+    merged_order = []
+    for row in rows:
+        key = (row.get("account") or "").strip()
+        if key in merged_rows:
+            merged_rows[key]["debit"] += row.get("debit", Decimal("0.00"))
+            merged_rows[key]["credit"] += row.get("credit", Decimal("0.00"))
+            rid = row.get("account_id")
+            if rid and rid not in merged_rows[key]["account_ids"]:
+                merged_rows[key]["account_ids"].append(rid)
+        else:
+            merged_rows[key] = {
+                "account_id": row.get("account_id"),
+                "account_ids": [row.get("account_id")] if row.get("account_id") else [],
+                "account": row.get("account"),
+                "debit": row.get("debit", Decimal("0.00")),
+                "credit": row.get("credit", Decimal("0.00")),
+                "depth": row.get("depth", 0),
+                "kind": row.get("kind", "leaf"),
+            }
+            merged_order.append(key)
+
+    rows = [merged_rows[k] for k in merged_order]
+
+    # Recalculate totals from final displayed rows.
+    total_debit = sum((r["debit"] for r in rows), Decimal("0.00"))
+    total_credit = sum((r["credit"] for r in rows), Decimal("0.00"))
 
     # =========================================================
     # EXPORTS: CSV / EXCEL / PDF (without changing your styles)
@@ -1943,8 +2007,9 @@ def report_trial_balance(request):
     # =========================================================
     # NORMAL PAGE RENDER
     # =========================================================
+    display_company_name = "Sowa Accountants" if getattr(company, "company_kind", "") == "SOWA" else getattr(company, "name", "No Company Selected")
     context = {
-        "company_name": getattr(company, "name", "No Company Selected"),
+        "company_name": display_company_name,
         "reporting_currency": getattr(company, "currency", "UGX"),
         "rows": rows,
         "total_debit": total_debit,
@@ -2422,8 +2487,9 @@ def report_pnl(request):
             return response
 
     # ---------- 10. Normal HTML render ----------
+    display_company_name = "Sowa Accountants" if getattr(company, "company_kind", "") == "SOWA" else getattr(company, "name", "No Company Selected")
     context = {
-        "company_name": getattr(company, "name", "No Company Selected"),
+        "company_name": display_company_name,
         "reporting_currency": getattr(company, "currency", "UGX"),
         "basis": basis,
 
@@ -2716,7 +2782,7 @@ def report_balance_sheet(request):
     # =========================================================
     export = (request.GET.get("export") or "").strip().lower()
     reporting_currency = getattr(company, "currency", "UGX")
-    company_name = getattr(company, "name", "No Company Selected")
+    company_name = "Sowa Accountants" if getattr(company, "company_kind", "") == "SOWA" else getattr(company, "name", "No Company Selected")
     filename_base = f"balance_sheet_{asof.strftime('%Y%m%d')}_{method}"
     if company is None:
         from django.contrib import messages
@@ -3288,7 +3354,7 @@ def report_cashflow(request):
     net_change = (cash_from_ops + cash_from_investing + cash_from_financing).quantize(Decimal("0.01"))
     recon_ok = (cash_start + net_change).quantize(Decimal("0.01")) == cash_end.quantize(Decimal("0.01"))
 
-    company_name = getattr(company, "name", "No Company Selected")
+    company_name = "Sowa Accountants" if getattr(company, "company_kind", "") == "SOWA" else getattr(company, "name", "No Company Selected")
     reporting_currency = getattr(company, "currency", "UGX")
     if company is None:
         from django.contrib import messages
