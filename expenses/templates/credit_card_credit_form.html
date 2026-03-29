@@ -141,6 +141,7 @@
                             {{ acc.account_name }}
                           </option>
                         {% endfor %}
+                        <option value="add_new">➕ Add New</option>
                       </select>
                     </td>
                     <td><input type="text" name="cat_description[]" value="{{ line.description }}"></td>
@@ -183,6 +184,7 @@
                       {% for acc in expense_accounts %}
                         <option value="{{ acc.id }}">{{ acc.account_name }}</option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><input type="text" name="cat_description[]"></td>
@@ -377,7 +379,9 @@
     const ADD_SUPPLIER_URL = "{% url 'sowaf:add-supplier' %}";
     const ADD_CUSTOMER_URL = "{% url 'sowaf:add-customer' %}";
     const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
+    const ADD_CATEGORY_ACCOUNT_URL = "{% url 'accounts:add-account' %}";
     const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
+    const ACCOUNTS_DROPDOWN_URL = "{% url 'accounts:accounts-dropdown-data' %}";
 
     // CSRF helper (for class ajax create)
     function getCookie(name) {
@@ -398,6 +402,46 @@
     function openAddSupplier(selectEl){ window.open(ADD_SUPPLIER_URL, "_blank", "noopener"); selectEl.value = ""; }
     function openAddCustomer(selectEl){ window.open(ADD_CUSTOMER_URL, "_blank", "noopener"); selectEl.value = ""; }
     function openAddProduct(selectEl){ window.open(ADD_PRODUCT_URL, "_blank", "noopener"); selectEl.value = ""; }
+    function openAddCategory(selectEl){ window.open(ADD_CATEGORY_ACCOUNT_URL, "_blank", "noopener"); selectEl.value = ""; }
+
+    async function refreshExpenseCategoryDropdowns() {
+      const selects = Array.from(document.querySelectorAll('select[name="cat_category[]"]'));
+      if (!selects.length) return;
+
+      try {
+        const res = await fetch(ACCOUNTS_DROPDOWN_URL, {
+          headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const expenseAccounts = data.expense_accounts || [];
+        const optionMap = new Map(expenseAccounts.map(a => [String(a.id), a.account_name]));
+
+        selects.forEach((select) => {
+          const prev = String(select.value || "");
+          select.innerHTML = `<option value="">-- choose --</option>`;
+
+          expenseAccounts.forEach((acc) => {
+            const opt = document.createElement("option");
+            opt.value = acc.id;
+            opt.textContent = acc.account_name;
+            select.appendChild(opt);
+          });
+
+          const addOpt = document.createElement("option");
+          addOpt.value = "add_new";
+          addOpt.textContent = "➕ Add New";
+          select.appendChild(addOpt);
+
+          if (optionMap.has(prev) || prev === "" || prev === "add_new") {
+            select.value = prev;
+          }
+        });
+      } catch (err) {
+        console.log("Could not refresh expense categories:", err);
+      }
+    }
 
     function addNewClassInline(selectEl){
       const name = (prompt("Enter new class name:") || "").trim();
@@ -458,6 +502,7 @@
       const val  = el.value;
 
       // Category lines: customer + class
+      if(name === "cat_category[]" && val === "add_new"){ openAddCategory(el); return; }
       if(name === "cat_customer[]" && val === "add_new"){ openAddCustomer(el); return; }
       if(name === "cat_class[]" && val === "add_new"){ addNewClassInline(el); return; }
 
@@ -499,6 +544,7 @@
               {% for acc in expense_accounts %}
                 <option value="{{ acc.id }}">{{ acc.account_name }}</option>
               {% endfor %}
+              <option value="add_new">➕ Add New</option>
             </select>
           </td>
           <td><input type="text" name="cat_description[]"></td>
@@ -614,12 +660,22 @@
     document.addEventListener("DOMContentLoaded", function(){
       document.querySelectorAll("#category-table tbody,#item-table tbody").forEach(tbody => renumber(tbody));
       updateTotal();
+      refreshExpenseCategoryDropdowns();
 
       // ensure existing rows compute (edit mode)
       document.querySelectorAll("#item-table tbody tr").forEach(tr => {
         const qty = tr.querySelector("input[name='item_qty[]']");
         if(qty) recalcRow(qty);
       });
+    });
+
+    let lastFocusTime = Date.now();
+    window.addEventListener("focus", function() {
+      const now = Date.now();
+      if (now - lastFocusTime > 800) {
+        refreshExpenseCategoryDropdowns();
+      }
+      lastFocusTime = now;
     });
   </script>
 </body>

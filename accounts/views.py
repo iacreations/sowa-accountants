@@ -24,6 +24,7 @@ from django.http import HttpResponse, Http404
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from sales.models import Newinvoice, Payment
@@ -233,9 +234,39 @@ def accounts(request):
     for a in all_accounts:
         a.current_balance = rolled_up_closing(a)
 
+    # Merge duplicate account labels/types so COA shows one row per logical account.
+    merged_map = OrderedDict()
+    for acc in all_accounts:
+        key = (
+            acc.parent_id or 0,
+            (acc.account_name or "").strip().lower(),
+            (acc.account_type or "").strip(),
+            (acc.detail_type or "").strip().lower(),
+        )
+
+        existing = merged_map.get(key)
+        if not existing:
+            acc.merged_count = 1
+            merged_map[key] = acc
+            continue
+
+        existing.current_balance = Decimal(str(existing.current_balance or "0.00")) + Decimal(
+            str(acc.current_balance or "0.00")
+        )
+        existing.merged_count += 1
+
+        if not existing.account_number and acc.account_number:
+            existing.account_number = acc.account_number
+        if not existing.description and acc.description:
+            existing.description = acc.description
+        if not existing.as_of and acc.as_of:
+            existing.as_of = acc.as_of
+
+    merged_accounts = list(merged_map.values())
+
     # group into 5 Level-1 buckets using model property
     grouped = {label: [] for label in LEVEL1_ORDER}
-    for acc in all_accounts:
+    for acc in merged_accounts:
         level1 = acc.level1_group or "Assets"
         grouped.setdefault(level1, []).append(acc)
 
@@ -271,7 +302,7 @@ def accounts(request):
             "inactive_count": inactive_count,
             "all_count": all_count,
             "level1_sections": level1_sections,
-            "coas": all_accounts,
+            "coas": merged_accounts,
         },
     )
 
@@ -331,10 +362,11 @@ def save_column_prefs(request):
 @module_required("accounts")
 def add_account(request):
     company = request.company
+    validation_errors = []
 
     if request.method == "POST":
         account_name = request.POST.get("account_name")
-        account_number = request.POST.get("account_number")
+        account_number = (request.POST.get("account_number") or "").strip() or None
         account_type = request.POST.get("account_type")  # code from select
         detail_type = request.POST.get("detail_type")
         tax_category = request.POST.get("tax_category")
@@ -371,7 +403,19 @@ def add_account(request):
             as_of=as_of,
             description=description,
         )
-        new_account.save()
+        try:
+            new_account.save()
+        except ValidationError as exc:
+            validation_errors = list(exc.messages)
+            for field, field_errors in exc.message_dict.items():
+                if field != "__all__":
+                    validation_errors.extend(field_errors)
+
+            return render(request, "coa_form.html", {
+                "parents": Account.objects.for_company(company),
+                "account": new_account,
+                "validation_errors": validation_errors,
+            })
 
         # 2) Opening balance JE (same as you had)
         if opening_balance != 0:
@@ -445,6 +489,7 @@ def add_account(request):
     return render(request, "coa_form.html", {
         "parents": parents,
         "account": None,      # important so template knows this is ADD mode
+        "validation_errors": validation_errors,
     })
 
 
@@ -462,10 +507,11 @@ def edit_account(request, pk):
 
     # tenant-safe fetch
     account = get_object_or_404(Account.objects.for_company(company), pk=pk)
+    validation_errors = []
 
     if request.method == "POST":
         account_name = request.POST.get("account_name")
-        account_number = request.POST.get("account_number")
+        account_number = (request.POST.get("account_number") or "").strip() or None
         account_type = request.POST.get("account_type")
         detail_type = request.POST.get("detail_type")
         tax_category = request.POST.get("tax_category")
@@ -499,7 +545,19 @@ def edit_account(request, pk):
         account.opening_balance = new_opening_balance
         account.as_of = as_of
         account.description = description
-        account.save()
+        try:
+            account.save()
+        except ValidationError as exc:
+            validation_errors = list(exc.messages)
+            for field, field_errors in exc.message_dict.items():
+                if field != "__all__":
+                    validation_errors.extend(field_errors)
+
+            return render(request, "coa_form.html", {
+                "parents": Account.objects.for_company(company).exclude(pk=account.pk),
+                "account": account,
+                "validation_errors": validation_errors,
+            })
 
         # ---- update opening balance journal entry ----
         # Only for balance-sheet accounts
@@ -599,6 +657,7 @@ def edit_account(request, pk):
     return render(request, "coa_form.html", {
         "parents": parents,
         "account": account,
+        "validation_errors": validation_errors,
     })
 
 

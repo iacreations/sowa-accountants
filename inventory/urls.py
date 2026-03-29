@@ -13,6 +13,7 @@ urlpatterns = [
     path("products/<int:pk>/edit/", views.product_edit, name="product-edit"),
     path("add-category-ajax/", views.add_category_ajax, name="add_category_ajax"),
     path("add-class-ajax/", views.add_class_ajax, name="add_class_ajax"),
+    path("suppliers/list/", views.suppliers_list_json, name="suppliers-list-json"),
     # stock movement
     path("stock-transfers/", views.stock_transfer_list, name="stock-transfer-list"),
     path("stock-transfers/new/", views.add_stock_transfer, name="add-stock-transfer"),

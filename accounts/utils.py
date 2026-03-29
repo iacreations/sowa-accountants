@@ -52,7 +52,11 @@ def deposit_accounts_qs(company=None):
         _company_scoped_qs(company)
         .filter(
             Q(detail_type__in=DEPOSIT_DETAIL_TYPES) |
-            Q(parent__detail_type__in=DEPOSIT_DETAIL_TYPES),
+            Q(parent__detail_type__in=DEPOSIT_DETAIL_TYPES) |
+            Q(detail_type__icontains="cash") |
+            Q(detail_type__icontains="bank") |
+            Q(parent__detail_type__icontains="cash") |
+            Q(parent__detail_type__icontains="bank"),
             is_active=True,
         )
         .order_by("account_name", "account_number")

@@ -83,10 +83,19 @@ class CompanyMiddleware:
 
         # ---------------- STAFF USERS ----------------
         if is_staff_user:
+            workspace_mode = request.session.get("workspace_mode")
             company = self._get_session_company(request)
-            logger.debug(f"[CompanyMiddleware] Staff user. Session company: {company}")
+            logger.debug(
+                f"[CompanyMiddleware] Staff user. Session company: {company}, workspace_mode: {workspace_mode}"
+            )
 
-            if company:
+            if workspace_mode == "sowa":
+                request.company = self._get_or_create_sowa_company()
+                request.in_client_workspace = False
+                request.in_sowa_workspace = True
+                request.workspace_mode = "sowa"
+                request.session["active_company_id"] = None
+            elif company and getattr(company, "company_kind", None) == "CLIENT":
                 request.company = company
                 request.in_client_workspace = True
                 request.in_sowa_workspace = False

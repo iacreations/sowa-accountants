@@ -118,11 +118,19 @@
 
 <div class="container">
   <form method="post"
-        action="{% if account %}{% url 'accounts:edit-account' account.id %}{% else %}{% url 'accounts:add-account' %}{% endif %}">
+        action="{% if account and account.pk %}{% url 'accounts:edit-account' account.id %}{% else %}{% url 'accounts:add-account' %}{% endif %}">
     {% csrf_token %}
     <h2 class="title">
-      {% if account %}Edit Account{% else %}Chart of Accounts{% endif %}
+      {% if account and account.pk %}Edit Account{% else %}Chart of Accounts{% endif %}
     </h2>
+
+    {% if validation_errors %}
+    <div style="margin-bottom: 18px; padding: 12px 14px; border: 1px solid #f0b3b3; background: #fff4f4; color: #8f1d1d; border-radius: 8px;">
+      {% for error in validation_errors %}
+      <div>{{ error }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="section-wrapper">
       <div class="form-grid">

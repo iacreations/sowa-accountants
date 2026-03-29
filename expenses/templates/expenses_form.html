@@ -153,6 +153,7 @@
                       {% for a in expense_accounts %}
                         <option value="{{ a.id }}" {% if cl.category_id == a.id %}selected{% endif %}>{{ a.account_name }}</option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><input type="text" name="cat_desc[]" value="{{ cl.description }}"></td>
@@ -190,6 +191,7 @@
                       {% for a in expense_accounts %}
                         <option value="{{ a.id }}">{{ a.account_name }}</option>
                       {% endfor %}
+                      <option value="add_new">➕ Add New</option>
                     </select>
                   </td>
                   <td><input type="text" name="cat_desc[]"></td>
@@ -371,7 +373,9 @@
     // URLs for "Add New" actions (shared across rows)
     const ADD_CUSTOMER_URL = "{% url 'sowaf:add-customer' %}";
     const ADD_PRODUCT_URL  = "{% url 'inventory:add-products' %}";
+    const ADD_CATEGORY_ACCOUNT_URL = "{% url 'accounts:add-account' %}";
     const ADD_CLASS_AJAX_URL = "{% url 'inventory:add_class_ajax' %}";
+    const ACCOUNTS_DROPDOWN_URL = "{% url 'accounts:accounts-dropdown-data' %}";
 
     // ✅ NEW: add location ajax
     const ADD_LOCATION_AJAX_URL = "{% url 'inventory:add_location_ajax' %}";
@@ -417,6 +421,50 @@
     function openAddProduct(selectEl){
       window.open(ADD_PRODUCT_URL, "_blank", "noopener");
       selectEl.value = "";
+    }
+
+    function openAddCategory(selectEl){
+      window.open(ADD_CATEGORY_ACCOUNT_URL, "_blank", "noopener");
+      selectEl.value = "";
+    }
+
+    async function refreshExpenseCategoryDropdowns() {
+      const selects = Array.from(document.querySelectorAll('select[name="cat_category[]"]'));
+      if (!selects.length) return;
+
+      try {
+        const res = await fetch(ACCOUNTS_DROPDOWN_URL, {
+          headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const expenseAccounts = data.expense_accounts || [];
+        const optionMap = new Map(expenseAccounts.map(a => [String(a.id), a.account_name]));
+
+        selects.forEach((select) => {
+          const prev = String(select.value || "");
+          select.innerHTML = `<option value="">-- Select --</option>`;
+
+          expenseAccounts.forEach((acc) => {
+            const opt = document.createElement("option");
+            opt.value = acc.id;
+            opt.textContent = acc.account_name;
+            select.appendChild(opt);
+          });
+
+          const addOpt = document.createElement("option");
+          addOpt.value = "add_new";
+          addOpt.textContent = "➕ Add New";
+          select.appendChild(addOpt);
+
+          if (optionMap.has(prev) || prev === "" || prev === "add_new") {
+            select.value = prev;
+          }
+        });
+      } catch (err) {
+        console.log("Could not refresh expense categories:", err);
+      }
     }
 
     function addNewClassInline(selectEl){
@@ -539,6 +587,7 @@
           <select name="cat_category[]">
             <option value="">-- Select --</option>
             {% for a in expense_accounts %}<option value="{{ a.id }}">{{ a.account_name }}</option>{% endfor %}
+            <option value="add_new">➕ Add New</option>
           </select>
         </td>
         <td><input type="text" name="cat_desc[]"></td>
@@ -624,6 +673,7 @@
       if(el.id === "locationSelect" && el.value === "add_new"){ addNewLocationInline(el); return; }
 
       // Category line: customer + class
+      if(nm === "cat_category[]" && el.value === "add_new"){ openAddCategory(el); return; }
       if(nm === "cat_customer[]" && el.value === "add_new"){ openAddCustomer(el); return; }
       if(nm === "cat_class[]" && el.value === "add_new"){ addNewClassInline(el); return; }
 
@@ -638,6 +688,16 @@
       document.querySelectorAll('#itemTable tbody select[name="item_product[]"]').forEach(sel => {
         if (sel.value && sel.value !== "add_new") fillItemFromProduct(sel);
       });
+      refreshExpenseCategoryDropdowns();
+    });
+
+    let lastFocusTime = Date.now();
+    window.addEventListener("focus", function() {
+      const now = Date.now();
+      if (now - lastFocusTime > 800) {
+        refreshExpenseCategoryDropdowns();
+      }
+      lastFocusTime = now;
     });
   </script>
 </body>

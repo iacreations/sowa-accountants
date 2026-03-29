@@ -390,13 +390,17 @@
 
               <div class="form-group">
                 <label>Supplier</label>
-                <select class="form-control" name="supplier">
-                  <option value="">-- Select Supplier --</option>
-                  {% for supplier in suppliers %}
-                    <option value="{{ supplier.id }}" {% if edit_mode and product.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.company_name }}</option>
-                  {% endfor %}
-                </select>
-                
+                <div class="d-flex">
+                  <select class="form-control" name="supplier" id="supplierSelect">
+                    <option value="">-- Select Supplier --</option>
+                    {% for supplier in suppliers %}
+                      <option value="{{ supplier.id }}" {% if edit_mode and product.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.company_name }}</option>
+                    {% endfor %}
+                  </select>
+                  <a href="{% url 'sowaf:add-supplier' %}" target="_blank"
+                     class="btn btn-sm button ms-2"
+                     id="addSupplierLink">+ Add</a>
+                </div>
               </div>
 
               <div class="form-group">
@@ -516,6 +520,8 @@
 
   <script src=" {% static 'sowaf/styles/script.js' %} "></script>
   <script>
+    const SUPPLIERS_LIST_URL = "{% url 'inventory:suppliers-list-json' %}";
+
     function toggleSection(btn) {
       const content = btn.nextElementSibling;
       content.classList.toggle("active");
@@ -565,6 +571,36 @@
     function togglePurchaseFields() {
       const purchaseChecked = document.getElementById("purchaseCheckbox").checked;
       document.getElementById("purchaseFields").style.display = purchaseChecked ? "block" : "none";
+    }
+
+    async function refreshSupplierDropdown() {
+      const supplierSelect = document.getElementById("supplierSelect");
+      if (!supplierSelect) return;
+
+      const previousValue = supplierSelect.value;
+
+      try {
+        const res = await fetch(SUPPLIERS_LIST_URL, {
+          headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        supplierSelect.innerHTML = `<option value="">-- Select Supplier --</option>`;
+
+        (data.suppliers || []).forEach((supplier) => {
+          const option = document.createElement("option");
+          option.value = supplier.id;
+          option.textContent = supplier.name;
+          supplierSelect.appendChild(option);
+        });
+
+        if (previousValue) {
+          supplierSelect.value = previousValue;
+        }
+      } catch (err) {
+        console.log("Could not refresh suppliers dropdown:", err);
+      }
     }
 
     // ✅ Refresh Income/Expense dropdowns without reloading the page
@@ -617,6 +653,7 @@
       const now = Date.now();
       if (now - lastFocusTime > 800) {
         refreshAccountDropdowns();
+        refreshSupplierDropdown();
       }
       lastFocusTime = now;
     });
@@ -627,6 +664,7 @@
       togglePurchaseFields();
       handleTypeChange();
       refreshAccountDropdowns(); // optional initial refresh
+      refreshSupplierDropdown();
     };
 
     function showAddCategory() {

@@ -141,10 +141,14 @@ class Account(TenantModel):
         ]
 
     def __str__(self):
-        return f"{self.account_name or 'Account'} ({self.company.name})"
+        company_name = self.company.name if self.company else "No Company"
+        return f"{self.account_name or 'Account'} ({company_name})"
 
     def clean(self):
         errors = {}
+
+        if self.account_number is not None:
+            self.account_number = str(self.account_number).strip() or None
 
         if self.parent_id:
             if self.parent.company_id != self.company_id:

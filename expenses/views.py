@@ -2132,9 +2132,9 @@ def add_expense(request):
                     raise ValueError("Payment account belongs to another company.")
 
                 if not (len(ref_no) == 8 and ref_no.isdigit()):
-                    ref_no = generate_unique_ref_no()
+                    ref_no = generate_unique_ref_no(company)
                 if Expense.objects.for_company(company).filter(ref_no=ref_no).exists():
-                    ref_no = generate_unique_ref_no()
+                    ref_no = generate_unique_ref_no(company)
 
                 exp = Expense.objects.create(
                     company_id=company_id,
@@ -2160,7 +2160,7 @@ def add_expense(request):
                 cat_class_ids = request.POST.getlist("cat_class[]")
 
                 for idx, cat_id in enumerate(cat_category_ids):
-                    if not cat_id:
+                    if not cat_id or cat_id == "add_new":
                         continue
 
                     category = expense_accounts_qs_.filter(pk=cat_id).first()
@@ -2284,7 +2284,7 @@ def add_expense(request):
         "suppliers": Newsupplier.objects.for_company(company).all().order_by("company_name"),
         "classes": Pclass.objects.for_company(company).all().order_by("class_name"),
         "locations": InventoryLocation.objects.for_company(company).filter(store=store, is_active=True).order_by("name"),
-        "ref_no": generate_unique_ref_no(),
+        "ref_no": generate_unique_ref_no(company),
         "payment_methods": Expense.PAYMENT_METHODS,
     }
     return render(request, "expenses_form.html", context)
@@ -2369,7 +2369,7 @@ def expense_edit(request, pk: int):
                 cat_class_ids = request.POST.getlist("cat_class[]")
 
                 for idx, cat_id in enumerate(cat_category_ids):
-                    if not cat_id:
+                    if not cat_id or cat_id == "add_new":
                         continue
 
                     category = expense_accounts_qs_.filter(pk=cat_id).first()
@@ -2667,7 +2667,7 @@ def add_bill(request):
             cat_class_ids = request.POST.getlist("cat_class[]")
 
             for idx, acc_id in enumerate(cat_category_ids):
-                if not acc_id:
+                if not acc_id or acc_id == "add_new":
                     continue
                 account = expense_qs.filter(pk=acc_id).first()
                 if not account:
@@ -2849,7 +2849,7 @@ def edit_bill(request, pk: int):
             cat_class_ids = request.POST.getlist("cat_class[]")
 
             for idx, acc_id in enumerate(cat_category_ids):
-                if not acc_id:
+                if not acc_id or acc_id == "add_new":
                     continue
                 account = expense_qs.filter(pk=acc_id).first()
                 if not account:
@@ -3229,9 +3229,7 @@ def add_cheque(request):
 
             supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
-            bank_acc_qs = Account.objects.filter(is_active=True).filter(bankish_q())
-            if hasattr(Account, "company_id"):
-                bank_acc_qs = bank_acc_qs.filter(company_id=company_id)
+            bank_acc_qs = deposit_accounts_qs(company=company)
             bank_acc = bank_acc_qs.filter(pk=bank_id).first() if bank_id else None
 
             if not bank_acc:
@@ -3275,7 +3273,7 @@ def add_cheque(request):
                 cat_cls = request.POST.getlist("cat_class[]")
 
                 for idx, acc_id in enumerate(cat_ids):
-                    if not acc_id:
+                    if not acc_id or acc_id == "add_new":
                         continue
 
                     acc = expense_qs.filter(pk=acc_id).first()
@@ -3395,9 +3393,7 @@ def add_cheque(request):
     elif hasattr(expense_qs.model, "company_id"):
         expense_qs = expense_qs.filter(company_id=company_id)
 
-    bank_accounts = Account.objects.filter(is_active=True).filter(bankish_q())
-    if hasattr(Account, "company_id"):
-        bank_accounts = bank_accounts.filter(company_id=company_id)
+    bank_accounts = deposit_accounts_qs(company=company)
 
     context = {
         "cheque": None,
@@ -3454,9 +3450,7 @@ def cheque_edit(request, pk: int):
 
             supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
-            bank_acc_qs = Account.objects.filter(is_active=True).filter(bankish_q())
-            if hasattr(Account, "company_id"):
-                bank_acc_qs = bank_acc_qs.filter(company_id=company_id)
+            bank_acc_qs = deposit_accounts_qs(company=company)
             bank_acc = bank_acc_qs.filter(pk=bank_id).first() if bank_id else None
 
             if not bank_acc:
@@ -3496,7 +3490,7 @@ def cheque_edit(request, pk: int):
                 cat_cls = request.POST.getlist("cat_class[]")
 
                 for idx, acc_id in enumerate(cat_ids):
-                    if not acc_id:
+                    if not acc_id or acc_id == "add_new":
                         continue
 
                     acc = expense_qs.filter(pk=acc_id).first()
@@ -3655,9 +3649,7 @@ def cheque_edit(request, pk: int):
     elif hasattr(expense_qs.model, "company_id"):
         expense_qs = expense_qs.filter(company_id=company_id)
 
-    bank_accounts = Account.objects.filter(is_active=True).filter(bankish_q())
-    if hasattr(Account, "company_id"):
-        bank_accounts = bank_accounts.filter(company_id=company_id)
+    bank_accounts = deposit_accounts_qs(company=company)
 
     context = {
         "cheque": cheque,
@@ -4124,9 +4116,9 @@ def add_supplier_credit(request):
 
                 # ensure unique ref_no
                 if not ref_no:
-                    ref_no = generate_unique_ref_no()
+                    ref_no = generate_unique_ref_no(company)
                 if SupplierCredit.objects.for_company(company).filter(ref_no=ref_no).exists():
-                    ref_no = generate_unique_ref_no()
+                    ref_no = generate_unique_ref_no(company)
 
                 credit = SupplierCredit.objects.create(
                     company=company,
@@ -4222,7 +4214,7 @@ def add_supplier_credit(request):
         "classes": Pclass.objects.for_company(company).all().order_by("class_name"),
         "locations": InventoryLocation.objects.for_company(company).all().order_by("name"),
         "today": timezone.localdate(),
-        "ref_no": generate_unique_ref_no(),
+        "ref_no": generate_unique_ref_no(company),
     }
     return render(request, "supplier_credit_form.html", context)
 
@@ -4347,7 +4339,7 @@ def supplier_credit_edit(request, pk: int):
         "locations": InventoryLocation.objects.for_company(company).all().order_by("name"),
         "lines": credit.lines.select_related("category", "customer", "class_field"),
         "today": timezone.localdate(),
-        "ref_no": generate_unique_ref_no(),
+        "ref_no": generate_unique_ref_no(company),
     }
     return render(request, "supplier_credit_form.html", context)
 
@@ -4487,7 +4479,7 @@ def add_paydown_credit(request):
                     raise ValueError("Zero amount")
 
                 if not ref_no:
-                    ref_no = generate_unique_ref_no()
+                    ref_no = generate_unique_ref_no(company)
 
                 pdc = PayDownCredit.objects.create(
                     company=company,
@@ -4523,7 +4515,7 @@ def add_paydown_credit(request):
         "suppliers": Newsupplier.objects.for_company(company).all().order_by("company_name"),
         "locations": InventoryLocation.objects.for_company(company).all().order_by("name"),
         "today": timezone.localdate(),
-        "ref_no": generate_unique_ref_no(),
+        "ref_no": generate_unique_ref_no(company),
     }
     return render(request, "paydown_credit_form.html", context)
 
@@ -4733,7 +4725,7 @@ def add_credit_card_credit(request):
                 location_obj = InventoryLocation.objects.for_company(company).filter(pk=location_id).first() if location_id else None
 
                 if not ref_no:
-                    ref_no = generate_unique_ref_no()
+                    ref_no = generate_unique_ref_no(company)
 
                 cc = CreditCardCredit.objects.create(
                     company=company,
@@ -4759,7 +4751,7 @@ def add_credit_card_credit(request):
                 total_amount = Decimal("0.00")
 
                 for idx, cat_id in enumerate(cat_categories):
-                    if not (cat_id or "").strip():
+                    if not (cat_id or "").strip() or cat_id == "add_new":
                         continue
 
                     category = get_object_or_404(expense_accounts, pk=cat_id)
@@ -4826,7 +4818,7 @@ def add_credit_card_credit(request):
         "products": products,
         "locations": locations,
         "today": timezone.localdate(),
-        "ref_no": generate_unique_ref_no(),
+        "ref_no": generate_unique_ref_no(company),
     }
     return render(request, "credit_card_credit_form.html", context)
 
@@ -4902,7 +4894,7 @@ def credit_card_credit_edit(request, pk: int):
                 total_amount = Decimal("0.00")
 
                 for idx, cat_id in enumerate(cat_categories):
-                    if not (cat_id or "").strip():
+                    if not (cat_id or "").strip() or cat_id == "add_new":
                         continue
                     category = get_object_or_404(expense_accounts, pk=cat_id)
                     desc = cat_descs[idx] if idx < len(cat_descs) else ""
@@ -4966,7 +4958,7 @@ def credit_card_credit_edit(request, pk: int):
         "products": products,
         "locations": locations,
         "today": timezone.localdate(),
-        "ref_no": generate_unique_ref_no(),
+        "ref_no": generate_unique_ref_no(company),
     }
     return render(request, "credit_card_credit_form.html", context)
 

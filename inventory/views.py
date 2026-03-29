@@ -579,6 +579,30 @@ def add_class_ajax(request):
         })
 
 
+@login_required
+@company_required
+@module_required("inventory")
+@require_GET
+def suppliers_list_json(request):
+    company = request.company
+    suppliers = (
+        Newsupplier.objects
+        .for_company(company)
+        .filter(is_active=True)
+        .order_by("company_name", "id")
+    )
+    return JsonResponse({
+        "ok": True,
+        "suppliers": [
+            {
+                "id": supplier.id,
+                "name": supplier.company_name or f"Supplier {supplier.id}",
+            }
+            for supplier in suppliers
+        ],
+    })
+
+
 def _dec(val, default="0"):
     try:
         s = str(val).strip()
