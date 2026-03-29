@@ -279,19 +279,25 @@ def add_products(request):
         purchase_price = _to_dec(request.POST.get("purchase"), default=None)  # your HTML uses name="purchase"
 
         income_account_id = request.POST.get("income_account")
-        income_qs = income_accounts_qs()
-        if hasattr(income_qs, "for_company"):
-            income_qs = income_qs.for_company(company)
-        elif hasattr(income_qs.model, "company_id"):
-            income_qs = income_qs.filter(company=company)
+        try:
+            income_qs = income_accounts_qs(company=company)
+        except TypeError:
+            income_qs = income_accounts_qs()
+            if hasattr(income_qs, "for_company"):
+                income_qs = income_qs.for_company(company)
+            elif hasattr(income_qs.model, "company_id"):
+                income_qs = income_qs.filter(company=company)
         income_account = income_qs.filter(pk=income_account_id).first() if income_account_id else None
 
         expense_account_id = request.POST.get("expense_account")
-        expense_qs = expense_accounts_qs()
-        if hasattr(expense_qs, "for_company"):
-            expense_qs = expense_qs.for_company(company)
-        elif hasattr(expense_qs.model, "company_id"):
-            expense_qs = expense_qs.filter(company=company)
+        try:
+            expense_qs = expense_accounts_qs(company=company)
+        except TypeError:
+            expense_qs = expense_accounts_qs()
+            if hasattr(expense_qs, "for_company"):
+                expense_qs = expense_qs.for_company(company)
+            elif hasattr(expense_qs.model, "company_id"):
+                expense_qs = expense_qs.filter(company=company)
         expense_account = expense_qs.filter(pk=expense_account_id).first() if expense_account_id else None
 
         supplier_id = request.POST.get("supplier")
@@ -366,17 +372,23 @@ def add_products(request):
             return redirect("sales:sales")
         return redirect("sales:sales")
 
-    income_qs = income_accounts_qs()
-    if hasattr(income_qs, "for_company"):
-        income_qs = income_qs.for_company(request.company)
-    elif hasattr(income_qs.model, "company_id"):
-        income_qs = income_qs.filter(company=request.company)
+    try:
+        income_qs = income_accounts_qs(company=company)
+    except TypeError:
+        income_qs = income_accounts_qs()
+        if hasattr(income_qs, "for_company"):
+            income_qs = income_qs.for_company(company)
+        elif hasattr(income_qs.model, "company_id"):
+            income_qs = income_qs.filter(company=company)
 
-    expense_qs = expense_accounts_qs()
-    if hasattr(expense_qs, "for_company"):
-        expense_qs = expense_qs.for_company(request.company)
-    elif hasattr(expense_qs.model, "company_id"):
-        expense_qs = expense_qs.filter(company=request.company)
+    try:
+        expense_qs = expense_accounts_qs(company=company)
+    except TypeError:
+        expense_qs = expense_accounts_qs()
+        if hasattr(expense_qs, "for_company"):
+            expense_qs = expense_qs.for_company(company)
+        elif hasattr(expense_qs.model, "company_id"):
+            expense_qs = expense_qs.filter(company=company)
 
     context = {
         "products": Product.objects.for_company(company).all(),
@@ -418,18 +430,24 @@ def product_edit(request, pk: int):
         product.class_field = Pclass.objects.for_company(company).filter(pk=class_field_id).first() if class_field_id else None
         product.supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
-        income_qs = income_accounts_qs()
-        if hasattr(income_qs, "for_company"):
-            income_qs = income_qs.for_company(company)
-        elif hasattr(income_qs.model, "company_id"):
-            income_qs = income_qs.filter(company=company)
+        try:
+            income_qs = income_accounts_qs(company=company)
+        except TypeError:
+            income_qs = income_accounts_qs()
+            if hasattr(income_qs, "for_company"):
+                income_qs = income_qs.for_company(company)
+            elif hasattr(income_qs.model, "company_id"):
+                income_qs = income_qs.filter(company=company)
         product.income_account = income_qs.filter(pk=income_acc_id).first() if income_acc_id else None
 
-        expense_qs = expense_accounts_qs()
-        if hasattr(expense_qs, "for_company"):
-            expense_qs = expense_qs.for_company(company)
-        elif hasattr(expense_qs.model, "company_id"):
-            expense_qs = expense_qs.filter(company=company)
+        try:
+            expense_qs = expense_accounts_qs(company=company)
+        except TypeError:
+            expense_qs = expense_accounts_qs()
+            if hasattr(expense_qs, "for_company"):
+                expense_qs = expense_qs.for_company(company)
+            elif hasattr(expense_qs.model, "company_id"):
+                expense_qs = expense_qs.filter(company=company)
         product.expense_account = expense_qs.filter(pk=expense_acc_id).first() if expense_acc_id else None
 
         product.sell_checkbox = (request.POST.get("sell_checkbox") == "on")
@@ -517,17 +535,23 @@ def product_edit(request, pk: int):
             return redirect("sales:sales")
         return redirect("inventory:product-detail", pk=product.pk)
 
-    income_qs = income_accounts_qs()
-    if hasattr(income_qs, "for_company"):
-        income_qs = income_qs.for_company(company)
-    elif hasattr(income_qs.model, "company_id"):
-        income_qs = income_qs.filter(company=company)
+    try:
+        income_qs = income_accounts_qs(company=company)
+    except TypeError:
+        income_qs = income_accounts_qs()
+        if hasattr(income_qs, "for_company"):
+            income_qs = income_qs.for_company(company)
+        elif hasattr(income_qs.model, "company_id"):
+            income_qs = income_qs.filter(company=company)
 
-    expense_qs = expense_accounts_qs()
-    if hasattr(expense_qs, "for_company"):
-        expense_qs = expense_qs.for_company(company)
-    elif hasattr(expense_qs.model, "company_id"):
-        expense_qs = expense_qs.filter(company=company)
+    try:
+        expense_qs = expense_accounts_qs(company=company)
+    except TypeError:
+        expense_qs = expense_accounts_qs()
+        if hasattr(expense_qs, "for_company"):
+            expense_qs = expense_qs.for_company(company)
+        elif hasattr(expense_qs.model, "company_id"):
+            expense_qs = expense_qs.filter(company=company)
 
     context = {
         "edit_mode": True,

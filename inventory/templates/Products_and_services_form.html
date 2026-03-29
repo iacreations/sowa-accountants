@@ -603,14 +603,12 @@
       }
     }
 
-    // ✅ Refresh Income/Expense dropdowns without reloading the page
-    async function refreshAccountDropdowns() {
+    // ✅ Refresh only Income Account dropdown without reloading the page
+    async function refreshIncomeAccountDropdown() {
       const incomeSelect = document.getElementById("incomeAccountSelect");
-      const expenseSelect = document.getElementById("expenseAccountSelect");
-      if (!incomeSelect || !expenseSelect) return;
+      if (!incomeSelect) return;
 
       const prevIncome = incomeSelect.value;
-      const prevExpense = expenseSelect.value;
 
       try {
         const res = await fetch("{% url 'accounts:accounts-dropdown-data' %}", {
@@ -629,21 +627,11 @@
           incomeSelect.appendChild(opt);
         });
 
-        // rebuild Expense options
-        expenseSelect.innerHTML = `<option value="">-- Select --</option>`;
-        (data.expense_accounts || []).forEach(acc => {
-          const opt = document.createElement("option");
-          opt.value = acc.id;
-          opt.textContent = acc.account_name;
-          expenseSelect.appendChild(opt);
-        });
-
         // restore previous selection if still exists
         if (prevIncome) incomeSelect.value = prevIncome;
-        if (prevExpense) expenseSelect.value = prevExpense;
 
       } catch (err) {
-        console.log("Could not refresh accounts dropdowns:", err);
+        console.log("Could not refresh income accounts dropdown:", err);
       }
     }
 
@@ -652,7 +640,7 @@
     window.addEventListener("focus", function() {
       const now = Date.now();
       if (now - lastFocusTime > 800) {
-        refreshAccountDropdowns();
+        refreshIncomeAccountDropdown();
         refreshSupplierDropdown();
       }
       lastFocusTime = now;
@@ -663,7 +651,7 @@
       toggleSellFields();
       togglePurchaseFields();
       handleTypeChange();
-      refreshAccountDropdowns(); // optional initial refresh
+      refreshIncomeAccountDropdown(); // optional initial refresh
       refreshSupplierDropdown();
     };
 

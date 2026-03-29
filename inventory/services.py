@@ -36,13 +36,20 @@ def safe_cost(v) -> Decimal:
     return c if c >= ZERO else ZERO
 
 
-def get_main_store() -> MainStore:
+def get_main_store(company=None) -> MainStore:
     """
-    Always return one active main store.
+    Always return one active main store for the active company.
     """
-    store = MainStore.objects.filter(is_active=True).first()
+    qs = MainStore.objects.filter(is_active=True)
+    if company is not None and hasattr(MainStore, "company_id"):
+        qs = qs.filter(company=company)
+
+    store = qs.first()
     if not store:
-        store = MainStore.objects.create(name="Main Store", is_active=True)
+        create_kwargs = {"name": "Main Store", "is_active": True}
+        if company is not None and hasattr(MainStore, "company_id"):
+            create_kwargs["company"] = company
+        store = MainStore.objects.create(**create_kwargs)
     return store
 
 
@@ -51,7 +58,7 @@ def get_default_location(company=None) -> InventoryLocation:
     Ensures there is always one default active location.
     Supports tenant-aware InventoryLocation if company exists on the model.
     """
-    store = get_main_store()
+    store = get_main_store(company)
 
     qs = InventoryLocation.objects.filter(store=store, is_active=True)
     if company is not None and hasattr(InventoryLocation, "company_id"):
@@ -105,7 +112,7 @@ def resolve_location_from_doc(doc) -> InventoryLocation:
     if isinstance(loc, str):
         name = loc.strip()
         if name:
-            store = get_main_store()
+            store = get_main_store(company)
             qs = InventoryLocation.objects.filter(store=store, name__iexact=name)
             if company is not None and hasattr(InventoryLocation, "company_id"):
                 qs = qs.filter(company=company)

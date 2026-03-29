@@ -2247,16 +2247,16 @@ def add_expense(request):
 
                 action = request.POST.get("save_action") or "save"
                 if action == "save":
-                    return redirect("expenses:expenses")
+                    return redirect("expenses:expense-list")
                 if action == "save&new":
                     return redirect("expenses:add-expenses")
-                return redirect("expenses:expenses")
+                return redirect("expenses:expense-list")
 
         except Exception as e:
             messages.error(request, f"Could not save expense: {e}")
 
     # GET
-    store = get_main_store()
+    store = get_main_store(company)
 
     try:
         payment_accounts_qs = deposit_accounts_qs(company=company)
@@ -2464,7 +2464,7 @@ def expense_edit(request, pk: int):
             messages.error(request, f"Could not update expense: {e}")
             return redirect("expenses:expense-edit", pk=exp.pk)
 
-    store = get_main_store()
+    store = get_main_store(company)
 
     try:
         payment_accounts_qs = deposit_accounts_qs(company=company)
@@ -2628,6 +2628,9 @@ def add_bill(request):
             attachment = request.FILES.get("attachments")
 
             supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+            if not supplier:
+                messages.error(request, "Please select a supplier before saving a bill.")
+                return redirect("expenses:add-bill")
 
             if (not bill_no) or Bill.objects.for_company(company).filter(bill_no=bill_no).exists():
                 bill_no = generate_unique_bill_no(company)
@@ -2818,6 +2821,9 @@ def edit_bill(request, pk: int):
                 bill.bill_no = new_bill_no
 
             supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
+            if not supplier:
+                messages.error(request, "Please select a supplier before saving a bill.")
+                return redirect("expenses:bill-edit", pk=bill.pk)
             bill.supplier = supplier
             bill.supplier_name = None if supplier else supplier_manual
 
