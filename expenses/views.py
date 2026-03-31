@@ -439,12 +439,7 @@ def _post_expense_to_ledger(expense: Expense):
             acc = getattr(prod, "expense_account", None) or getattr(prod, "cogs_account", None)
 
         if not acc:
-            # Fallback: some broad expense / COGS account
-            acc = (
-                _find_control_account(company=expense.company, name_contains="Cost of Goods") or
-                _find_control_account(company=expense.company, name_contains="Cost of Sales") or
-                _find_control_account(company=expense.company, name_contains="Expense")
-            )
+            acc = _get_default_expense_posting_account(company=expense.company)
 
         if acc:
             if getattr(acc, "company_id", None) != company_id:
@@ -465,7 +460,8 @@ def _post_expense_to_ledger(expense: Expense):
 
     debit_total = sum((amt for amt in debits_by_account.values()), Decimal("0.00"))
     if debit_total <= 0:
-        return
+        entry.delete()
+        raise ValueError("Expense is missing expense posting accounts for its lines.")
 
     # 4) Credit payment account (cash / bank)
     if not expense.payment_account:
@@ -590,6 +586,36 @@ def _find_control_account(company=None, detail_type=None, name_contains=None):
     return None
 
 
+def _get_default_expense_posting_account(company=None):
+    acc = (
+        _find_control_account(company=company, name_contains="Cost of Goods")
+        or _find_control_account(company=company, name_contains="Cost of Sales")
+        or _find_control_account(company=company, name_contains="Expense")
+    )
+    if acc:
+        return acc
+
+    try:
+        acc = expense_accounts_qs(company=company).first()
+    except TypeError:
+        acc = expense_accounts_qs()
+        if company is not None and hasattr(acc, "for_company"):
+            acc = acc.for_company(company)
+        elif company is not None and hasattr(acc.model, "company_id"):
+            acc = acc.filter(company=company)
+        acc = acc.first()
+
+    if acc:
+        return acc
+
+    return _get_or_create_named_account(
+        company=company,
+        account_name="Uncategorized Expense",
+        account_type="OPERATING_EXPENSE",
+        detail_type="Uncategorized Expense",
+    )
+
+
 # posting bill to gl
 def _post_bill_to_ledger(bill: "Bill"):
     """
@@ -626,10 +652,7 @@ def _post_bill_to_ledger(bill: "Bill"):
                 raise ValueError("Bill category account belongs to another company.")
             expense_by_account[acc] += amt
 
-    default_exp_acc = (
-        _find_control_account(company=company, name_contains="Cost of Sales")
-        or _find_control_account(company=company, name_contains="Expense")
-    )
+    default_exp_acc = _get_default_expense_posting_account(company=company)
 
     for il in bill.item_lines.select_related("product"):
         amt = Decimal(str(il.amount or "0"))
@@ -652,7 +675,7 @@ def _post_bill_to_ledger(bill: "Bill"):
 
     expense_total = sum(expense_by_account.values())
     if expense_total <= 0:
-        return
+        raise ValueError("Bill is missing expense posting accounts for its lines.")
 
     # 2) Supplier A/P subaccount
     supplier_acc = _get_or_create_supplier_ap_subaccount(bill.supplier, company=company)
