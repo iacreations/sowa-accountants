@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_GET, require_POST
+from django.contrib import messages
 from django.http import JsonResponse
 from django.db import transaction
 import json
@@ -19,7 +20,7 @@ from django.core.files import File
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from accounts.utils import income_accounts_qs, expense_accounts_qs
-from .models import Product, BundleItem, Category, Pclass, InventoryLocation, InventoryMovement, StockTransfer, StockTransferLine
+from .models import Product, BundleItem, Category, Pclass, InventoryLocation, InventoryMovement, StockTransfer, StockTransferLine, Build, BuildLine
 from sowaf.models import Newsupplier
 from accounts.models import Account
 from sales.models import InvoiceItem
@@ -43,12 +44,11 @@ ZERO_DEC = Value(Decimal("0"), output_field=DecimalField(max_digits=18, decimal_
 @module_required("inventory")
 def inventory_products_list(request):
     """
-    Shows products, filtered to Inventory type only.
+    Shows all products for the current company.
     """
     company = request.company
     qs = (
         Product.objects.for_company(company)
-        .filter(type="Inventory")
         .select_related("category", "class_field", "supplier")
         .order_by("name")
     )
@@ -218,27 +218,55 @@ def _find_default_account(company, name_contains: str):
 
 def _default_inventory_asset_account(company):
     """
-    QuickBooks-like default.
-    If you already have a Stock account in CoA, it picks it.
-    Otherwise, returns None.
+    QuickBooks-like default: find or create an Inventory Asset account in the COA.
     """
-    return (
-        _find_default_account(company, "Inventory")
+    company_id = getattr(company, "id", company)
+    acc = (
+        _find_default_account(company, "Inventory Asset")
         or _find_default_account(company, "Stock")
         or _find_default_account(company, "Merchandise")
+    )
+    if acc:
+        return acc
+
+    # Auto-create if not found
+    return Account.objects.create(
+        company_id=company_id,
+        account_name="Inventory Asset",
+        account_type="CURRENT_ASSET",
+        detail_type="Inventory",
+        is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
     )
 
 
 def _default_cogs_account(company):
     """
-    QuickBooks-like default.
+    QuickBooks-like default: find or create a Cost of Goods Sold account in the COA.
     """
-    return (
+    company_id = getattr(company, "id", company)
+    acc = (
         _find_default_account(company, "Cost of Sales")
         or _find_default_account(company, "Cost of Goods")
         or _find_default_account(company, "COGS")
-        or _find_default_account(company, "Expenses")
-        or _find_default_account(company, "Expense")
+    )
+    if acc:
+        return acc
+
+    # Auto-create if not found
+    return Account.objects.create(
+        company_id=company_id,
+        account_name="Cost of Goods Sold",
+        account_type="OPERATING_EXPENSE",
+        detail_type="Supplies & Materials - COGS",
+        is_active=True,
+        is_subaccount=False,
+        parent=None,
+        opening_balance=Decimal("0.00"),
+        as_of=timezone.localdate(),
     )
 
 
@@ -271,6 +299,7 @@ def add_products(request):
         purchase_checkbox = (request.POST.get("purchase_checkbox") == "on")
         display_bundle_contents = (request.POST.get("display_bundle_contents") == "on")
         taxable = (request.POST.get("taxable") == "on")
+        track_inventory = (request.POST.get("track_inventory") == "on")
 
         # IMPORTANT: Product.quantity is DecimalField -> store Decimal, not int
         quantity = _to_dec(request.POST.get("quantity"), default=Decimal("0.00"))
@@ -303,11 +332,18 @@ def add_products(request):
         supplier_id = request.POST.get("supplier")
         supplier = Newsupplier.objects.for_company(company).filter(pk=supplier_id).first() if supplier_id else None
 
+        # Check for duplicate SKU before attempting to create
+        if sku:
+            existing_sku = Product.objects.for_company(company).filter(sku=sku).first()
+            if existing_sku:
+                messages.error(request, f'A product with SKU "{sku}" already exists in this company.')
+                return redirect("inventory:add-products")
+
         product = Product.objects.create(
             company=company,
             type=ptype,
             name=name,
-            sku=sku,
+            sku=sku or None,
             quantity=quantity,
             category=category,
             class_field=class_field,
@@ -319,6 +355,7 @@ def add_products(request):
             sales_price=sales_price,
             purchase_price=purchase_price,
             taxable=taxable,
+            track_inventory=track_inventory,
             income_account=income_account,
             expense_account=expense_account,
             purchase_checkbox=purchase_checkbox,
@@ -326,30 +363,19 @@ def add_products(request):
             display_bundle_contents=display_bundle_contents,
         )
 
-        # QuickBooks-style defaults for Inventory items
-        if product.type == "Inventory":
+        # When track_inventory is checked, auto-create Inventory Asset + COGS accounts
+        if product.track_inventory:
+
             if not getattr(product, "inventory_asset_account_id", None):
-                try:
-                    product.inventory_asset_account = _default_inventory_asset_account(company)
-                except Exception:
-                    pass
+                product.inventory_asset_account = _default_inventory_asset_account(company)
 
             if not getattr(product, "cogs_account_id", None):
-                try:
-                    product.cogs_account = _default_cogs_account(company)
-                except Exception:
-                    pass
+                product.cogs_account = _default_cogs_account(company)
 
             if not getattr(product, "cogs_account_id", None) and product.expense_account_id:
-                try:
-                    product.cogs_account = product.expense_account
-                except Exception:
-                    pass
+                product.cogs_account = product.expense_account
 
-            try:
-                product.save(update_fields=["inventory_asset_account", "cogs_account"])
-            except Exception:
-                pass
+            product.save(update_fields=["inventory_asset_account", "cogs_account"])
 
         # bundle items
         if ptype == "Bundle":
@@ -369,8 +395,8 @@ def add_products(request):
         if action == "save&new":
             return redirect("inventory:add-products")
         elif action == "save&close":
-            return redirect("sales:sales")
-        return redirect("sales:sales")
+            return redirect("inventory:products-list")
+        return redirect("inventory:products-list")
 
     try:
         income_qs = income_accounts_qs(company=company)
@@ -453,6 +479,7 @@ def product_edit(request, pk: int):
         product.sell_checkbox = (request.POST.get("sell_checkbox") == "on")
         product.purchase_checkbox = (request.POST.get("purchase_checkbox") == "on")
         product.taxable = (request.POST.get("taxable") == "on")
+        product.track_inventory = (request.POST.get("track_inventory") == "on")
         product.display_bundle_contents = (request.POST.get("display_bundle_contents") == "on")
 
         product.sales_description = request.POST.get("sales_description") or ""
@@ -466,36 +493,24 @@ def product_edit(request, pk: int):
         product.is_bundle = (ptype == "Bundle")
         product.save()
 
-        # Set defaults again if Inventory and missing
-        if product.type == "Inventory":
+        # When track_inventory is checked, auto-create Inventory Asset + COGS accounts
+        if product.track_inventory:
             changed = False
 
-            try:
-                if not product.inventory_asset_account_id:
-                    product.inventory_asset_account = _default_inventory_asset_account(company)
-                    changed = True
-            except Exception:
-                pass
+            if not product.inventory_asset_account_id:
+                product.inventory_asset_account = _default_inventory_asset_account(company)
+                changed = True
 
-            try:
-                if not product.cogs_account_id:
-                    product.cogs_account = _default_cogs_account(company)
-                    changed = True
-            except Exception:
-                pass
+            if not product.cogs_account_id:
+                product.cogs_account = _default_cogs_account(company)
+                changed = True
 
-            try:
-                if (not product.cogs_account_id) and product.expense_account_id:
-                    product.cogs_account = product.expense_account
-                    changed = True
-            except Exception:
-                pass
+            if not product.cogs_account_id and product.expense_account_id:
+                product.cogs_account = product.expense_account
+                changed = True
 
             if changed:
-                try:
-                    product.save(update_fields=["inventory_asset_account", "cogs_account"])
-                except Exception:
-                    pass
+                product.save(update_fields=["inventory_asset_account", "cogs_account"])
 
         # bundle handling
         if product.is_bundle:
@@ -532,7 +547,7 @@ def product_edit(request, pk: int):
         if action == "save&new":
             return redirect("inventory:add-products")
         if action == "save&close":
-            return redirect("sales:sales")
+            return redirect("inventory:products-list")
         return redirect("inventory:product-detail", pk=product.pk)
 
     try:
@@ -577,7 +592,9 @@ def add_category_ajax(request):
         if not name:
             return JsonResponse({"success": False, "error": "Category name required"})
 
-        cat, created = Category.objects.for_company(company).get_or_create(category_type=name)
+        cat, created = Category.objects.get_or_create(
+            company=company, category_type=name,
+        )
         return JsonResponse({
             "success": True,
             "id": cat.id,
@@ -595,7 +612,9 @@ def add_class_ajax(request):
         if not name:
             return JsonResponse({"success": False, "error": "Class name required"})
 
-        cls, created = Pclass.objects.for_company(company).get_or_create(class_name=name)
+        cls, created = Pclass.objects.get_or_create(
+            company=company, class_name=name,
+        )
         return JsonResponse({
             "success": True,
             "id": cls.id,
@@ -707,8 +726,10 @@ def add_stock_transfer(request):
         # Build movements (OUT from A, IN to B) — no GL posting
         try:
             rebuild_movements_for_stock_transfer(transfer)
-        except Exception:
-            raise
+        except ValueError as e:
+            transfer.delete()
+            messages.error(request, str(e))
+            return redirect("inventory:add-stock-transfer")
 
         return redirect("inventory:stock-transfer-list")
 
@@ -829,3 +850,110 @@ def add_location_ajax(request):
         loc.save(update_fields=["is_active"])
 
     return JsonResponse({"success": True, "id": loc.id, "name": loc.name})
+
+
+# ==========================================================
+# ASSEMBLY BUILDS
+# ==========================================================
+
+@login_required
+@company_required
+@module_required("inventory")
+def build_list(request):
+    company = request.company
+    builds = (
+        Build.objects.for_company(company)
+        .select_related("finished_product")
+        .order_by("-build_date", "-id")
+    )
+    return render(request, "build_list.html", {"builds": builds})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def build_detail(request, pk: int):
+    company = request.company
+    build = get_object_or_404(Build.objects.for_company(company).select_related("finished_product"), pk=pk)
+    lines = build.lines.select_related("component").all()
+    return render(request, "build_detail.html", {"build": build, "lines": lines})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@transaction.atomic
+def add_build(request):
+    company = request.company
+
+    if request.method == "POST":
+        finished_id = request.POST.get("finished_product")
+        build_qty = _dec(request.POST.get("build_qty", "1"), "1")
+        build_date = request.POST.get("build_date") or timezone.localdate()
+        memo = request.POST.get("memo", "")
+
+        finished = Product.objects.for_company(company).filter(pk=finished_id).first()
+        if not finished:
+            return redirect("inventory:add-build")
+
+        build = Build.objects.create(
+            company=company,
+            finished_product=finished,
+            build_qty=build_qty,
+            build_date=build_date,
+            memo=memo,
+            status="PENDING",
+        )
+
+        # Parse component lines
+        comp_ids = request.POST.getlist("component_id[]")
+        comp_qtys = request.POST.getlist("qty_per_unit[]")
+
+        bulk = []
+        for i, cid in enumerate(comp_ids):
+            if not cid:
+                continue
+            component = Product.objects.for_company(company).filter(pk=cid).first()
+            if not component:
+                continue
+            qty = _dec(comp_qtys[i] if i < len(comp_qtys) else "0", "0")
+            if qty <= 0:
+                continue
+            bulk.append(BuildLine(build=build, component=component, qty_per_unit=qty))
+
+        if not bulk:
+            build.delete()
+            return redirect("inventory:add-build")
+
+        BuildLine.objects.bulk_create(bulk)
+
+        return redirect("inventory:build-detail", pk=build.pk)
+
+    products = Product.objects.for_company(company).all().order_by("name")
+    return render(request, "build_form.html", {
+        "products": products,
+        "today": timezone.localdate(),
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@transaction.atomic
+def complete_build_view(request, pk: int):
+    from inventory.accounting import complete_build
+
+    company = request.company
+    build = get_object_or_404(Build.objects.for_company(company), pk=pk)
+
+    if build.status == "COMPLETED":
+        return redirect("inventory:build-detail", pk=build.pk)
+
+    try:
+        complete_build(build)
+    except ValueError as e:
+        from django.contrib import messages
+        messages.error(request, str(e))
+        return redirect("inventory:build-detail", pk=build.pk)
+
+    return redirect("inventory:build-detail", pk=build.pk)

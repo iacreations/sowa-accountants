@@ -67,6 +67,11 @@ class Product(TenantModel):
 
     supplier = models.ForeignKey(Newsupplier, on_delete=models.SET_NULL, null=True, blank=True)
 
+    track_inventory = models.BooleanField(
+        default=False,
+        help_text="When checked, an Inventory Asset account is created in the COA and stock is tracked.",
+    )
+
     is_bundle = models.BooleanField(default=False, blank=True, null=True)
     display_bundle_contents = models.BooleanField(default=False, blank=True, null=True)
 
@@ -127,7 +132,7 @@ class Product(TenantModel):
             models.UniqueConstraint(
                 fields=["company", "sku"],
                 name="uniq_product_sku_per_company",
-                condition=models.Q(sku__isnull=False),
+                condition=models.Q(sku__isnull=False) & ~models.Q(sku=""),
             ),
         ]
 
@@ -161,6 +166,10 @@ class Product(TenantModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+    @property
+    def stock_value(self):
+        return (self.quantity or Decimal("0.00")) * (self.avg_cost or Decimal("0.00"))
 
     def __str__(self):
         return self.name or "Product"
@@ -287,6 +296,8 @@ class InventoryMovement(TenantModel):
         ("ADJUSTMENT", "Adjustment"),
         ("TRANSFER", "Transfer"),
         ("OPENING", "Opening Stock"),
+        ("SALES_RECEIPT", "Sales Receipt"),
+        ("ASSEMBLY", "Assembly Build"),
     ]
 
     product = models.ForeignKey(
@@ -440,3 +451,135 @@ class StockTransferLine(models.Model):
 
     def __str__(self):
         return f"{self.product} x {self.qty} (Transfer {self.transfer_id})"
+
+
+# ==========================================================
+# ASSEMBLY / BUILD
+# ==========================================================
+
+class Build(TenantModel):
+    """
+    Represents an assembly build that converts raw materials (components)
+    into a finished product. When completed:
+      - Component quantities decrease
+      - Finished product quantity increases at accumulated cost
+      - GL: DR Finished Goods Inventory Asset, CR Component Inventory Assets
+    """
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("COMPLETED", "Completed"),
+    ]
+
+    finished_product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="builds_as_finished",
+        help_text="The product being assembled.",
+    )
+    build_qty = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=Decimal("1.00"),
+        help_text="How many units of the finished product to build.",
+    )
+
+    build_date = models.DateField(default=timezone.localdate)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    memo = models.TextField(blank=True, null=True)
+
+    journal_entry = models.OneToOneField(
+        "accounts.JournalEntry",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="build_source",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-build_date", "-id"]
+        indexes = [
+            models.Index(fields=["company", "build_date"]),
+            models.Index(fields=["company", "status"]),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.finished_product_id and self.finished_product.company_id != self.company_id:
+            errors["finished_product"] = "Finished product must belong to the same company."
+        if self.build_qty is not None and self.build_qty <= 0:
+            errors["build_qty"] = "Build quantity must be greater than zero."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def total_component_cost(self):
+        """Sum of (component.avg_cost * qty_per_unit * build_qty) for all lines."""
+        total = Decimal("0.00")
+        for line in self.lines.select_related("component").all():
+            unit_cost = line.component.avg_cost or Decimal("0.00")
+            total += unit_cost * (line.qty_per_unit or Decimal("0.00")) * (self.build_qty or Decimal("1.00"))
+        return total
+
+    def __str__(self):
+        name = self.finished_product.name if self.finished_product_id else "?"
+        return f"Build #{self.id} – {name} x{self.build_qty} ({self.status})"
+
+
+class BuildLine(models.Model):
+    """
+    A component (raw material) used in a build.
+    qty_per_unit is the quantity of this component needed per ONE unit of the finished product.
+    """
+    build = models.ForeignKey(Build, on_delete=models.CASCADE, related_name="lines")
+    component = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="used_in_builds",
+    )
+    qty_per_unit = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=Decimal("1.00"),
+        help_text="Quantity of this component needed per unit of the finished product.",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["build", "component"]),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.build_id and self.component_id:
+            if self.build.company_id != self.component.company_id:
+                errors["component"] = "Component must belong to the same company."
+            if self.build.finished_product_id == self.component_id:
+                errors["component"] = "A build cannot use the finished product as a component."
+        if self.qty_per_unit is not None and self.qty_per_unit <= 0:
+            errors["qty_per_unit"] = "Quantity must be greater than zero."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def total_qty(self):
+        """Total quantity consumed = qty_per_unit * build.build_qty."""
+        return (self.qty_per_unit or Decimal("0.00")) * (self.build.build_qty or Decimal("1.00"))
+
+    @property
+    def total_cost(self):
+        """Total cost = total_qty * component avg_cost."""
+        unit_cost = self.component.avg_cost or Decimal("0.00")
+        return self.total_qty * unit_cost
+
+    def __str__(self):
+        c = self.component.name if self.component_id else "?"
+        return f"{c} x {self.qty_per_unit}/unit (Build #{self.build_id})"

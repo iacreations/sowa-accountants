@@ -70,7 +70,7 @@
       </div>
       <div class="card">
         <div class="label">Total</div>
-        <div class="value">UGX {{ bill.total_amount|floatformat:2|intcomma }}</div>
+        <div class="value">{{ currency_code }} {{ bill.total_amount|floatformat:2|intcomma }}</div>
       </div>
     </div>
   </div>
@@ -106,7 +106,7 @@
             <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
             <td>{% firstof line.customer.customer_name "—" %}</td>
             <td>{% firstof line.class_field.class_name "—" %}</td>
-            <td>UGX {{ line.amount|floatformat:2|intcomma }}</td>
+            <td>{{ currency_code }} {{ line.amount|floatformat:2|intcomma }}</td>
           </tr>
           {% endfor %}
         {% else %}
@@ -140,8 +140,8 @@
             <td>{% firstof line.product.name "—" %}</td>
             <td>{{ line.description|default:"—" }}</td>
             <td>{{ line.qty|floatformat:2 }}</td>
-            <td>UGX {{ line.rate|floatformat:2|intcomma }}</td>
-            <td>UGX {{ line.amount|floatformat:2|intcomma }}</td>
+            <td>{{ currency_code }} {{ line.rate|floatformat:2|intcomma }}</td>
+            <td>{{ currency_code }} {{ line.amount|floatformat:2|intcomma }}</td>
             <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
             <td>{% firstof line.customer.customer_name "—" %}</td>
             <td>{% firstof line.class_field.class_name "—" %}</td>
@@ -155,9 +155,9 @@
 
     <div class="totals">
       <div class="box">
-        <div class="rowflex"><span>Subtotal</span><span>UGX {{ subtotal|floatformat:2|intcomma }}</span></div>
+        <div class="rowflex"><span>Subtotal</span><span>{{ currency_code }} {{ subtotal|floatformat:2|intcomma }}</span></div>
         {# If you add tax later, show it here #}
-        <div class="rowflex"><strong>Total</strong><strong>UGX {{ bill.total_amount|floatformat:2|intcomma }}</strong></div>
+        <div class="rowflex"><strong>Total</strong><strong>{{ currency_code }} {{ bill.total_amount|floatformat:2|intcomma }}</strong></div>
       </div>
     </div>
   </div>

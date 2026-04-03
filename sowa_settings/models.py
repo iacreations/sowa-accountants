@@ -4,8 +4,15 @@ from django.conf import settings
 
 class CompanySettings(models.Model):
     """
-    Global company settings for this company file.
+    Per-company settings (one row per tenant).
     """
+    company = models.OneToOneField(
+        "tenancy.Company",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="company_settings",
+    )
     company_name = models.CharField(max_length=255, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
@@ -41,6 +48,13 @@ class Currency(models.Model):
     Example with home = UGX:
         USD rate_to_home = 3575.65 means 1 USD = 3575.65 UGX
     """
+    company = models.ForeignKey(
+        "tenancy.Company",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="currencies",
+    )
     code = models.CharField(max_length=10)             # USD, EUR, UGX…
     name = models.CharField(max_length=100)           # United States Dollar
     is_home = models.BooleanField(default=False)      # True only for the home currency
@@ -53,7 +67,7 @@ class Currency(models.Model):
     last_updated = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("code", "is_home")
+        unique_together = ("code", "company")
 
     def __str__(self):
         return f"{self.code} - {self.name}"

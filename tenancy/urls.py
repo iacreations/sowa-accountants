@@ -23,4 +23,5 @@ urlpatterns = [
     path("settings/users/invite/", views.client_invite_user, name="client_invite_user"),
     path("settings/users/<int:member_id>/role/", views.client_update_member_role, name="client_update_member_role"),
     path("settings/users/<int:member_id>/deactivate/", views.client_deactivate_member, name="client_deactivate_member"),
+    path("settings/users/<int:member_id>/reactivate/", views.client_reactivate_member, name="client_reactivate_member"),
 ]

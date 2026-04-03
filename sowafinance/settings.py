@@ -60,6 +60,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'sowaAuth.middleware.SessionSecurityMiddleware',
     'tenancy.middleware.CompanyMiddleware', #for client books
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -192,3 +193,10 @@ EMAIL_HOST_USER = "namanyajim46@gmail.com"
 EMAIL_HOST_PASSWORD = "ifdx eryx pazy sehq"
 
 DEFAULT_FROM_EMAIL = "YoAccountant <namanyajim46@gmail.com>"
+
+# =========================
+# Session Security
+# =========================
+SESSION_COOKIE_AGE = 300             # 5 minutes hard expiry
+SESSION_SAVE_EVERY_REQUEST = True     # reset expiry on every request (activity keeps session alive)
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True

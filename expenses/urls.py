@@ -28,6 +28,7 @@ urlpatterns = [
     path("cheques/<int:pk>/", views.cheque_detail, name="cheque-detail"),
     path("cheques/<int:pk>/edit/", views.cheque_edit, name="cheque-edit"),
     path("api/outstanding-bills/", views.outstanding_bills_api, name="outstanding_bills_api"),
+    path("api/products-by-supplier/", views.products_by_supplier_ajax, name="products_by_supplier_ajax"),
 
     # Purchase Orders
     path("purchase-order", views.purchase_order, name="purchase_order"),

@@ -366,19 +366,27 @@
           <input type="text" name="sales_rep" value="{% if edit_mode %}{{ inv.sales_rep }}{% endif %}">
         </div>
 
-        <!-- ✅ NEW: LOCATION (FK) + Add New -->
         <div class="form-group">
           <label>Location</label>
-          <select name="location" id="locationSelect" class="form-control">
-            <option value="">Select Location</option>
-            {% for loc in locations %}
-              <option value="{{ loc.id }}"
-                {% if edit_mode and inv.location_id == loc.id %}selected{% endif %}>
-                {{ loc.name }}
-              </option>
-            {% endfor %}
-            <option value="add_new">➕ Add New</option>
-          </select>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select name="location" id="locationSelect" class="form-control" style="flex:1;">
+              <option value="">Select Location</option>
+              {% for loc in locations %}
+                <option value="{{ loc.id }}"
+                  {% if edit_mode and inv.location_id == loc.id %}selected{% endif %}>
+                  {{ loc.name }}
+                </option>
+              {% endfor %}
+            </select>
+            <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="toggleAddLocationBox()">+ Add</button>
+          </div>
+          <div id="addLocationBox" style="display:none;margin-top:8px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+            <input type="text" id="newLocationName" placeholder="Location name" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;">
+            <div style="margin-top:8px;display:flex;gap:6px;">
+              <button type="button" class="btn btn-sm" style="background:#39B54B;color:#fff;" onclick="saveNewLocation()">Save</button>
+              <button type="button" class="btn btn-sm" style="background:#e5e7eb;" onclick="document.getElementById('addLocationBox').style.display='none'">Cancel</button>
+            </div>
+          </div>
         </div>
 
         <!-- CLASS with + Add (AJAX) -->
@@ -732,53 +740,44 @@
       .catch(() => alert("Network error. Try again."));
     }
 
-    // ✅ NEW: Add Location inline (AJAX)
-    function addNewLocationInline(selectEl){
-      const name = (prompt("Enter new location name:") || "").trim();
-      if(!name){ selectEl.value = ""; return; }
+    function toggleAddLocationBox(){
+      const box = document.getElementById('addLocationBox');
+      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+      if(box.style.display !== 'none') document.getElementById('newLocationName').focus();
+    }
+
+    function saveNewLocation(){
+      const nameInput = document.getElementById('newLocationName');
+      const name = (nameInput.value || '').trim();
+      if(!name){ nameInput.focus(); return; }
 
       fetch(ADD_LOCATION_AJAX_URL, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "X-CSRFToken": getCookie("csrftoken"),
-          "Content-Type": "application/x-www-form-urlencoded"
+          'X-CSRFToken': getCookie('csrftoken'),
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: "name=" + encodeURIComponent(name)
+        body: 'name=' + encodeURIComponent(name)
       })
       .then(res => res.json())
       .then(data => {
         if(data && data.success){
-          const opt = document.createElement("option");
+          const sel = document.getElementById('locationSelect');
+          const opt = document.createElement('option');
           opt.value = data.id;
           opt.textContent = data.name;
           opt.selected = true;
-
-          const addNewOpt = selectEl.querySelector('option[value="add_new"]');
-          if (addNewOpt) selectEl.insertBefore(opt, addNewOpt);
-          else selectEl.appendChild(opt);
-
-          selectEl.value = String(data.id);
+          sel.appendChild(opt);
+          sel.value = String(data.id);
+          nameInput.value = '';
+          document.getElementById('addLocationBox').style.display = 'none';
         } else {
-          alert((data && data.error) ? data.error : "Failed to add location");
-          selectEl.value = "";
+          alert((data && data.error) ? data.error : 'Failed to add location');
         }
       })
-      .catch(() => {
-        alert("Network error. Try again.");
-        selectEl.value = "";
-      });
+      .catch(() => alert('Network error. Try again.'));
     }
 
-    // ✅ NEW: handle location add_new
-    (function(){
-      const sel = document.getElementById("locationSelect");
-      if(!sel) return;
-      sel.addEventListener("change", function(){
-        if(this.value === "add_new"){
-          addNewLocationInline(this);
-        }
-      });
-    })();
 
     function addDaysISO(isoDate, days){
       if(!isoDate) return "";

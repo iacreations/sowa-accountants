@@ -91,18 +91,26 @@
             <input type="text" name="bill_no" value="{{ generated_bill_no }}" readonly style="color: #39B54B; font-weight: 700;">
           </div>
 
-          <!-- ✅ UPDATED LOCATION FIELD -->
           <div class="form-group">
             <label>Location</label>
-            <select name="location" id="locationSelect">
-              <option value="">-- Select location --</option>
-              {% for loc in locations %}
-                <option value="{{ loc.id }}" {% if bill and bill.location_id == loc.id %}selected{% endif %}>
-                  {{ loc.name }}
-                </option>
-              {% endfor %}
-              <option value="add_new">➕ Add New</option>
-            </select>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <select name="location" id="locationSelect" style="flex:1;">
+                <option value="">-- Select location --</option>
+                {% for loc in locations %}
+                  <option value="{{ loc.id }}" {% if bill and bill.location_id == loc.id %}selected{% endif %}>
+                    {{ loc.name }}
+                  </option>
+                {% endfor %}
+              </select>
+              <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="toggleAddLocationBox()">+ Add</button>
+            </div>
+            <div id="addLocationBox" style="display:none;margin-top:8px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+              <input type="text" id="newLocationName" placeholder="Location name" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;">
+              <div style="margin-top:8px;display:flex;gap:6px;">
+                <button type="button" class="btn btn-sm" style="background:#39B54B;color:#fff;" onclick="saveNewLocation()">Save</button>
+                <button type="button" class="btn btn-sm" style="background:#e5e7eb;" onclick="document.getElementById('addLocationBox').style.display='none'">Cancel</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -345,7 +353,7 @@
 
       <!-- Totals -->
       <input class="totals" id="totalAmount" readonly
-             value="Total: UGX {% if bill %}{{ bill.total_amount|default:'0.00' }}{% else %}0.00{% endif %}"/>
+             value="Total: {{ currency_code }} {% if bill %}{{ bill.total_amount|default:'0.00' }}{% else %}0.00{% endif %}"/>
 
       <!-- Memo -->
       <div class="form-group" style="margin-bottom: 30px;">
@@ -372,7 +380,7 @@
         <a href="{% url 'expenses:bills-list' %}"><button class="btn btn-cancel" type="button" style="background-color: #39B54B; color: white;" >Cancel</button></a>
 
         <div class="dropdown">
-          <button type="button" class="btn btn-green" id="saveMenuBtn">Save ▼</button>
+          <button type="submit" name="save_action" value="save" class="btn btn-green" id="saveMenuBtn">Save ▼</button>
           <div class="dropdown-menu" id="saveMenu">
             <button type="submit" name="save_action" value="save">Save</button>
             <button type="submit" name="save_action" value="save&new">Save & New</button>
@@ -500,60 +508,74 @@
       });
     }
 
-    // ✅ NEW: add new location inline (no style change)
-    function addNewLocationInline(selectEl){
-      const name = (prompt("Enter new location name:") || "").trim();
-      if(!name){ selectEl.value = ""; return; }
+    function toggleAddLocationBox(){
+      const box = document.getElementById('addLocationBox');
+      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+      if(box.style.display !== 'none') document.getElementById('newLocationName').focus();
+    }
+
+    function saveNewLocation(){
+      const nameInput = document.getElementById('newLocationName');
+      const name = (nameInput.value || '').trim();
+      if(!name){ nameInput.focus(); return; }
 
       fetch(ADD_LOCATION_AJAX_URL, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "X-CSRFToken": getCookie("csrftoken"),
-          "Content-Type": "application/x-www-form-urlencoded"
+          'X-CSRFToken': getCookie('csrftoken'),
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: "name=" + encodeURIComponent(name)
+        body: 'name=' + encodeURIComponent(name)
       })
       .then(res => res.json())
       .then(data => {
         if(data && data.success){
-          const opt = document.createElement("option");
+          const sel = document.getElementById('locationSelect');
+          const opt = document.createElement('option');
           opt.value = data.id;
           opt.textContent = data.name;
           opt.selected = true;
-
-          const last = selectEl.querySelector('option[value="add_new"]');
-          selectEl.insertBefore(opt, last);
-          selectEl.value = String(data.id);
+          sel.appendChild(opt);
+          sel.value = String(data.id);
+          nameInput.value = '';
+          document.getElementById('addLocationBox').style.display = 'none';
         } else {
-          alert((data && data.error) ? data.error : "Failed to add location");
-          selectEl.value = "";
+          alert((data && data.error) ? data.error : 'Failed to add location');
         }
       })
-      .catch(() => {
-        alert("Network error. Try again.");
-        selectEl.value = "";
-      });
+      .catch(() => alert('Network error. Try again.'));
     }
 
     // open Add supplier in new tab if chosen (your existing logic, kept)
+    // Product options with inventory tracking flag
+    const ALL_PRODUCTS = [
+      {% for p in products %}
+      { id: {{ p.id }}, name: "{{ p.name|escapejs }}", supplier_id: "{{ p.supplier_id|default:'' }}", purchase_price: "{{ p.purchase_price|default:'0' }}", description: "{{ p.purchase_description|default:p.sales_description|default:''|escapejs }}", track_inventory: {{ p.track_inventory|yesno:'true,false' }} },
+      {% endfor %}
+    ];
+
+    function buildProductOptions(selectedId) {
+      let opts = '<option value="">-- Select --</option>';
+      ALL_PRODUCTS.forEach(p => {
+        opts += `<option value="${p.id}" data-price="${p.purchase_price}" data-desc="${p.description}"${String(p.id) === String(selectedId) ? ' selected' : ''}>${p.name}</option>`;
+      });
+      opts += '<option value="add_new">➕ Add New</option>';
+      return opts;
+    }
+
+    function refreshAllProductSelects() {
+      document.querySelectorAll('#itemTable tbody select[name="item_product[]"]').forEach(sel => {
+        const prev = sel.value;
+        sel.innerHTML = buildProductOptions(prev);
+      });
+    }
+
     (function(){
       const sel = document.getElementById('supplier-select');
       if (sel){
         sel.addEventListener('change', function(){
           if (this.value === 'add_new'){
             openAddSupplier(this);
-          }
-        });
-      }
-    })();
-
-    // ✅ Location header handler
-    (function(){
-      const locSel = document.getElementById("locationSelect");
-      if(locSel){
-        locSel.addEventListener("change", function(){
-          if(this.value === "add_new"){
-            addNewLocationInline(this);
           }
         });
       }
@@ -646,12 +668,8 @@
       row.innerHTML = `
         <td></td>
         <td>
-          <select name="item_product[]">
-            <option value="">-- Select --</option>
-            {% for p in products %}
-              <option value="{{ p.id }}">{{ p.name }}</option>
-            {% endfor %}
-            <option value="add_new">➕ Add New</option>
+          <select name="item_product[]" onchange="fillFromProduct(this)">
+            ${buildProductOptions('')}
           </select>
         </td>
         <td><input type="text" name="item_desc[]"></td>
@@ -688,6 +706,21 @@
     }
 
     // Amount math
+    function fillFromProduct(sel) {
+      if (sel.value === 'add_new') { openAddProduct(sel); return; }
+      const opt = sel.options[sel.selectedIndex];
+      if (!opt || !opt.value) return;
+      const row = sel.closest('tr');
+      const descIn = row.querySelector('input[name="item_desc[]"]');
+      const rateIn = row.querySelector('input[name="item_rate[]"]');
+      if (descIn && opt.dataset.desc) descIn.value = opt.dataset.desc;
+      if (rateIn && opt.dataset.price && parseFloat(opt.dataset.price) > 0) {
+        rateIn.value = opt.dataset.price;
+        updateItemAmount(rateIn);
+        updateTotal();
+      }
+    }
+
     function updateItemAmount(input) {
       const row = input.closest("tr");
       const qty  = parseFloat(row.querySelector('input[name="item_qty[]"]').value)  || 0;
@@ -711,7 +744,7 @@
         total += (parseFloat(amtEl && amtEl.value) || 0);
       });
 
-      document.getElementById("totalAmount").value = "Total: UGX " + total.toFixed(2);
+      document.getElementById("totalAmount").value = "Total: {{ currency_code }} " + total.toFixed(2);
     }
 
     // Event delegation for all dynamic selects (works for new rows too)

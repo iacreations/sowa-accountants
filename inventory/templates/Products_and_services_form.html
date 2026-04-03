@@ -246,9 +246,22 @@
         <i class='bx bxs-down-arrow'></i>
       </div>
     </nav>
-  <a href="" class="btn button">Back to Product List</a>
+  <a href="{% url 'inventory:products-list' %}" class="btn button">Back to Product List</a>
   <div class="container">
     <h2 class="title">{% if edit_mode %}Edit{% else %}New{% endif %} Product/Service</h2>
+
+    {% if messages %}
+    <div style="margin-bottom:15px;">
+      {% for message in messages %}
+        <div style="padding:10px 15px; border-radius:6px; margin-bottom:8px;
+          {% if message.tags == 'error' %}background:#fce4e4; color:#d11a2a; border:1px solid #f5c6cb;
+          {% elif message.tags == 'success' %}background:#d4edda; color:#155724; border:1px solid #c3e6cb;
+          {% else %}background:#fff3cd; color:#856404; border:1px solid #ffeeba;{% endif %}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="section-wrapper">
       <form method="POST"
@@ -260,8 +273,8 @@
           <div class="form-group">
             <label>Type</label>
             <select id="typeSelect" name="type" onchange="handleTypeChange()">
-              <option value="Non-Inventory" {% if edit_mode and product.type == "Non-Inventory" %}selected{% endif %}>Non-Inventory</option>
               <option value="Inventory" {% if edit_mode and product.type == "Inventory" %}selected{% endif %}>Inventory</option>
+              <option value="Non-Inventory" {% if edit_mode and product.type == "Non-Inventory" %}selected{% endif %}>Non-Inventory</option>
               <option value="Service" {% if edit_mode and product.type == "Service" %}selected{% endif %}>Service</option>
               <option value="Bundle" {% if edit_mode and product.type == "Bundle" %}selected{% endif %}>Bundle</option>
             </select>
@@ -334,6 +347,15 @@
             <label>Taxable
               <input type="checkbox" class="mx-3" name="taxable" {% if edit_mode and product.taxable %}checked{% endif %}>
             </label>
+          </div>
+
+          <!-- Track Inventory (shown only for Inventory type) -->
+          <div class="form-group mx-5" id="trackInventoryGroup" style="display:none;">
+            <label>Track Inventory
+              <input type="checkbox" class="mx-3" name="track_inventory" id="trackInventoryCheckbox"
+                     {% if edit_mode and product.track_inventory %}checked{% endif %}>
+            </label>
+            <small style="color:#666;">When checked, an Inventory Asset account is created in the COA and stock is tracked.</small>
           </div>
 
           <!-- Sell to customers -->
@@ -504,9 +526,9 @@
         </div>
 
       <div class="footer">
-        <a href="{% url 'expenses:expenses' %}" class="btn button" style="text-decoration: none;">Cancel</a>
+        <a href="{% url 'inventory:products-list' %}" class="btn button" style="text-decoration: none;">Cancel</a>
         <div class="dropdown">
-          <button type="button" class="btn btn-green">Save ▼</button>
+          <button type="submit" name="save_action" value="save" class="btn btn-green">Save ▼</button>
           <div class="dropdown-menu">
             <button type="submit" name="save_action" value="save">Save</button>
             <button type="submit" name="save_action" value="save&new">Save & New</button>
@@ -518,7 +540,6 @@
     </div>
   </div>
 
-  <script src=" {% static 'sowaf/styles/script.js' %} "></script>
   <script>
     const SUPPLIERS_LIST_URL = "{% url 'inventory:suppliers-list-json' %}";
 
@@ -530,6 +551,12 @@
     function handleTypeChange() {
       const type = document.getElementById("typeSelect").value;
       document.getElementById("bundleExtras").style.display = (type === "Bundle") ? "block" : "none";
+
+      // Show track inventory checkbox only for Inventory type
+      const trackGroup = document.getElementById("trackInventoryGroup");
+      if (trackGroup) {
+        trackGroup.style.display = (type === "Inventory") ? "block" : "none";
+      }
     }
 
     function addBundleRow() {

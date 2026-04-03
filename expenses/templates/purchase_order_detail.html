@@ -176,11 +176,11 @@
       <div class="column">
         <div class="label">Total Amount</div>
         <div class="value" style="font-size:18px; font-weight:700;">
-          UGX {{ po.total_amount|floatformat:2|intcomma }}
+          {{ currency_code }} {{ po.total_amount|floatformat:2|intcomma }}
         </div>
         <div class="label">Subtotal</div>
         <div class="value">
-          UGX {{ subtotal|floatformat:2|intcomma }}
+          {{ currency_code }} {{ subtotal|floatformat:2|intcomma }}
         </div>
       </div>
     </div>

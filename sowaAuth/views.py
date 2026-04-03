@@ -222,6 +222,12 @@ def login_user(request):
     # CLIENT LOGIN FLOW => DIRECT LOGIN
     # -------------------------------------------------
     login(request, user)
+
+    # Enforce single session: save current session key on user
+    if request.session.session_key:
+        user.session_key = request.session.session_key
+        user.save(update_fields=["session_key"])
+
     messages.success(request, "Login successful")
 
     memberships = CompanyMember.objects.filter(
@@ -287,6 +293,11 @@ def staff_otp_verify(request):
         otp.save(update_fields=["is_used"])
 
         login(request, user, backend="sowaAuth.backends.UsernameEmailPhoneBackend")
+
+        # Enforce single session: save current session key on user
+        if request.session.session_key:
+            user.session_key = request.session.session_key
+            user.save(update_fields=["session_key"])
 
         # IMPORTANT:
         # Sowa workspace should NOT set a client company.

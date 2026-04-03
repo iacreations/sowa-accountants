@@ -67,7 +67,7 @@
             {% endif %}
           </td>
           <td>{{ chq.bank_account.account_name }}</td>
-          <td style="text-align:right;">UGX {{ chq.total_amount|floatformat:2 }}</td>
+          <td style="text-align:right;">{{ currency_code }} {{ chq.total_amount|floatformat:2 }}</td>
           <td>
             <a href="{% url 'expenses:cheque-detail' chq.id %}">View</a> |
             <a href="{% url 'expenses:cheque-edit' chq.id %}">Edit</a>
@@ -80,7 +80,7 @@
     </table>
 
     <div class="totals">
-      Total amount: UGX {{ totals.grand|default:"0.00"|floatformat:2 }}
+      Total amount: {{ currency_code }} {{ totals.grand|default:"0.00"|floatformat:2 }}
     </div>
 
     {% if page_obj.has_other_pages %}

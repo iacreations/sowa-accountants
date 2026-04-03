@@ -243,7 +243,7 @@
 
       <!-- Total -->
       <div class="total">
-        Total: UGX <span id="totalAmount">
+        Total: {{ currency_code }} <span id="totalAmount">
           {% if po %}{{ po.total_amount|floatformat:2 }}{% else %}0.00{% endif %}
         </span>
       </div>
@@ -258,7 +258,7 @@
           <button class="btn btn-light-green" type="button" onclick="sendEmail()">Email</button>
         </div>
         <div class="dropdown">
-          <button type="button" class="btn btn-green">Save ▼</button>
+          <button type="submit" name="save_action" value="save" class="btn btn-green">Save ▼</button>
           <div class="dropdown-menu">
             <button type="submit" name="save_action" value="save">Save</button>
             <button type="submit" name="save_action" value="save&new">Save & New</button>

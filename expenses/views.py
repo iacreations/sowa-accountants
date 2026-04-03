@@ -45,6 +45,7 @@ from django.views.decorators.http import require_http_methods
 from inventory.models import Product, Pclass, InventoryLocation, InventoryMovement
 from .utils import (generate_unique_ref_no, _save_cheque_bill_allocations, bankish_q)
 from inventory.services import (rebuild_movements_for_bill, rebuild_movements_for_expense, get_main_store)
+from inventory.accounting import post_bill_to_gl, post_expense_to_gl
 
 # Expenses view
 
@@ -2106,7 +2107,6 @@ def _dec(v, default="0.00"):
 @login_required
 @company_required
 @module_required("expenses")
-@transaction.atomic
 def add_expense(request):
     company = request.company
     company_id = getattr(company, "id", company)
@@ -2261,19 +2261,18 @@ def add_expense(request):
 
                 exp.total_amount = total
                 exp.save(update_fields=["total_amount"])
+            # GL posting outside the save transaction so a posting failure never rolls back the document
+            try:
+                post_expense_to_gl(exp)
+            except Exception as gl_err:
+                messages.warning(request, f"Expense saved but GL posting failed: {gl_err}")
 
-                # Keep your GL logic intact
-                _post_expense_to_ledger(exp)
-
-                # Inventory only (uses FK location)
-                rebuild_movements_for_expense(exp)
-
-                action = request.POST.get("save_action") or "save"
-                if action == "save":
-                    return redirect("expenses:expense-list")
-                if action == "save&new":
-                    return redirect("expenses:add-expenses")
+            action = request.POST.get("save_action") or "save"
+            if action == "save":
                 return redirect("expenses:expense-list")
+            if action == "save&new":
+                return redirect("expenses:add-expenses")
+            return redirect("expenses:expense-list")
 
         except Exception as e:
             messages.error(request, f"Could not save expense: {e}")
@@ -2316,7 +2315,6 @@ def add_expense(request):
 @login_required
 @company_required
 @module_required("expenses")
-@transaction.atomic
 def expense_edit(request, pk: int):
     company = request.company
     company_id = getattr(company, "id", company)
@@ -2470,18 +2468,17 @@ def expense_edit(request, pk: int):
                 exp.total_amount = total
                 exp.save(update_fields=["total_amount"])
 
-                # Keep GL logic unchanged
-                _post_expense_to_ledger(exp)
+            try:
+                post_expense_to_gl(exp)
+            except Exception as gl_err:
+                messages.warning(request, f"Expense saved but GL posting failed: {gl_err}")
 
-                # Inventory rebuild uses FK location
-                rebuild_movements_for_expense(exp)
-
-                action = request.POST.get("save_action") or "save"
-                if action == "save&new":
-                    return redirect("expenses:add-expenses")
-                if action == "save":
-                    return redirect("expenses:expenses")
-                return redirect("expenses:expense-detail", pk=exp.pk)
+            action = request.POST.get("save_action") or "save"
+            if action == "save&new":
+                return redirect("expenses:add-expenses")
+            if action == "save":
+                return redirect("expenses:expenses")
+            return redirect("expenses:expense-detail", pk=exp.pk)
 
         except Exception as e:
             messages.error(request, f"Could not update expense: {e}")
@@ -2624,7 +2621,6 @@ def get_default_location(company):
 @login_required
 @company_required
 @module_required("expenses")
-@transaction.atomic
 def add_bill(request):
     company = request.company
     company_id = getattr(company, "id", company)
@@ -2665,104 +2661,109 @@ def add_bill(request):
             if not location_obj:
                 location_obj = get_default_location(company)
 
-            bill = Bill.objects.create(
-                company_id=company_id,
-                supplier=supplier,
-                supplier_name=None if supplier else supplier_name,
-                mailing_address=mailing_address,
-                terms=terms,
-                bill_date=bill_date,
-                due_date=due_date,
-                bill_no=bill_no,
+            with transaction.atomic():
+                bill = Bill.objects.create(
+                    company_id=company_id,
+                    supplier=supplier,
+                    supplier_name=None if supplier else supplier_name,
+                    mailing_address=mailing_address,
+                    terms=terms,
+                    bill_date=bill_date,
+                    due_date=due_date,
+                    bill_no=bill_no,
 
-                # CHANGED
-                location=location_obj,
+                    # CHANGED
+                    location=location_obj,
 
-                memo=memo,
-                attachments=attachment,
-            )
-
-            total = Decimal("0.00")
-
-            # ---------- Category lines ----------
-            cat_category_ids = request.POST.getlist("cat_category[]")
-            cat_descs = request.POST.getlist("cat_desc[]")
-            cat_amounts = request.POST.getlist("cat_amount[]")
-            cat_billable = set(request.POST.getlist("cat_billable[]"))
-            cat_customer_ids = request.POST.getlist("cat_customer[]")
-            cat_class_ids = request.POST.getlist("cat_class[]")
-
-            for idx, acc_id in enumerate(cat_category_ids):
-                if not acc_id or acc_id == "add_new":
-                    continue
-                account = expense_qs.filter(pk=acc_id).first()
-                if not account:
-                    continue
-                if getattr(account, "company_id", None) != company_id:
-                    raise ValueError("Selected expense account belongs to another company.")
-
-                amt = _dec(cat_amounts[idx])
-                if amt <= 0:
-                    continue
-
-                is_bill = str(idx) in cat_billable
-                customer = Newcustomer.objects.for_company(company).filter(pk=(cat_customer_ids[idx] or None)).first()
-                klass = Pclass.objects.for_company(company).filter(pk=(cat_class_ids[idx] or None)).first()
-
-                BillCategoryLine.objects.create(
-                    bill=bill, category=account,
-                    description=(cat_descs[idx] or ""),
-                    amount=amt, is_billable=is_bill,
-                    customer=customer, class_field=klass
+                    memo=memo,
+                    attachments=attachment,
                 )
-                total += amt
 
-            # ---------- Item lines ----------
-            item_product_ids = request.POST.getlist("item_product[]")
-            item_descs = request.POST.getlist("item_desc[]")
-            item_qtys = request.POST.getlist("item_qty[]")
-            item_rates = request.POST.getlist("item_rate[]")
-            item_amounts = request.POST.getlist("item_amount[]")
-            item_billable = set(request.POST.getlist("item_billable[]"))
-            item_customer_ids = request.POST.getlist("item_customer[]")
-            item_class_ids = request.POST.getlist("item_class[]")
+                total = Decimal("0.00")
 
-            for idx, prod_id in enumerate(item_product_ids):
-                if not prod_id:
-                    continue
-                product = Product.objects.for_company(company).filter(pk=prod_id).first()
-                if not product:
-                    continue
-                if hasattr(product, "company_id") and product.company_id != company_id:
-                    raise ValueError("Selected product belongs to another company.")
+                # ---------- Category lines ----------
+                cat_category_ids = request.POST.getlist("cat_category[]")
+                cat_descs = request.POST.getlist("cat_desc[]")
+                cat_amounts = request.POST.getlist("cat_amount[]")
+                cat_billable = set(request.POST.getlist("cat_billable[]"))
+                cat_customer_ids = request.POST.getlist("cat_customer[]")
+                cat_class_ids = request.POST.getlist("cat_class[]")
 
-                qty = _dec(item_qtys[idx], "0")
-                rate = _dec(item_rates[idx], "0")
-                amt = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
-                if amt <= 0:
-                    continue
+                for idx, acc_id in enumerate(cat_category_ids):
+                    if not acc_id or acc_id == "add_new":
+                        continue
+                    account = expense_qs.filter(pk=acc_id).first()
+                    if not account:
+                        continue
+                    if getattr(account, "company_id", None) != company_id:
+                        raise ValueError("Selected expense account belongs to another company.")
 
-                is_bill = str(idx) in item_billable
-                customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
-                klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+                    amt = _dec(cat_amounts[idx])
+                    if amt <= 0:
+                        continue
 
-                BillItemLine.objects.create(
-                    bill=bill, product=product,
-                    description=(item_descs[idx] or ""),
-                    qty=qty, rate=rate, amount=amt,
-                    is_billable=is_bill, customer=customer, class_field=klass
-                )
-                total += amt
+                    is_bill = str(idx) in cat_billable
+                    customer = Newcustomer.objects.for_company(company).filter(pk=(cat_customer_ids[idx] or None)).first()
+                    klass = Pclass.objects.for_company(company).filter(pk=(cat_class_ids[idx] or None)).first()
 
-            if total <= 0:
-                bill.delete()
-                return redirect("expenses:add-bill")
+                    BillCategoryLine.objects.create(
+                        bill=bill, category=account,
+                        description=(cat_descs[idx] or ""),
+                        amount=amt, is_billable=is_bill,
+                        customer=customer, class_field=klass
+                    )
+                    total += amt
 
-            bill.total_amount = total
-            bill.save(update_fields=["total_amount"])
+                # ---------- Item lines ----------
+                item_product_ids = request.POST.getlist("item_product[]")
+                item_descs = request.POST.getlist("item_desc[]")
+                item_qtys = request.POST.getlist("item_qty[]")
+                item_rates = request.POST.getlist("item_rate[]")
+                item_amounts = request.POST.getlist("item_amount[]")
+                item_billable = set(request.POST.getlist("item_billable[]"))
+                item_customer_ids = request.POST.getlist("item_customer[]")
+                item_class_ids = request.POST.getlist("item_class[]")
 
-            _post_bill_to_ledger(bill)
-            rebuild_movements_for_bill(bill)
+                for idx, prod_id in enumerate(item_product_ids):
+                    if not prod_id:
+                        continue
+                    product = Product.objects.for_company(company).filter(pk=prod_id).first()
+                    if not product:
+                        continue
+                    if hasattr(product, "company_id") and product.company_id != company_id:
+                        raise ValueError("Selected product belongs to another company.")
+
+                    qty = _dec(item_qtys[idx], "0")
+                    rate = _dec(item_rates[idx], "0")
+                    amt = _dec(item_amounts[idx]) if (idx < len(item_amounts) and item_amounts[idx]) else (qty * rate)
+                    if amt <= 0:
+                        continue
+
+                    is_bill = str(idx) in item_billable
+                    customer = Newcustomer.objects.for_company(company).filter(pk=(item_customer_ids[idx] or None)).first()
+                    klass = Pclass.objects.for_company(company).filter(pk=(item_class_ids[idx] or None)).first()
+
+                    BillItemLine.objects.create(
+                        bill=bill, product=product,
+                        description=(item_descs[idx] or ""),
+                        qty=qty, rate=rate, amount=amt,
+                        is_billable=is_bill, customer=customer, class_field=klass
+                    )
+                    total += amt
+
+                if total <= 0:
+                    bill.delete()
+                    return redirect("expenses:add-bill")
+
+                bill.total_amount = total
+                bill.save(update_fields=["total_amount"])
+
+            # GL posting runs AFTER the document is committed — a failure here
+            # never rolls back the saved bill.
+            try:
+                post_bill_to_gl(bill)
+            except Exception as gl_err:
+                messages.warning(request, f"Bill saved but GL posting failed: {gl_err}")
 
             action = request.POST.get("save_action") or "save"
             if action == "save":
@@ -2804,7 +2805,6 @@ def add_bill(request):
 @login_required
 @company_required
 @module_required("expenses")
-@transaction.atomic
 def edit_bill(request, pk: int):
     company = request.company
     company_id = getattr(company, "id", company)
@@ -2945,8 +2945,10 @@ def edit_bill(request, pk: int):
             bill.total_amount = total
             bill.save(update_fields=["total_amount"])
 
-            _post_bill_to_ledger(bill)
-            rebuild_movements_for_bill(bill)
+            try:
+                post_bill_to_gl(bill)
+            except Exception as gl_err:
+                messages.warning(request, f"Bill saved but GL posting failed: {gl_err}")
 
             action = request.POST.get("save_action") or "save"
             if action == "save&new":
@@ -3179,6 +3181,30 @@ def _save_cheque_open_balance(request, cheque: "Cheque"):
 @login_required
 @company_required
 @module_required("expenses")
+def products_by_supplier_ajax(request):
+    """Return JSON list of products for a given supplier (or all products if no supplier)."""
+    company = request.company
+    supplier_id = request.GET.get("supplier_id") or ""
+    qs = Product.objects.for_company(company).order_by("name")
+    if supplier_id:
+        qs = qs.filter(supplier_id=supplier_id)
+    data = [
+        {
+            "id": p.id,
+            "name": p.name or "",
+            "type": p.type or "",
+            "purchase_price": str(p.purchase_price or "0.00"),
+            "description": p.purchase_description or p.sales_description or "",
+        }
+        for p in qs
+    ]
+    return JsonResponse({"products": data})
+
+
+@require_GET
+@login_required
+@company_required
+@module_required("expenses")
 def outstanding_bills_api(request):
     company = request.company
     supplier_id = request.GET.get("supplier")
@@ -3227,7 +3253,6 @@ def outstanding_bills_api(request):
 @login_required
 @company_required
 @module_required("expenses")
-@transaction.atomic
 def add_cheque(request):
     company = request.company
     company_id = getattr(company, "id", company)
@@ -3402,8 +3427,11 @@ def add_cheque(request):
                 cheque.total_amount = alloc_total + open_total + total_direct
                 cheque.save(update_fields=["total_amount"])
 
-                # Post to GL (supports bills + open balance + direct)
+            # Post to GL outside the save transaction
+            try:
                 _post_cheque_to_ledger(cheque)
+            except Exception as gl_err:
+                messages.warning(request, f"Cheque saved but GL posting failed: {gl_err}")
 
             action = request.POST.get("save_action") or "save"
             if action == "save&new":

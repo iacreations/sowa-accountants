@@ -21,4 +21,10 @@ urlpatterns = [
     path("locations/", views.locations_list_json, name="locations-list-json"),
     path("locations/create/", views.location_create_json, name="location-create-json"),
     path("locations/add-ajax/", views.add_location_ajax, name="add_location_ajax"),
+
+    # Assembly builds
+    path("builds/", views.build_list, name="build-list"),
+    path("builds/new/", views.add_build, name="add-build"),
+    path("builds/<int:pk>/", views.build_detail, name="build-detail"),
+    path("builds/<int:pk>/complete/", views.complete_build_view, name="complete-build"),
 ]

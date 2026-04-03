@@ -61,7 +61,7 @@
           <input type="text" name="payee_name" placeholder="Who did you pay?"
                  value="{{ expense.payee_name|default_if_none:'' }}">
           <small class="hint">or pick supplier</small>
-          <select name="payee_supplier">
+          <select name="payee_supplier" id="expense-supplier-select">
             <option value="">-- Optional supplier --</option>
             {% for s in suppliers %}
               <option value="{{ s.id }}" {% if expense and expense.payee_supplier_id == s.id %}selected{% endif %}>{{ s.company_name }}</option>
@@ -108,20 +108,27 @@
                  value="{% if expense %}{{ expense.ref_no }}{% else %}{{ ref_no|default_if_none:'' }}{% endif %}">
         </div>
 
-        <!-- ✅ UPDATED: Location dropdown + AJAX add-new -->
         <div class="field">
           <label>Location</label>
-          <select name="location" id="locationSelect">
-            <option value="">-- Select location --</option>
-            {% for loc in locations %}
-              <option value="{{ loc.id }}"
-                {% if expense and expense.location_id == loc.id %}selected{% endif %}>
-                {{ loc.name }}
-              </option>
-            {% endfor %}
-            <option value="add_new">➕ Add New</option>
-          </select>
-          <small class="hint">Tip: choose a location or add a new one.</small>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select name="location" id="locationSelect" style="flex:1;">
+              <option value="">-- Select location --</option>
+              {% for loc in locations %}
+                <option value="{{ loc.id }}"
+                  {% if expense and expense.location_id == loc.id %}selected{% endif %}>
+                  {{ loc.name }}
+                </option>
+              {% endfor %}
+            </select>
+            <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="toggleAddLocationBox()">+ Add</button>
+          </div>
+          <div id="addLocationBox" style="display:none;margin-top:8px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+            <input type="text" id="newLocationName" placeholder="Location name" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;">
+            <div style="margin-top:8px;display:flex;gap:6px;">
+              <button type="button" class="btn btn-sm" style="background:#39B54B;color:#fff;" onclick="saveNewLocation()">Save</button>
+              <button type="button" class="btn btn-sm" style="background:#e5e7eb;" onclick="document.getElementById('addLocationBox').style.display='none'">Cancel</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -356,7 +363,7 @@
           <button class="btn btn-cancel" type="button" style="background-color: #39B54B; color: white;">Cancel</button>
         </a>
         <div class="dropdown">
-          <button type="button" class="btn btn-green">Save ▼</button>
+          <button type="submit" name="save_action" value="save" class="btn btn-green">Save ▼</button>
           <div class="dropdown-menu">
             <button type="submit" name="save_action" value="save">Save</button>
             {% if not expense %}
@@ -502,45 +509,58 @@
       });
     }
 
-    // ✅ NEW: Location add inline
-    function addNewLocationInline(selectEl){
-      const name = (prompt("Enter new location name:") || "").trim();
-      if(!name){
-        selectEl.value = "";
-        return;
-      }
+    function toggleAddLocationBox(){
+      const box = document.getElementById('addLocationBox');
+      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+      if(box.style.display !== 'none') document.getElementById('newLocationName').focus();
+    }
+
+    function saveNewLocation(){
+      const nameInput = document.getElementById('newLocationName');
+      const name = (nameInput.value || '').trim();
+      if(!name){ nameInput.focus(); return; }
 
       fetch(ADD_LOCATION_AJAX_URL, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "X-CSRFToken": getCookie("csrftoken"),
-          "Content-Type": "application/x-www-form-urlencoded"
+          'X-CSRFToken': getCookie('csrftoken'),
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: "name=" + encodeURIComponent(name)
+        body: 'name=' + encodeURIComponent(name)
       })
       .then(res => res.json())
       .then(data => {
         if(data && data.success){
-          // insert before "add_new" option (last option)
-          const opt = document.createElement("option");
+          const sel = document.getElementById('locationSelect');
+          const opt = document.createElement('option');
           opt.value = data.id;
           opt.textContent = data.name;
           opt.selected = true;
-
-          // insert near end but before add_new
-          const last = selectEl.querySelector('option[value="add_new"]');
-          selectEl.insertBefore(opt, last);
-
-          selectEl.value = String(data.id);
+          sel.appendChild(opt);
+          sel.value = String(data.id);
+          nameInput.value = '';
+          document.getElementById('addLocationBox').style.display = 'none';
         } else {
-          alert((data && data.error) ? data.error : "Failed to add location");
-          selectEl.value = "";
+          alert((data && data.error) ? data.error : 'Failed to add location');
         }
       })
-      .catch(() => {
-        alert("Network error. Try again.");
-        selectEl.value = "";
+      .catch(() => alert('Network error. Try again.'));
+    }
+
+    // === Product options with inventory tracking flag ===
+    const ALL_EXPENSE_PRODUCTS = [
+      {% for p in products %}
+      { id: {{ p.id }}, name: "{{ p.name|escapejs }}", supplier_id: "{{ p.supplier_id|default:'' }}", purchase_price: "{{ p.purchase_price|default:'0' }}", description: "{{ p.purchase_description|default:p.sales_description|default:''|escapejs }}", track_inventory: {{ p.track_inventory|yesno:'true,false' }} },
+      {% endfor %}
+    ];
+
+    function buildExpenseProductOptions(selectedId) {
+      let opts = '<option value="">-- Select --</option>';
+      ALL_EXPENSE_PRODUCTS.forEach(p => {
+        opts += `<option value="${p.id}" data-description="${p.description}" data-rate="${p.purchase_price}"${String(p.id) === String(selectedId) ? ' selected' : ''}>${p.name}</option>`;
       });
+      opts += '<option value="add_new">➕ Add New</option>';
+      return opts;
     }
 
     // === Item: auto-fill description & rate from selected product (purchase fields) ===
@@ -620,15 +640,7 @@
         <td></td>
         <td>
           <select name="item_product[]" onchange="handleItemProductSelect(this)">
-            <option value="">-- Select --</option>
-            {% for p in products %}
-              <option value="{{ p.id }}"
-                      data-description="{{ p.purchase_description }}"
-                      data-rate="{{ p.purchase_price }}">
-                {{ p.name }}
-              </option>
-            {% endfor %}
-            <option value="add_new">➕ Add New</option>
+            ${buildExpenseProductOptions('')}
           </select>
         </td>
         <td><input type="text" name="item_desc[]"></td>
@@ -668,9 +680,6 @@
       if(!el || el.tagName !== "SELECT") return;
 
       const nm = el.getAttribute("name") || "";
-
-      // Header: location add
-      if(el.id === "locationSelect" && el.value === "add_new"){ addNewLocationInline(el); return; }
 
       // Category line: customer + class
       if(nm === "cat_category[]" && el.value === "add_new"){ openAddCategory(el); return; }

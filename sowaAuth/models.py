@@ -8,6 +8,7 @@ import secrets
 class Newuser(AbstractUser):
     contact = models.CharField(max_length=15, blank=True, null=True, unique=True)
     can_manage_staff = models.BooleanField(default=False)
+    session_key = models.CharField(max_length=40, blank=True, null=True)
 
     def __str__(self):
         return f"user- {self.username} | email- {self.email} | contact- {self.contact}"

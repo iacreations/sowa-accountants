@@ -600,16 +600,18 @@ def client_invite_user(request):
     email = (request.POST.get("email") or "").strip().lower()
     role = (request.POST.get("role") or "VIEWER").strip().upper()
 
+    team_url = reverse("sowa_settings:settings") + "?tab=team"
+
     if not email:
         messages.error(request, "Email is required.")
-        return redirect("tenancy:client_settings_users")
+        return redirect(team_url)
 
     subscription = getattr(company, "subscription", None)
     if subscription:
         active_count = CompanyMember.objects.filter(company=company, is_active=True).count()
         if active_count >= subscription.max_users:
             messages.error(request, f"User limit reached ({subscription.max_users}). Upgrade plan to add more users.")
-            return redirect("tenancy:client_settings_users")
+            return redirect(team_url)
 
     invite = CompanyInvite.create(company, email, role=role, hours=24, created_by=request.user)
     try:
@@ -618,7 +620,7 @@ def client_invite_user(request):
     except Exception:
         messages.error(request, "Invite created but email failed. Check email settings.")
 
-    return redirect("tenancy:client_settings_users")
+    return redirect(reverse("sowa_settings:settings") + "?tab=team")
 
 
 @login_required
@@ -636,12 +638,12 @@ def client_update_member_role(request, member_id):
 
     if member.user_id == request.user.id and member.role == "OWNER" and new_role != "OWNER":
         messages.error(request, "Owner cannot remove their own OWNER role.")
-        return redirect("tenancy:client_settings_users")
+        return redirect(reverse("sowa_settings:settings") + "?tab=team")
 
     member.role = new_role
     member.save(update_fields=["role"])
     messages.success(request, "Role updated.")
-    return redirect("tenancy:client_settings_users")
+    return redirect(reverse("sowa_settings:settings") + "?tab=team")
 
 
 @login_required
@@ -660,9 +662,27 @@ def client_deactivate_member(request, member_id):
         owners = CompanyMember.objects.filter(company=company, role="OWNER", is_active=True).count()
         if owners <= 1:
             messages.error(request, "You cannot deactivate the last OWNER.")
-            return redirect("tenancy:client_settings_users")
+            return redirect(reverse("sowa_settings:settings") + "?tab=team")
 
     member.is_active = False
     member.save(update_fields=["is_active"])
     messages.success(request, "User deactivated.")
-    return redirect("tenancy:client_settings_users")
+    return redirect(reverse("sowa_settings:settings") + "?tab=team")
+
+
+@login_required
+@module_required("settings")
+@require_http_methods(["POST"])
+def client_reactivate_member(request, member_id):
+    company = getattr(request, "company", None)
+    membership = get_membership(request)
+    if not company or not membership or membership.role not in ("OWNER", "MANAGER"):
+        messages.error(request, "Not allowed.")
+        return redirect("sowaf:home")
+
+    member = get_object_or_404(CompanyMember, id=member_id, company=company)
+    member.is_active = True
+    member.save(update_fields=["is_active"])
+    messages.success(request, "User reactivated.")
+    from django.urls import reverse
+    return redirect(reverse("sowa_settings:settings") + "?tab=team")

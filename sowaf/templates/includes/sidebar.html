@@ -144,39 +144,27 @@
 
         <ul class="menu_items submenu">
           <li class="item">
-            <a href="{% url 'inventory:add-stock-transfer' %}" class="nav_link">
-              <span class="navlink_icon"><i class="bx bx-package"></i></span>
-              <span class="navlink">Stock transfer</span>
-            </a>
-          </li>
-          <li class="item">
             <a href="{% url 'inventory:products-list' %}" class="nav_link">
-              <span class="navlink_icon"><i class="bx bx-package"></i></span>
-              <span class="navlink">Stock adjustment</span>
-            </a>
-          </li>
-          <li class="item">
-            <a href="{% url 'inventory:products-list' %}" class="nav_link">
-              <span class="navlink_icon"><i class="bx bx-package"></i></span>
-              <span class="navlink">Build assembly</span>
-            </a>
-          </li>
-          <li class="item">
-            <a href="{% url 'inventory:products-list' %}" class="nav_link">
-              <span class="navlink_icon"><i class="bx bx-package"></i></span>
-              <span class="navlink">Stock levels</span>
-            </a>
-          </li>
-          <li class="item">
-            <a href="{% url 'inventory:products-list' %}" class="nav_link">
-              <span class="navlink_icon"><i class="bx bx-package"></i></span>
+              <span class="navlink_icon"><i class="bx bx-cube"></i></span>
               <span class="navlink">Products</span>
             </a>
           </li>
           <li class="item">
             <a href="{% url 'inventory:movements-list' %}" class="nav_link">
-              <span class="navlink_icon"><i class="bx bx-layer"></i></span>
-              <span class="navlink">Inventory Management</span>
+              <span class="navlink_icon"><i class="bx bx-transfer"></i></span>
+              <span class="navlink">Movements</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:stock-transfer-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-shuffle"></i></span>
+              <span class="navlink">Stock Transfers</span>
+            </a>
+          </li>
+          <li class="item">
+            <a href="{% url 'inventory:build-list' %}" class="nav_link">
+              <span class="navlink_icon"><i class="bx bx-wrench"></i></span>
+              <span class="navlink">Assemblies</span>
             </a>
           </li>
         </ul>

@@ -3326,6 +3326,9 @@ def report_cashflow(request):
     # Expand subtrees (include children)
     ar_ids = _collect_subtree_ids(list(ar_roots.values_list("id", flat=True)), company=company)
     inv_ids = _collect_subtree_ids(list(inv_roots.values_list("id", flat=True)), company=company)
+    # Remove inventory accounts from AR to avoid double-counting
+    inv_id_set = set(inv_ids)
+    ar_ids = [aid for aid in ar_ids if aid not in inv_id_set]
     ap_ids = _collect_subtree_ids(list(ap_roots.values_list("id", flat=True)), company=company)
     fa_ids = _collect_subtree_ids(list(fa_roots.values_list("id", flat=True)), company=company)
     loan_ids = _collect_subtree_ids(list(loan_roots.values_list("id", flat=True)), company=company)

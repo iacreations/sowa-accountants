@@ -50,6 +50,16 @@ class Newinvoice(TenantModel):
     total_vat = models.FloatField(default=0)
     total_due = models.FloatField(default=0)
 
+    # GL posting fields
+    journal_entry = models.OneToOneField(
+        "accounts.JournalEntry",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="invoice_source",
+    )
+    is_posted = models.BooleanField(default=False)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ["-date_created", "-id"]
         indexes = [
@@ -225,6 +235,16 @@ class SalesReceipt(TenantModel):
 
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    # GL posting fields
+    journal_entry = models.OneToOneField(
+        "accounts.JournalEntry",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="sales_receipt_source",
+    )
+    is_posted = models.BooleanField(default=False)
+    posted_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 

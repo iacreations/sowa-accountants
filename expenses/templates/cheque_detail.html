@@ -88,7 +88,7 @@
         <div>
           <div class="info-row-label">Total Amount</div>
           <div class="info-row-value">
-            UGX {{ cheque.total_amount|floatformat:2 }}
+            {{ currency_code }} {{ cheque.total_amount|floatformat:2 }}
           </div>
         </div>
       </div>
@@ -135,13 +135,13 @@
               <td>{% if line.customer %}{{ line.customer.customer_name }}{% else %}—{% endif %}</td>
               <td>{% if line.class_field %}{{ line.class_field.class_name }}{% else %}—{% endif %}</td>
               <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
-              <td style="text-align:right;">UGX {{ line.amount|floatformat:2 }}</td>
+              <td style="text-align:right;">{{ currency_code }} {{ line.amount|floatformat:2 }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
         <div class="totals">
-          Category total: UGX {{ cat_total|floatformat:2 }}
+          Category total: {{ currency_code }} {{ cat_total|floatformat:2 }}
         </div>
       {% else %}
         <p>No category lines.</p>
@@ -173,17 +173,17 @@
               <td>{{ line.product.name }}</td>
               <td>{{ line.description }}</td>
               <td>{{ line.qty }}</td>
-              <td>UGX {{ line.rate|floatformat:2 }}</td>
+              <td>{{ currency_code }} {{ line.rate|floatformat:2 }}</td>
               <td>{% if line.customer %}{{ line.customer.customer_name }}{% else %}—{% endif %}</td>
               <td>{% if line.class_field %}{{ line.class_field.class_name }}{% else %}—{% endif %}</td>
               <td>{% if line.is_billable %}Yes{% else %}No{% endif %}</td>
-              <td style="text-align:right;">UGX {{ line.amount|floatformat:2 }}</td>
+              <td style="text-align:right;">{{ currency_code }} {{ line.amount|floatformat:2 }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
         <div class="totals">
-          Item total: UGX {{ item_total|floatformat:2 }}
+          Item total: {{ currency_code }} {{ item_total|floatformat:2 }}
         </div>
       {% else %}
         <p>No item lines.</p>
@@ -194,8 +194,8 @@
     <div class="section-wrapper">
       <div class="section-title">Totals</div>
       <div class="totals">
-        Subtotal (categories + items): UGX {{ subtotal|floatformat:2 }}<br>
-        Cheque Total: <strong>UGX {{ cheque.total_amount|floatformat:2 }}</strong>
+        Subtotal (categories + items): {{ currency_code }} {{ subtotal|floatformat:2 }}<br>
+        Cheque Total: <strong>{{ currency_code }} {{ cheque.total_amount|floatformat:2 }}</strong>
       </div>
     </div>
   </div>

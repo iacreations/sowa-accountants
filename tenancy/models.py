@@ -35,6 +35,9 @@ class Company(models.Model):
     payment_terms = models.CharField(max_length=100, null=True, blank=True)
 
     currency = models.CharField(max_length=10, default="UGX")
+    currency_locked = models.BooleanField(default=False)
+    # Tracks the currency GL data was originally recorded in (before lock conversion)
+    original_currency = models.CharField(max_length=10, blank=True, null=True)
 
     industry = models.CharField(max_length=150, null=True, blank=True)
     notes = models.TextField(null=True, blank=True)

@@ -224,28 +224,44 @@
           </div>
 
           <div class="row g-3">
-            <!-- ✅ UPDATED: From location has Add New wired like Expenses form -->
             <div class="col-lg-3 col-md-6">
               <label class="form-label">Location From <span class="text-danger">*</span></label>
-              <select name="from_location" id="fromLocationSelect" class="form-select" required>
-                <option value="">Select location…</option>
-                {% for l in locations %}
-                  <option value="{{ l.id }}">{{ l.name }}</option>
-                {% endfor %}
-                <option value="add_new">➕ Add New</option>
-              </select>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select name="from_location" id="fromLocationSelect" class="form-select" required style="flex:1;">
+                  <option value="">Select location…</option>
+                  {% for l in locations %}
+                    <option value="{{ l.id }}">{{ l.name }}</option>
+                  {% endfor %}
+                </select>
+                <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="toggleAddLocationBox('fromLocationSelect')">+ Add</button>
+              </div>
+              <div id="addLocationBox_fromLocationSelect" style="display:none;margin-top:8px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+                <input type="text" class="newLocationName form-control" placeholder="Location name">
+                <div style="margin-top:8px;display:flex;gap:6px;">
+                  <button type="button" class="btn btn-sm" style="background:#39B54B;color:#fff;" onclick="saveNewLocation('fromLocationSelect')">Save</button>
+                  <button type="button" class="btn btn-sm" style="background:#e5e7eb;" onclick="this.closest('[id^=addLocationBox_]').style.display='none'">Cancel</button>
+                </div>
+              </div>
             </div>
 
-            <!-- ✅ UPDATED: To location has Add New wired like Expenses form -->
             <div class="col-lg-3 col-md-6">
               <label class="form-label">Location To <span class="text-danger">*</span></label>
-              <select name="to_location" id="toLocationSelect" class="form-select" required>
-                <option value="">Select location…</option>
-                {% for l in locations %}
-                  <option value="{{ l.id }}">{{ l.name }}</option>
-                {% endfor %}
-                <option value="add_new">➕ Add New</option>
-              </select>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select name="to_location" id="toLocationSelect" class="form-select" required style="flex:1;">
+                  <option value="">Select location…</option>
+                  {% for l in locations %}
+                    <option value="{{ l.id }}">{{ l.name }}</option>
+                  {% endfor %}
+                </select>
+                <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="toggleAddLocationBox('toLocationSelect')">+ Add</button>
+              </div>
+              <div id="addLocationBox_toLocationSelect" style="display:none;margin-top:8px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+                <input type="text" class="newLocationName form-control" placeholder="Location name">
+                <div style="margin-top:8px;display:flex;gap:6px;">
+                  <button type="button" class="btn btn-sm" style="background:#39B54B;color:#fff;" onclick="saveNewLocation('toLocationSelect')">Save</button>
+                  <button type="button" class="btn btn-sm" style="background:#e5e7eb;" onclick="this.closest('[id^=addLocationBox_]').style.display='none'">Cancel</button>
+                </div>
+              </div>
             </div>
 
             <div class="col-lg-3 col-md-6">
@@ -348,47 +364,47 @@
       return cookieValue;
     }
 
-    // ✅ Add Location inline (prompt) - inserts before "add_new"
-    function addNewLocationInline(selectEl){
-      const name = (prompt("Enter new location name:") || "").trim();
-      if(!name){
-        selectEl.value = "";
-        return;
-      }
+    function toggleAddLocationBox(selectId){
+      const box = document.getElementById('addLocationBox_' + selectId);
+      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+      if(box.style.display !== 'none') box.querySelector('.newLocationName').focus();
+    }
+
+    function saveNewLocation(selectId){
+      const box = document.getElementById('addLocationBox_' + selectId);
+      const nameInput = box.querySelector('.newLocationName');
+      const name = (nameInput.value || '').trim();
+      if(!name){ nameInput.focus(); return; }
 
       fetch(ADD_LOCATION_AJAX_URL, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "X-CSRFToken": getCookie("csrftoken"),
-          "Content-Type": "application/x-www-form-urlencoded"
+          'X-CSRFToken': getCookie('csrftoken'),
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: "name=" + encodeURIComponent(name)
+        body: 'name=' + encodeURIComponent(name)
       })
       .then(res => res.json())
       .then(data => {
         if(data && data.success){
-          const opt = document.createElement("option");
-          opt.value = data.id;
-          opt.textContent = data.name;
-          opt.selected = true;
-
-          const addNewOpt = selectEl.querySelector('option[value="add_new"]');
-          if(addNewOpt){
-            selectEl.insertBefore(opt, addNewOpt);
-          }else{
-            selectEl.appendChild(opt);
-          }
-
-          selectEl.value = String(data.id);
+          // add to both selects
+          ['fromLocationSelect','toLocationSelect'].forEach(sid => {
+            const sel = document.getElementById(sid);
+            if(!sel) return;
+            const opt = document.createElement('option');
+            opt.value = data.id;
+            opt.textContent = data.name;
+            if(sid === selectId) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          document.getElementById(selectId).value = String(data.id);
+          nameInput.value = '';
+          box.style.display = 'none';
         } else {
-          alert((data && data.error) ? data.error : "Failed to add location");
-          selectEl.value = "";
+          alert((data && data.error) ? data.error : 'Failed to add location');
         }
       })
-      .catch(() => {
-        alert("Network error. Try again.");
-        selectEl.value = "";
-      });
+      .catch(() => alert('Network error. Try again.'));
     }
 
     // product: same behavior you used elsewhere (open add product in new tab)
@@ -434,12 +450,6 @@
     document.addEventListener("change", function(e){
       const el = e.target;
       if(!el || el.tagName !== "SELECT") return;
-
-      // Locations (header)
-      if((el.id === "fromLocationSelect" || el.id === "toLocationSelect") && el.value === "add_new"){
-        addNewLocationInline(el);
-        return;
-      }
 
       // Products (lines)
       if(el.getAttribute("name") === "product[]" && el.value === "add_new"){

@@ -9,7 +9,7 @@ from io import BytesIO
 from tempfile import NamedTemporaryFile
 from datetime import date, timedelta, datetime
 from django.utils import timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from django.urls import reverse
 from django.db import transaction
 from django.templatetags.static import static
@@ -516,9 +516,11 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
 
     items_qs = invoice.items.select_related("product").all()
     for line in items_qs:
+        # line.amount = (qty*price - discount) + vat  (computed in model save)
+        # Revenue = amount - vat  (strip out VAT since it's credited separately)
         line_amount = Decimal(str(getattr(line, "amount", None) or "0"))
-        line_discount = Decimal(str(getattr(line, "discount_amount", None) or "0"))
-        net_amount = line_amount - line_discount
+        line_vat = Decimal(str(getattr(line, "vat", None) or "0"))
+        net_amount = line_amount - line_vat
         if net_amount < 0:
             net_amount = Decimal("0.00")
 
@@ -601,6 +603,81 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
             customer=None,
             supplier=None,
         )
+
+    # =========================================================
+    # Inventory COGS posting  (DR COGS, CR Inventory Asset)
+    # + InventoryMovement stock-out + product.quantity update
+    # =========================================================
+    from inventory.accounting import (
+        _fallback_cogs_account, _fallback_inventory_asset_account, _dec as _inv_dec,
+    )
+
+    # Clear previous movements for this invoice
+    InventoryMovement.objects.filter(
+        company_id=company_id, source_type="INVOICE", source_id=invoice.id,
+    ).delete()
+
+    inv_post_date = invoice.date_created.date() if getattr(invoice, "date_created", None) else timezone.localdate()
+
+    for line in items_qs:
+        prod = getattr(line, "product", None)
+        if not prod or not getattr(prod, 'track_inventory', False):
+            continue
+
+        qty = Decimal(str(getattr(line, "qty", None) or "0"))
+        if qty <= 0:
+            continue
+
+        unit_cost = Decimal(str(getattr(prod, "avg_cost", None) or "0"))
+        cogs_value = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        cogs_acc = _fallback_cogs_account(prod)
+        inv_acc = _fallback_inventory_asset_account(prod)
+
+        if not cogs_acc or not inv_acc:
+            continue  # skip if accounts not configured
+
+        if getattr(cogs_acc, "company_id", None) != company_id:
+            raise ValueError("COGS account belongs to a different company.")
+        if getattr(inv_acc, "company_id", None) != company_id:
+            raise ValueError("Inventory asset account belongs to a different company.")
+
+        # InventoryMovement (stock out)
+        InventoryMovement.objects.create(
+            product=prod,
+            company_id=company_id,
+            date=inv_post_date,
+            qty_in=Decimal("0.00"),
+            qty_out=qty,
+            unit_cost=unit_cost,
+            value=cogs_value,
+            source_type="INVOICE",
+            source_id=invoice.id,
+        )
+
+        # Update cached quantity on product
+        prod.quantity = _inv_dec(prod.quantity) - qty
+        prod.save(update_fields=["quantity"])
+
+        if cogs_value > 0:
+            # DR COGS
+            JournalLine.objects.create(
+                entry=entry,
+                account=cogs_acc,
+                debit=cogs_value,
+                credit=Decimal("0.00"),
+                customer=None,
+                supplier=None,
+            )
+            # CR Inventory Asset
+            JournalLine.objects.create(
+                entry=entry,
+                account=inv_acc,
+                debit=Decimal("0.00"),
+                credit=cogs_value,
+                customer=None,
+                supplier=None,
+            )
 
     _assert_balanced_journal_entry(entry, "invoice")
 
@@ -999,70 +1076,63 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         )
 
     # =========================================================
-    # Inventory COGS posting
+    # Inventory COGS posting + Movement creation + Qty update
     # =========================================================
+    from inventory.accounting import (
+        _fallback_cogs_account, _fallback_inventory_asset_account, _dec as _inv_dec,
+    )
+
+    # Clear previous movements for this receipt
+    InventoryMovement.objects.filter(
+        company_id=company_id, source_type="SALES_RECEIPT", source_id=receipt.id,
+    ).delete()
+
     cogs_by_acc = defaultdict(lambda: Decimal("0.00"))
     inv_by_acc = defaultdict(lambda: Decimal("0.00"))
 
-    used_movements = False
+    sr_post_date = getattr(receipt, "receipt_date", None) or timezone.localdate()
 
-    movs = (
-        InventoryMovement.objects
-        .filter(company_id=company_id, source_type="SALES_RECEIPT", source_id=receipt.id, qty_out__gt=0)
-        .select_related("product", "product__cogs_account", "product__inventory_asset_account")
-    )
+    for line in receipt.lines.select_related("product").all():
+        p = getattr(line, "product", None)
+        if not p or not getattr(p, 'track_inventory', False):
+            continue
 
-    if movs.exists():
-        used_movements = True
-        for m in movs:
-            p = m.product
-            if not p or getattr(p, "type", None) != "Inventory":
-                continue
+        qty = Decimal(str(getattr(line, "qty", None) or "0"))
+        if qty <= 0:
+            continue
 
-            # safety: movement tenant match
-            if hasattr(p, "company_id") and p.company_id and p.company_id != company_id:
-                raise ValueError("InventoryMovement product belongs to another company.")
+        unit_cost = Decimal(str(getattr(p, "avg_cost", None) or "0"))
+        val = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            cogs_acc = getattr(p, "cogs_account", None)
-            inv_acc = getattr(p, "inventory_asset_account", None)
-            val = Decimal(str(getattr(m, "value", None) or "0"))
+        cogs_acc = _fallback_cogs_account(p)
+        inv_acc = _fallback_inventory_asset_account(p)
 
-            if cogs_acc and getattr(cogs_acc, "company_id", None) != company_id:
-                raise ValueError("COGS account belongs to another company.")
-            if inv_acc and getattr(inv_acc, "company_id", None) != company_id:
-                raise ValueError("Inventory asset account belongs to another company.")
+        if not cogs_acc or not inv_acc:
+            continue
 
-            if val <= 0 or not cogs_acc or not inv_acc:
-                continue
+        if getattr(cogs_acc, "company_id", None) != company_id:
+            raise ValueError("COGS account belongs to another company.")
+        if getattr(inv_acc, "company_id", None) != company_id:
+            raise ValueError("Inventory asset account belongs to another company.")
 
-            cogs_by_acc[cogs_acc] += val
-            inv_by_acc[inv_acc] += val
+        # Create InventoryMovement (stock out)
+        InventoryMovement.objects.create(
+            product=p,
+            company_id=company_id,
+            date=sr_post_date,
+            qty_in=Decimal("0.00"),
+            qty_out=qty,
+            unit_cost=unit_cost,
+            value=val,
+            source_type="SALES_RECEIPT",
+            source_id=receipt.id,
+        )
 
-    if not used_movements:
-        for line in receipt.lines.select_related("product").all():
-            p = getattr(line, "product", None)
-            if not p or getattr(p, "type", None) != "Inventory":
-                continue
+        # Update cached quantity
+        p.quantity = _inv_dec(p.quantity) - qty
+        p.save(update_fields=["quantity"])
 
-            qty = Decimal(str(getattr(line, "qty", None) or "0"))
-            if qty <= 0:
-                continue
-
-            cogs_acc = getattr(p, "cogs_account", None)
-            inv_acc = getattr(p, "inventory_asset_account", None)
-            if not cogs_acc or not inv_acc:
-                continue
-
-            if getattr(cogs_acc, "company_id", None) != company_id:
-                raise ValueError("COGS account belongs to another company.")
-            if getattr(inv_acc, "company_id", None) != company_id:
-                raise ValueError("Inventory asset account belongs to another company.")
-
-            unit_cost = Decimal(str(getattr(p, "avg_cost", None) or "0"))
-            val = qty * unit_cost
-            if val <= 0:
-                continue
-
+        if val > 0:
             cogs_by_acc[cogs_acc] += val
             inv_by_acc[inv_acc] += val
 
@@ -2910,7 +2980,6 @@ def sales_receipt_new(request):
         receipt.save(update_fields=["total_vat"])
 
         _post_sales_receipt_to_ledger(company, receipt)
-        rebuild_movements_for_sales_receipt(receipt)
 
         action = request.POST.get("save_action")
         if action == "save":
@@ -3067,7 +3136,6 @@ def sales_receipt_edit(request, pk: int):
         receipt.save(update_fields=["total_vat"])
 
         _post_sales_receipt_to_ledger(company, receipt)
-        rebuild_movements_for_sales_receipt(receipt)
         return redirect("sales:receipt-detail", pk=receipt.pk)
 
     return render(request, "receipt_form.html", {

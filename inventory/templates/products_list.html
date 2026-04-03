@@ -101,10 +101,10 @@
 {% include 'includes/navbar.html' %}
 {% include 'includes/sidebar.html' %}
 
-<div class="wrap" style="margin-top:5%; float:right;">
+<div class="wrap" style="margin-top:5%; margin-left: 18%; ">
 
   <div class="head">
-    <div class="title">Inventory Products</div>
+    <div class="title">Products & Services</div>
     <div class="chip">
       {{ products|length }} Items
     </div>
@@ -125,16 +125,15 @@
             <th>SKU</th>
             <th>Category</th>
             <th>Qty On Hand</th>
-            <th>Avg Cost</th>
-            <th>Stock Value</th>
+            <th>Sales price</th>
+            <th>Type</th>
+    
             <th style="width:120px;">Action</th>
           </tr>
         </thead>
 
         <tbody>
           {% for p in products %}
-
-          {% with stock_value=p.quantity|floatformat:2 %}
           <tr>
 
             <td>
@@ -156,12 +155,9 @@
                 <span class="badge ok">{{ p.quantity|floatformat:2 }}</span>
               {% endif %}
             </td>
+            <td>{{ p.sales_price|default:0|floatformat:2|intcomma }}</td>
+            <td>{{ p.type|default:"—" }}</td>
 
-            <td>{{ p.avg_cost|floatformat:2|intcomma }}</td>
-
-            <td>
-              {{ p.quantity|floatformat:2|floatformat:2 }}
-            </td>
 
             <td>
               <a class="btn"
@@ -171,11 +167,10 @@
             </td>
 
           </tr>
-          {% endwith %}
 
           {% empty %}
           <tr>
-            <td colspan="7">No inventory products found.</td>
+            <td colspan="8">No products found.</td>
           </tr>
           {% endfor %}
         </tbody>

@@ -1,0 +1,158 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Build #{{ build.id }} Detail</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    :root{--brand:#39B54B;--border:#e6e6e6;--muted:#6b7280;--bg:#f6f7fb;--card:#ffffff;}
+    *{box-sizing:border-box}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px;}
+    .wrap{width:83%;margin-top:5%;margin-left:18.3%;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .crumb{color:var(--muted);font-size:12px;margin-top:2px;}
+    .body-content{padding:18px;}
+    .cardx{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 1px 10px rgba(0,0,0,.04);margin-bottom:16px;}
+    .section-title{font-weight:800;font-size:14px;margin-bottom:10px;}
+    .table-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+    table{margin:0;width:100%;}
+    thead th{background:#f8fafc;font-size:12px;font-weight:800;color:#111827;border-bottom:1px solid var(--border);padding:10px 12px!important;white-space:nowrap;}
+    tbody td{padding:10px 12px!important;vertical-align:middle;border-bottom:1px solid #f1f5f9;}
+    tfoot td{background:#f8fafc;font-weight:800;padding:10px 12px!important;}
+    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;cursor:pointer;}
+    .btn-green:hover{background:#2f9a3f;border-color:#2f9a3f;color:#fff;}
+    .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .badge-pending{background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    .badge-completed{background:#d1fae5;color:#065f46;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;}
+    .detail-item label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+    .detail-item .val{font-size:15px;font-weight:600;color:#111827;}
+    @media(max-width:992px){.wrap{width:95%;margin-left:2%;}}
+  </style>
+</head>
+<body>
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+
+<div class="wrap">
+  <div class="head">
+    <div>
+      <div class="title">Build #{{ build.id }}</div>
+      <div class="crumb">Inventory / Builds / #{{ build.id }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn-soft" href="{% url 'inventory:build-list' %}">Back to Builds</a>
+      {% if build.status != "COMPLETED" %}
+      <form method="POST" action="{% url 'inventory:complete-build' build.pk %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-green" onclick="return confirm('Complete this build? Component stock will be deducted and finished product stock will increase.')">
+          Complete Build
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="body-content">
+    {% if messages %}
+    <div class="mb-3">
+      {% for msg in messages %}
+      <div class="alert alert-{{ msg.tags|default:'info' }} alert-dismissible fade show" role="alert">
+        {{ msg }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="cardx">
+      <div class="section-title">Build Details</div>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <label>Finished Product</label>
+          <div class="val">{{ build.finished_product.name }}</div>
+        </div>
+        <div class="detail-item">
+          <label>Build Qty</label>
+          <div class="val">{{ build.build_qty }}</div>
+        </div>
+        <div class="detail-item">
+          <label>Build Date</label>
+          <div class="val">{{ build.build_date }}</div>
+        </div>
+        <div class="detail-item">
+          <label>Status</label>
+          <div class="val">
+            {% if build.status == "COMPLETED" %}
+            <span class="badge-completed">Completed</span>
+            {% else %}
+            <span class="badge-pending">Pending</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="detail-item">
+          <label>Total Component Cost</label>
+          <div class="val">{{ build.total_component_cost|floatformat:2 }}</div>
+        </div>
+        {% if build.completed_at %}
+        <div class="detail-item">
+          <label>Completed At</label>
+          <div class="val">{{ build.completed_at }}</div>
+        </div>
+        {% endif %}
+        {% if build.memo %}
+        <div class="detail-item">
+          <label>Memo</label>
+          <div class="val">{{ build.memo }}</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="cardx">
+      <div class="section-title">Components</div>
+      <div class="table-wrap">
+        <table class="table table-borderless">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Component</th>
+              <th>Qty Per Unit</th>
+              <th>Total Qty</th>
+              <th>Unit Cost (Avg)</th>
+              <th>Total Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in lines %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td>{{ line.component.name }}</td>
+              <td>{{ line.qty_per_unit }}</td>
+              <td>{{ line.total_qty|floatformat:2 }}</td>
+              <td>{{ line.component.avg_cost|floatformat:2 }}</td>
+              <td>{{ line.total_cost|floatformat:2 }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="text-center text-muted py-3">No components.</td></tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="5" class="text-end">Total Component Cost</td>
+              <td>{{ build.total_component_cost|floatformat:2 }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
