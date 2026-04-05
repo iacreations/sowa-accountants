@@ -234,7 +234,7 @@ def exit_company(request):
 def company_list(request):
     companies = (
         Company.objects
-        .filter(is_active=True, company_kind="CLIENT")
+        .filter(is_active=True, company_kind="CLIENT", created_by=request.user)
         .select_related("subscription")
         .order_by("-created_at")
     )
