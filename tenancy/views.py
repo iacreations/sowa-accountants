@@ -232,12 +232,10 @@ def exit_company(request):
 @login_required
 @staff_only
 def company_list(request):
-    companies = (
-        Company.objects
-        .filter(is_active=True, company_kind="CLIENT", created_by=request.user)
-        .select_related("subscription")
-        .order_by("-created_at")
-    )
+    qs = Company.objects.filter(is_active=True, company_kind="CLIENT")
+    if not (request.user.is_superuser or getattr(request.user, "can_manage_staff", False)):
+        qs = qs.filter(created_by=request.user)
+    companies = qs.select_related("subscription").order_by("-created_at")
     return render(request, "Clients.html", {"companies": companies})
 
 
