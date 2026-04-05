@@ -491,7 +491,19 @@ def product_edit(request, pk: int):
         product.quantity = _to_dec(request.POST.get("quantity"), default=Decimal("0.00"))       # DecimalField
 
         product.is_bundle = (ptype == "Bundle")
-        product.save()
+        try:
+            product.save()
+        except ValidationError as e:
+            flat = "; ".join(
+                msg for msgs in e.message_dict.values() for msg in msgs
+            ) if hasattr(e, "message_dict") else str(e)
+            messages.error(request, f"Could not save product: {flat}")
+            return redirect(request.path)
+        except Exception as e:
+            if "uniq_product_sku_per_company" in str(e):
+                messages.error(request, "A product with this SKU already exists for this company.")
+                return redirect(request.path)
+            raise
 
         # When track_inventory is checked, auto-create Inventory Asset + COGS accounts
         if product.track_inventory:
@@ -510,7 +522,10 @@ def product_edit(request, pk: int):
                 changed = True
 
             if changed:
-                product.save(update_fields=["inventory_asset_account", "cogs_account"])
+                Product.objects.filter(pk=product.pk).update(
+                    inventory_asset_account=product.inventory_asset_account,
+                    cogs_account=product.cogs_account,
+                )
 
         # bundle handling
         if product.is_bundle:
