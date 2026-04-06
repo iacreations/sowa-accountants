@@ -2558,26 +2558,26 @@ def _dec(v, default="0.00"):
         return Decimal(default)
 
 
-def generate_unique_bill_no(company, prefix="BILL"):
+def generate_unique_bill_no(company):
     """
-    8-digit numeric suffix (like 00001234) with a prefix for readability.
-    Ensures uniqueness per company.
+    Generates a bill number that is globally unique (bill_no has unique=True).
+    Format: C{company_id}B{8-digit-sequence}
     """
-    base_date = timezone.now().strftime("%y%m")
-    seed = f"{base_date}0001"
-    suffix = int(seed)
+    company_id = getattr(company, "id", company)
+    prefix = f"C{company_id}B"
+    last = Bill.objects.filter(bill_no__startswith=prefix).order_by("-id").first()
+    if last:
+        try:
+            seq = int(last.bill_no[len(prefix):]) + 1
+        except (ValueError, IndexError):
+            seq = 1
+    else:
+        seq = 1
     while True:
-        candidate = f"{prefix}{suffix:08d}"
-        if not Bill.objects.for_company(company).filter(bill_no=candidate).exists():
+        candidate = f"{prefix}{seq:08d}"
+        if not Bill.objects.filter(bill_no=candidate).exists():
             return candidate
-        suffix += 1
-
-
-def _dec(v, default="0.00"):
-    try:
-        return Decimal(str(v if v not in (None, "",) else default))
-    except (InvalidOperation, TypeError, ValueError):
-        return Decimal(default)
+        seq += 1
 
 
 def _parse_ymd(s, fallback=None):
@@ -2588,13 +2588,6 @@ def _parse_ymd(s, fallback=None):
         return timezone.datetime.fromisoformat(s).date()
     except Exception:
         return fallback
-
-
-def generate_unique_bill_no(company):
-    # Simple example. Replace with your existing generator if you already have one.
-    last = Bill.objects.for_company(company).order_by("-id").first()
-    base = 10000000 if not last else (int(str(last.bill_no or 0).strip()[-8:]) if str(last.bill_no or "").isdigit() else last.id) + 1
-    return f"{base:08d}"
 
 
 # adding a bill
