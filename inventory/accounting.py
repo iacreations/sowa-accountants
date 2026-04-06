@@ -4,7 +4,7 @@ from django.db import models
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.utils import timezone
-
+from tenancy.models import Company
 from accounts.models import JournalEntry, JournalLine, Account
 from inventory.models import InventoryMovement, Product
 from inventory.services import resolve_location_from_doc, get_default_location
