@@ -567,10 +567,12 @@ def post_invoice_inventory_and_gl(invoice):
     """
     from sales.models import InvoiceItem
 
+    company = getattr(invoice, "company", None)
     source_type = "INVOICE"
     source_id = invoice.id
     post_date = (invoice.date_created.date() if invoice.date_created else timezone.localdate())
     customer = getattr(invoice, "customer", None)
+    stock_location = resolve_location_from_doc(invoice)
 
     with transaction.atomic():
         _clear_inventory_movements(source_type, source_id)
@@ -626,11 +628,13 @@ def post_invoice_inventory_and_gl(invoice):
 
                 InventoryMovement.objects.create(
                     product=product,
+                    company=company,
                     date=post_date,
                     qty_in=DEC0,
                     qty_out=qty,
                     unit_cost=unit_cost,
                     value=cogs_value,
+                    location=stock_location,
                     source_type=source_type,
                     source_id=source_id,
                 )
