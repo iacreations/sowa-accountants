@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from accounts.models import JournalEntry, JournalLine, Account
 from inventory.models import InventoryMovement, Product
-
+from inventory.services import resolve_location_from_doc, get_default_location
 DEC0 = Decimal("0.00")
 _Q2 = Decimal("0.01")  # quantize target for 2 decimal places
 _Q0 = Decimal("1")     # quantize target for whole numbers (UGX has no cents)
@@ -203,20 +203,20 @@ def _fallback_sales_account(product: Product, company=None):
 # -----------------------------
 def _apply_stock_in(product: Product, qty_in: Decimal, unit_cost: Decimal):
     """
-    Weighted average:
-      new_avg = (old_qty*old_avg + in_qty*in_cost) / (old_qty + in_qty)
+    Update avg_cost and quantity from the movement ledger only.
+    The new movement is already saved to DB before this is called, so
+    a pure ledger aggregate gives the correct weighted average without
+    being polluted by any initial product.quantity not backed by a movement.
     """
-    old_qty = _dec(product.quantity)
-    old_avg = _dec(product.avg_cost)
+    from django.db.models import Sum as _Sum
 
-    new_qty = old_qty + qty_in
-    if new_qty <= 0:
-        product.quantity = DEC0
-        product.avg_cost = DEC0
-    else:
-        new_avg = ((old_qty * old_avg) + (qty_in * unit_cost)) / new_qty
-        product.quantity = new_qty
-        product.avg_cost = new_avg.quantize(_Q0, rounding=ROUND_HALF_UP)
+    agg = product.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
+    product.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
+
+    purch = product.movements.filter(qty_in__gt=0).aggregate(q=_Sum("qty_in"), v=_Sum("value"))
+    q = _dec(purch["q"])
+    v = _dec(purch["v"])
+    product.avg_cost = (v / q).quantize(_Q0, rounding=ROUND_HALF_UP) if q > DEC0 else DEC0
 
     product.save(update_fields=["quantity", "avg_cost"])
 
@@ -322,6 +322,7 @@ def post_bill_to_gl(bill):
     source_id = bill.id
     post_date = bill.bill_date or timezone.localdate()
     supplier = bill.supplier if bill.supplier_id else None
+    stock_location = resolve_location_from_doc(bill)
 
     total = _dec(bill.total_amount)
     if total <= 0:
@@ -393,6 +394,7 @@ def post_bill_to_gl(bill):
                         qty_out=DEC0,
                         unit_cost=unit_cost,
                         value=value,
+                        location=stock_location,
                         source_type=source_type,
                         source_id=source_id,
                     )
@@ -446,6 +448,7 @@ def post_expense_to_gl(expense):
     source_id = expense.id
     post_date = expense.payment_date or timezone.localdate()
     supplier = expense.payee_supplier if getattr(expense, "payee_supplier_id", None) else None
+    stock_location = resolve_location_from_doc(expense)
 
     total = _dec(expense.total_amount)
     if total <= 0:
@@ -519,6 +522,7 @@ def post_expense_to_gl(expense):
                         qty_out=DEC0,
                         unit_cost=unit_cost,
                         value=value,
+                        location=stock_location,
                         source_type=source_type,
                         source_id=source_id,
                     )

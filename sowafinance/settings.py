@@ -61,6 +61,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'sowaAuth.middleware.SessionSecurityMiddleware',
+    'sowaAuth.middleware.MessageToLogMiddleware',
     'tenancy.middleware.CompanyMiddleware', #for client books
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -200,3 +201,37 @@ DEFAULT_FROM_EMAIL = "YoAccountant <namanyajim46@gmail.com>"
 SESSION_COOKIE_AGE = 300             # 5 minutes hard expiry
 SESSION_SAVE_EVERY_REQUEST = True     # reset expiry on every request (activity keeps session alive)
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# =========================
+# Logging — messages go to file, not the UI
+# =========================
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "timestamped": {
+            "format": "{asctime} {levelname} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "messages_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": os.path.join(BASE_DIR, "logs", "messages.log"),
+            "maxBytes": 5 * 1024 * 1024,  # 5 MB
+            "backupCount": 5,
+            "formatter": "timestamped",
+            "encoding": "utf-8",
+        },
+    },
+    "loggers": {
+        "sowafinance.messages": {
+            "handlers": ["messages_file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
+}
+
+# Ensure the logs directory exists
+os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
