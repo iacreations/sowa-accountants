@@ -10,6 +10,7 @@ from inventory.models import InventoryMovement, Product
 
 DEC0 = Decimal("0.00")
 _Q2 = Decimal("0.01")  # quantize target for 2 decimal places
+_Q0 = Decimal("1")     # quantize target for whole numbers (UGX has no cents)
 
 
 # -----------------------------
@@ -215,7 +216,7 @@ def _apply_stock_in(product: Product, qty_in: Decimal, unit_cost: Decimal):
     else:
         new_avg = ((old_qty * old_avg) + (qty_in * unit_cost)) / new_qty
         product.quantity = new_qty
-        product.avg_cost = new_avg.quantize(_Q2, rounding=ROUND_HALF_UP)
+        product.avg_cost = new_avg.quantize(_Q0, rounding=ROUND_HALF_UP)
 
     product.save(update_fields=["quantity", "avg_cost"])
 
@@ -617,7 +618,7 @@ def post_invoice_inventory_and_gl(invoice):
                     raise ValueError(f"Product '{product.name}' missing inventory_asset_account and no Inventory/Expense fallback found.")
 
                 unit_cost = _dec(getattr(product, "avg_cost", None))
-                cogs_value = (qty * unit_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+                cogs_value = (qty * unit_cost).quantize(_Q0, rounding=ROUND_HALF_UP)
 
                 InventoryMovement.objects.create(
                     product=product,

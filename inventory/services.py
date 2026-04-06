@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable, Dict, Any, Optional, Set
 
 from django.db import transaction
@@ -173,7 +173,7 @@ def _recalc_product_qty_and_avg_cost(product_id: int):
     purch = p.movements.filter(qty_in__gt=0).aggregate(q=Sum("qty_in"), v=Sum("value"))
     q = purch["q"] or ZERO
     v = purch["v"] or ZERO
-    p.avg_cost = (v / q) if q > ZERO else ZERO
+    p.avg_cost = ((v / q).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if q > ZERO else ZERO
 
     p.save(update_fields=["quantity", "avg_cost"])
 
