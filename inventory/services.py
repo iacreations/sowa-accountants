@@ -160,6 +160,14 @@ def qty_on_hand(product: Product, location: Optional[InventoryLocation] = None) 
 # -----------------------
 # Product cache recalculation
 # -----------------------
+def _recalc_product_quantity(product_id: int):
+    """Update Product.quantity from the movement ledger without touching avg_cost."""
+    p = Product.objects.select_for_update().get(id=product_id)
+    agg = p.movements.aggregate(tin=Sum("qty_in"), tout=Sum("qty_out"))
+    p.quantity = (agg["tin"] or ZERO) - (agg["tout"] or ZERO)
+    p.save(update_fields=["quantity"])
+
+
 def _recalc_product_qty_and_avg_cost(product_id: int):
     """
     Cached fields:
@@ -253,8 +261,17 @@ def rebuild_inventory_movements(
     if movements:
         InventoryMovement.objects.bulk_create(movements)
 
-    for pid in affected:
-        _recalc_product_qty_and_avg_cost(pid)
+    # Only recalculate avg_cost if this is a purchase movement.
+    # Sales/transfers should NOT trigger recalculation so the existing
+    # avg_cost is preserved.
+    if source_type in PURCHASE_SOURCE_TYPES:
+        for pid in affected:
+            _recalc_product_qty_and_avg_cost(pid)
+    else:
+        # For non-purchase movements (sales, transfers, adjustments) we still
+        # need to update product.quantity, but must NOT touch avg_cost.
+        for pid in affected:
+            _recalc_product_quantity(pid)
 
 
 # -----------------------
