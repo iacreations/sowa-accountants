@@ -98,6 +98,9 @@
         <!-- Inventory Valuation (FIFO) -->
         <div class="sec" style="margin-bottom:12px;">
           <h4>Inventory Summary</h4>
+          {% if fifo_warning %}
+          <div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;padding:8px 12px;border-radius:4px;margin-bottom:8px;">{{ fifo_warning }}</div>
+          {% endif %}
           <div class="kv">
             <div class="k">Qty On Hand (Cached)</div><div>{{ product.quantity|floatformat:2 }}</div>
             <div class="k">FIFO Unit Cost (Oldest Layer)</div><div>{{ fifo_unit_cost|floatformat:2|intcomma }}</div>
