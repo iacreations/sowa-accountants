@@ -122,11 +122,25 @@ def product_detail(request, pk: int):
     total_in = totals["total_in"] or ZERO_DEC
     total_out = totals["total_out"] or ZERO_DEC
 
-    # FIFO stock value: use oldest available layer cost × on-hand qty
+    # FIFO stock value: safe read-only display
     from inventory.fifo import get_available_layers, compute_fifo_cogs
     fifo_layers = get_available_layers(product)
-    fifo_unit_cost = Decimal(fifo_layers[0].unit_cost) if fifo_layers else Decimal("0")
-    stock_value = compute_fifo_cogs(product, on_hand) if on_hand > Decimal("0") else Decimal("0")
+    fifo_unit_cost = Decimal("0")
+    stock_value = Decimal("0")
+    fifo_warning = None
+
+    try:
+        if fifo_layers:
+            fifo_unit_cost = Decimal(fifo_layers[0].unit_cost)
+
+        if on_hand > Decimal("0"):
+            stock_value = compute_fifo_cogs(product, on_hand)
+    except ValueError as e:
+        # FIFO stock shortage is not a display error.
+        # It only matters when posting a sale.
+        fifo_warning = f"⚠️ FIFO Stock Issue: {str(e)}"
+        stock_value = Decimal("0")
+
     # Keep avg_cost for backward compat in template (legacy field)
     avg_cost = Decimal(product.avg_cost or 0)
 
@@ -147,6 +161,7 @@ def product_detail(request, pk: int):
         "avg_cost": avg_cost,
         "fifo_unit_cost": fifo_unit_cost,
         "fifo_layers": fifo_layers,
+        "fifo_warning": fifo_warning,
     }
     return render(request, "product_detail.html", context)
 
