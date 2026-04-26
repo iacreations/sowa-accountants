@@ -3167,6 +3167,11 @@ def sales_receipt_detail(request, pk: int):
     return render(request, "receipt_detail.html", {
         "receipt": receipt,
         "lines": lines,
+        "logo_url": request.build_absolute_uri(static("sowaf/images/yo-logo.png")),
+        "company_name": getattr(company, "name", None) or "YoAccountant",
+        "company_address": getattr(company, "address", "") or "Kampala, Uganda",
+        "company_phone": getattr(company, "phone", "") or "+256 700 000 000",
+        "company_email": getattr(company, "email", "") or "support@yoaccountant.com",
     })
 
 
