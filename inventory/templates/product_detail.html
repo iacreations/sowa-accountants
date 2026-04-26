@@ -126,7 +126,7 @@
           <div class="kv">
             <div class="k">Supplier</div><div>{{ product.supplier.company_name|default:"—" }}</div>
             <div class="k">Purchase Price</div><div>{{ product.purchase_price|floatformat:2|intcomma }}</div>
-            <div class="k">Purchase Date</div><div>{% if product.purchase_date %}{{ product.purchase_date|date:"M d, Y" }}{% else %}—{% endif %}</div>
+            <div class="k">As of Date</div><div>{% if product.purchase_date %}{{ product.purchase_date|date:"M d, Y" }}{% else %}—{% endif %}</div>
             <div class="k">Expense Account</div><div>{{ product.expense_account.account_name|default:"—" }}</div>
             <div class="k">Purchase Description</div><div>{{ product.purchase_description|default:"—" }}</div>
           </div>
