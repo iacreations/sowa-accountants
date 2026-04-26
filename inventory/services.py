@@ -253,8 +253,22 @@ def rebuild_inventory_movements(
     if movements:
         InventoryMovement.objects.bulk_create(movements)
 
-    for pid in affected:
-        _recalc_product_qty_and_avg_cost(pid)
+    # Only recalculate avg_cost if this is a purchase movement.
+    # Sales/transfers should NOT trigger recalculation so the existing
+    # avg_cost is preserved.
+    if source_type in PURCHASE_SOURCE_TYPES:
+        for pid in affected:
+            _recalc_product_qty_and_avg_cost(pid)
+    else:
+        # For non-purchase movements (sales, transfers, adjustments) we still
+        # need to update product.quantity, but must NOT touch avg_cost.
+        for pid in affected:
+            p = Product.objects.select_for_update().get(id=pid)
+            agg = p.movements.aggregate(tin=Sum("qty_in"), tout=Sum("qty_out"))
+            tin = agg["tin"] or ZERO
+            tout = agg["tout"] or ZERO
+            p.quantity = tin - tout
+            p.save(update_fields=["quantity"])
 
 
 # -----------------------
