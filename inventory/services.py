@@ -25,7 +25,14 @@ def D(v) -> Decimal:
 
 
 def is_inventory(p: Optional[Product]) -> bool:
-    return bool(p and (p.type or "").strip().lower() == "inventory")
+    return bool(
+        p and (p.type or "").strip().lower() in [
+            "inventory",
+            "inventory item",
+            "inventory_item",
+            "stock",
+        ]
+    )
 
 
 def safe_qty(v) -> Decimal:
@@ -161,6 +168,34 @@ def _recalc_product_quantity(product_id: int):
     p.save(update_fields=["quantity"])
 
 
+def _delete_existing_source_movements(source_type: str, source_id: int, company=None) -> Set[int]:
+    """
+    Delete old movements for one source document and rebuild affected FIFO layers.
+    """
+    qs = InventoryMovement.objects.filter(
+        source_type=source_type,
+        source_id=source_id,
+    )
+
+    if company is not None and hasattr(InventoryMovement, "company_id"):
+        qs = qs.filter(company=company)
+
+    affected = set(qs.values_list("product_id", flat=True))
+
+    qs.delete()
+
+    for pid in affected:
+        _recalc_product_quantity(pid)
+
+        try:
+            product = Product.objects.get(id=pid)
+            rebuild_layers_from_movements(product, company=company)
+        except Product.DoesNotExist:
+            pass
+
+    return affected
+
+
 # -----------------------
 # Generic ledger rebuilder
 # -----------------------
@@ -222,12 +257,12 @@ def rebuild_inventory_movements(
         movements.append(InventoryMovement(**movement_kwargs))
         affected.add(p.id)
 
-    # Important:
-    # Do not delete old movements unless valid new movements exist.
-    InventoryMovement.objects.filter(
-        source_type=source_type,
-        source_id=source_id,
-    ).delete()
+    old_affected = _delete_existing_source_movements(
+        source_type,
+        source_id,
+        company=company,
+    )
+    affected.update(old_affected)
 
     if movements:
         InventoryMovement.objects.bulk_create(movements)
@@ -377,6 +412,8 @@ def rebuild_movements_for_invoice(invoice):
     loc = resolve_location_from_doc(invoice)
     inv_date = invoice.date_created.date() if invoice.date_created else timezone.localdate()
 
+    _delete_existing_source_movements("INVOICE", invoice.id, company=company)
+
     rows = []
 
     for line in invoice.items.select_related("product").all():
@@ -428,6 +465,8 @@ def rebuild_movements_for_sales_receipt(receipt):
         except Exception:
             pass
 
+    _delete_existing_source_movements("SALES_RECEIPT", receipt.id, company=company)
+
     rows = []
 
     for line in receipt.lines.select_related("product").all():
@@ -473,6 +512,8 @@ def rebuild_movements_for_stock_transfer(transfer):
     from_loc = transfer.from_location
     to_loc = transfer.to_location
     tdate = transfer.transfer_date or timezone.localdate()
+
+    _delete_existing_source_movements("TRANSFER", transfer.id, company=company)
 
     rows = []
 
