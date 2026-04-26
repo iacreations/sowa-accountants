@@ -141,6 +141,7 @@
     <div class="footer">
       <div>Thank you for your business.</div>
       <div class="btns">
+        <a class="btn out" href="{% url 'sales:sales-receipt-list' %}">Back</a>
         <a class="btn out" href="{% url 'sales:receipt-edit' receipt.id %}">Edit</a>
         <button class="btn" onclick="window.print()">Print</button>
       </div>

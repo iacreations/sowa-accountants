@@ -43,6 +43,7 @@
   @media print{
     .receipt-wrap{margin-left:0}
     .header-bar{display:none}
+    .footer-btns{display:none}
     .sheet{box-shadow:none;border:none;border-radius:0}
     @page{size:A4;margin:12mm}
   }
@@ -55,11 +56,6 @@
   <!-- Header Actions -->
   <div class="header-bar">
     <div class="header-title">Sales Receipt #{{ receipt.id|stringformat:"04d" }}</div>
-    <div class="btns">
-      <a href="{% url 'sales:sales-receipt-list' %}" class="btn btn-back">Back</a>
-      <a href="{% url 'sales:receipt-edit' receipt.id %}" class="btn btn-edit">Edit</a>
-      <a href="{% url 'sales:receipt-print' receipt.id %}" class="btn btn-print">Print / PDF</a>
-    </div>
   </div>
 
   <!-- Receipt Sheet -->
@@ -151,7 +147,14 @@
       </div>
     </div>
 
+  </div><!-- /sheet -->
+
+  <!-- Footer Actions -->
+  <div class="footer-btns btns" style="margin-top:18px;">
+    <a href="{% url 'sales:sales-receipt-list' %}" class="btn btn-back">Back</a>
+    <a href="{% url 'sales:receipt-edit' receipt.id %}" class="btn btn-edit">Edit</a>
   </div>
+
 </div>
 
 {% include 'includes/footer.html' %}
