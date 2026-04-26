@@ -7,7 +7,7 @@ from django.utils import timezone
 from tenancy.models import Company
 from accounts.models import JournalEntry, JournalLine, Account
 from inventory.models import InventoryMovement, Product
-from inventory.services import resolve_location_from_doc, get_default_location
+from inventory.services import resolve_location_from_doc, get_default_location, PURCHASE_SOURCE_TYPES
 DEC0 = Decimal("0.00")
 _Q2 = Decimal("0.01")  # quantize target for 2 decimal places
 _Q0 = Decimal("1")     # quantize target for whole numbers (UGX has no cents)
@@ -213,7 +213,10 @@ def _apply_stock_in(product: Product, qty_in: Decimal, unit_cost: Decimal):
     agg = product.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
     product.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
 
-    purch = product.movements.filter(qty_in__gt=0).aggregate(q=_Sum("qty_in"), v=_Sum("value"))
+    purch = product.movements.filter(
+        qty_in__gt=0,
+        source_type__in=PURCHASE_SOURCE_TYPES,
+    ).aggregate(q=_Sum("qty_in"), v=_Sum("value"))
     q = _dec(purch["q"])
     v = _dec(purch["v"])
     product.avg_cost = (v / q).quantize(_Q0, rounding=ROUND_HALF_UP) if q > DEC0 else DEC0
