@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Iterable, Dict, Any, Optional, Set
 
 from django.db import transaction
@@ -6,19 +6,18 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from .models import InventoryMovement, InventoryLocation, Product, MainStore
-from .fifo import record_purchase_layer, simulate_fifo_consumption, rebuild_layers_from_movements
+from .fifo import rebuild_layers_from_movements, simulate_fifo_consumption
 
 ZERO = Decimal("0.00")
 
-# Source types that represent actual purchases and should contribute to avg_cost
 PURCHASE_SOURCE_TYPES = ["BILL", "EXPENSE", "CHEQUE", "OPENING", "ASSEMBLY"]
+SALE_SOURCE_TYPES = ["INVOICE", "SALES_RECEIPT"]
 
 
 # -----------------------
 # Helpers
 # -----------------------
 def D(v) -> Decimal:
-    """Safe Decimal conversion."""
     try:
         return Decimal(str(v if v is not None else "0"))
     except Exception:
@@ -26,7 +25,6 @@ def D(v) -> Decimal:
 
 
 def is_inventory(p: Optional[Product]) -> bool:
-    """Inventory items only."""
     return bool(p and (p.type or "").strip().lower() == "inventory")
 
 
@@ -41,30 +39,29 @@ def safe_cost(v) -> Decimal:
 
 
 def get_main_store(company=None) -> MainStore:
-    """
-    Always return one active main store for the active company.
-    """
     qs = MainStore.objects.filter(is_active=True)
+
     if company is not None and hasattr(MainStore, "company_id"):
         qs = qs.filter(company=company)
 
     store = qs.first()
+
     if not store:
         create_kwargs = {"name": "Main Store", "is_active": True}
+
         if company is not None and hasattr(MainStore, "company_id"):
             create_kwargs["company"] = company
+
         store = MainStore.objects.create(**create_kwargs)
+
     return store
 
 
 def get_default_location(company=None) -> InventoryLocation:
-    """
-    Ensures there is always one default active location.
-    Supports tenant-aware InventoryLocation if company exists on the model.
-    """
     store = get_main_store(company)
 
     qs = InventoryLocation.objects.filter(store=store, is_active=True)
+
     if company is not None and hasattr(InventoryLocation, "company_id"):
         qs = qs.filter(company=company)
 
@@ -77,13 +74,14 @@ def get_default_location(company=None) -> InventoryLocation:
             "is_default": True,
             "is_active": True,
         }
+
         if company is not None and hasattr(InventoryLocation, "company_id"):
             create_kwargs["company"] = company
 
         loc = InventoryLocation.objects.create(**create_kwargs)
 
-    # Safety: keep only one default
     cleanup_qs = InventoryLocation.objects.filter(store=store, is_default=True)
+
     if company is not None and hasattr(InventoryLocation, "company_id"):
         cleanup_qs = cleanup_qs.filter(company=company)
 
@@ -93,39 +91,36 @@ def get_default_location(company=None) -> InventoryLocation:
 
 
 def resolve_location_from_doc(doc) -> InventoryLocation:
-    """
-    Resolve location from document.
-
-    NEW LOGIC:
-    - If doc.location is already an InventoryLocation FK, use it
-    - If doc.location is empty, fall back to default location
-    - If doc.location is a string somehow, try to find/create a location by that name
-    """
     company = getattr(doc, "company", None)
     loc = getattr(doc, "location", None)
 
-    # FK already set
     if isinstance(loc, InventoryLocation):
         return loc
 
-    # If location is just an ID somehow
     if loc and hasattr(loc, "id"):
         return loc
 
-    # If old code still passes text
     if isinstance(loc, str):
         name = loc.strip()
+
         if name:
             store = get_main_store(company)
-            qs = InventoryLocation.objects.filter(store=store, name__iexact=name)
+
+            qs = InventoryLocation.objects.filter(
+                store=store,
+                name__iexact=name,
+            )
+
             if company is not None and hasattr(InventoryLocation, "company_id"):
                 qs = qs.filter(company=company)
 
             found = qs.first()
+
             if found:
                 if not found.is_active:
                     found.is_active = True
                     found.save(update_fields=["is_active"])
+
                 return found
 
             create_kwargs = {
@@ -134,6 +129,7 @@ def resolve_location_from_doc(doc) -> InventoryLocation:
                 "is_default": False,
                 "is_active": True,
             }
+
             if company is not None and hasattr(InventoryLocation, "company_id"):
                 create_kwargs["company"] = company
 
@@ -143,58 +139,30 @@ def resolve_location_from_doc(doc) -> InventoryLocation:
 
 
 def qty_on_hand(product: Product, location: Optional[InventoryLocation] = None) -> Decimal:
-    """
-    Ledger-based quantity:
-      qty = total_in - total_out
-    If location is passed, computes per-location stock.
-    """
     qs = product.movements.all()
+
     if location:
         qs = qs.filter(location=location)
 
     agg = qs.aggregate(tin=Sum("qty_in"), tout=Sum("qty_out"))
-    tin = agg["tin"] or ZERO
-    tout = agg["tout"] or ZERO
-    return tin - tout
+
+    return (agg["tin"] or ZERO) - (agg["tout"] or ZERO)
 
 
 # -----------------------
 # Product cache recalculation
 # -----------------------
 def _recalc_product_quantity(product_id: int):
-    """Update Product.quantity from the movement ledger without touching avg_cost."""
     p = Product.objects.select_for_update().get(id=product_id)
+
     agg = p.movements.aggregate(tin=Sum("qty_in"), tout=Sum("qty_out"))
+
     p.quantity = (agg["tin"] or ZERO) - (agg["tout"] or ZERO)
     p.save(update_fields=["quantity"])
 
 
-def _recalc_product_qty_and_avg_cost(product_id: int):
-    """
-    Cached fields:
-      Product.quantity = total_in - total_out (ALL locations)
-      Product.avg_cost = total purchase value / total purchase qty (qty_in only)
-    """
-    p = Product.objects.select_for_update().get(id=product_id)
-
-    agg = p.movements.aggregate(tin=Sum("qty_in"), tout=Sum("qty_out"))
-    tin = agg["tin"] or ZERO
-    tout = agg["tout"] or ZERO
-    p.quantity = tin - tout
-
-    purch = p.movements.filter(
-        qty_in__gt=0,
-        source_type__in=PURCHASE_SOURCE_TYPES,
-    ).aggregate(q=Sum("qty_in"), v=Sum("value"))
-    q = purch["q"] or ZERO
-    v = purch["v"] or ZERO
-    p.avg_cost = ((v / q).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if q > ZERO else ZERO
-
-    p.save(update_fields=["quantity", "avg_cost"])
-
-
 # -----------------------
-# Generic ledger rebuilder (supports per-row location)
+# Generic ledger rebuilder
 # -----------------------
 @transaction.atomic
 def rebuild_inventory_movements(
@@ -206,28 +174,16 @@ def rebuild_inventory_movements(
     location: Optional[InventoryLocation] = None,
     company=None,
 ):
-    """
-    rows = [
-      {"product": Product, "qty_in": x, "qty_out": y, "unit_cost": cost, "location": InventoryLocation (optional)},
-      ...
-    ]
-
-    Rules:
-    - Deletes old movements for this (source_type, source_id) -> edit-safe
-    - Inserts new movements
-    - Recalculates Product.quantity and Product.avg_cost
-    """
     date = date or timezone.localdate()
-    rows = rows or []
+    rows = list(rows or [])
     default_location = location or get_default_location(company=company)
-
-    InventoryMovement.objects.filter(source_type=source_type, source_id=source_id).delete()
 
     movements = []
     affected: Set[int] = set()
 
     for r in rows:
         p = r.get("product")
+
         if not is_inventory(p):
             continue
 
@@ -237,6 +193,12 @@ def rebuild_inventory_movements(
 
         if qty_in <= ZERO and qty_out <= ZERO:
             continue
+
+        if qty_in > ZERO and unit_cost <= ZERO:
+            raise ValueError(f"Purchase cost missing for inventory item: {p.name}")
+
+        if qty_out > ZERO and unit_cost <= ZERO:
+            raise ValueError(f"FIFO cost missing for inventory item: {p.name}")
 
         row_loc = r.get("location") or default_location
         qty = qty_in if qty_in > ZERO else qty_out
@@ -253,35 +215,35 @@ def rebuild_inventory_movements(
             "source_type": source_type,
             "source_id": source_id,
         }
+
         if company is not None and hasattr(InventoryMovement, "company_id"):
             movement_kwargs["company"] = company
 
         movements.append(InventoryMovement(**movement_kwargs))
         affected.add(p.id)
 
+    # Important:
+    # Do not delete old movements unless valid new movements exist.
+    InventoryMovement.objects.filter(
+        source_type=source_type,
+        source_id=source_id,
+    ).delete()
+
     if movements:
         InventoryMovement.objects.bulk_create(movements)
 
-    # Recalculate product quantity cache
-    if source_type in PURCHASE_SOURCE_TYPES:
-        for pid in affected:
-            _recalc_product_qty_and_avg_cost(pid)
-    else:
-        for pid in affected:
-            _recalc_product_quantity(pid)
-
-    # Rebuild FIFO layers for all affected products from the full movement ledger.
-    # This is always correct regardless of whether this is a purchase or sale.
     for pid in affected:
+        _recalc_product_quantity(pid)
+
         try:
-            p = Product.objects.get(id=pid)
-            rebuild_layers_from_movements(p, company=company)
+            product = Product.objects.get(id=pid)
+            rebuild_layers_from_movements(product, company=company)
         except Product.DoesNotExist:
             pass
 
 
 # -----------------------
-# Bills (Stock IN)
+# Bills — Stock IN
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_bill(bill):
@@ -289,15 +251,21 @@ def rebuild_movements_for_bill(bill):
     loc = resolve_location_from_doc(bill)
 
     rows = []
+
     for line in bill.item_lines.select_related("product").all():
         p = line.product
+
         if not is_inventory(p):
             continue
 
-        qty = safe_qty(line.qty)
-        cost = safe_cost(line.rate)
+        qty = safe_qty(getattr(line, "qty", None))
+        cost = safe_cost(getattr(line, "rate", None))
+
         if qty <= ZERO:
             continue
+
+        if cost <= ZERO:
+            raise ValueError(f"Bill line for {p.name} has no valid purchase cost.")
 
         rows.append({
             "product": p,
@@ -317,28 +285,29 @@ def rebuild_movements_for_bill(bill):
 
 
 # -----------------------
-# Expenses (Stock IN)
+# Expenses — Stock IN
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_expense(expense):
-    """
-    Stock IN for Inventory items on Expense.
-    Uses ExpenseItemLine.qty and rate as unit_cost.
-    Uses expense.location FK if available.
-    """
     company = getattr(expense, "company", None)
-    loc = getattr(expense, "location", None) or get_default_location(company=company)
+    loc = resolve_location_from_doc(expense)
 
     rows = []
+
     for line in expense.item_lines.select_related("product").all():
         p = line.product
+
         if not is_inventory(p):
             continue
 
-        qty = safe_qty(line.qty)
-        cost = safe_cost(line.rate)
+        qty = safe_qty(getattr(line, "qty", None))
+        cost = safe_cost(getattr(line, "rate", None))
+
         if qty <= ZERO:
             continue
+
+        if cost <= ZERO:
+            raise ValueError(f"Expense line for {p.name} has no valid purchase cost.")
 
         rows.append({
             "product": p,
@@ -358,7 +327,7 @@ def rebuild_movements_for_expense(expense):
 
 
 # -----------------------
-# Cheques (Stock IN)
+# Cheques — Stock IN
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_cheque(cheque):
@@ -366,15 +335,21 @@ def rebuild_movements_for_cheque(cheque):
     loc = resolve_location_from_doc(cheque)
 
     rows = []
+
     for line in cheque.item_lines.select_related("product").all():
         p = line.product
+
         if not is_inventory(p):
             continue
 
-        qty = safe_qty(line.qty)
-        cost = safe_cost(line.rate)
+        qty = safe_qty(getattr(line, "qty", None))
+        cost = safe_cost(getattr(line, "rate", None))
+
         if qty <= ZERO:
             continue
+
+        if cost <= ZERO:
+            raise ValueError(f"Cheque line for {p.name} has no valid purchase cost.")
 
         rows.append({
             "product": p,
@@ -394,7 +369,7 @@ def rebuild_movements_for_cheque(cheque):
 
 
 # -----------------------
-# Invoices (Stock OUT)
+# Invoices — Stock OUT using FIFO
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_invoice(invoice):
@@ -403,16 +378,23 @@ def rebuild_movements_for_invoice(invoice):
     inv_date = invoice.date_created.date() if invoice.date_created else timezone.localdate()
 
     rows = []
+
     for line in invoice.items.select_related("product").all():
         p = line.product
+
         if not is_inventory(p):
             continue
 
-        qty = safe_qty(line.qty)
+        qty = safe_qty(getattr(line, "qty", None))
+
         if qty <= ZERO:
             continue
 
         fifo_rows = simulate_fifo_consumption(p, qty)
+
+        if not fifo_rows:
+            raise ValueError(f"No FIFO stock layers available for {p.name}.")
+
         for fifo_cost, fifo_qty in fifo_rows:
             rows.append({
                 "product": p,
@@ -432,14 +414,10 @@ def rebuild_movements_for_invoice(invoice):
 
 
 # -----------------------
-# Sales Receipts (Stock OUT)
+# Sales Receipts — Stock OUT using FIFO
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_sales_receipt(receipt):
-    """
-    Stock OUT for Inventory items on Sales Receipt.
-    Uses receipt.lines.qty and CURRENT product.avg_cost as unit_cost.
-    """
     company = getattr(receipt, "company", None)
     loc = resolve_location_from_doc(receipt)
     rcpt_date = getattr(receipt, "receipt_date", None) or timezone.localdate()
@@ -451,16 +429,23 @@ def rebuild_movements_for_sales_receipt(receipt):
             pass
 
     rows = []
+
     for line in receipt.lines.select_related("product").all():
         p = getattr(line, "product", None)
+
         if not is_inventory(p):
             continue
 
         qty = safe_qty(getattr(line, "qty", None))
+
         if qty <= ZERO:
             continue
 
         fifo_rows = simulate_fifo_consumption(p, qty)
+
+        if not fifo_rows:
+            raise ValueError(f"No FIFO stock layers available for {p.name}.")
+
         for fifo_cost, fifo_qty in fifo_rows:
             rows.append({
                 "product": p,
@@ -480,56 +465,57 @@ def rebuild_movements_for_sales_receipt(receipt):
 
 
 # -----------------------
-# Stock Transfer (OUT from A, IN to B)
+# Stock Transfer
 # -----------------------
 @transaction.atomic
 def rebuild_movements_for_stock_transfer(transfer):
-    """
-    Creates 2 movements per line:
-      - qty_out at from_location
-      - qty_in  at to_location
-    """
     company = getattr(transfer, "company", None)
     from_loc = transfer.from_location
     to_loc = transfer.to_location
     tdate = transfer.transfer_date or timezone.localdate()
 
     rows = []
+
     for ln in transfer.lines.select_related("product").all():
         p = ln.product
+
         if not is_inventory(p):
             continue
 
-        qty = safe_qty(ln.qty)
+        qty = safe_qty(getattr(ln, "qty", None))
+
         if qty <= ZERO:
             continue
 
         available = qty_on_hand(p, location=from_loc)
+
         if qty > available:
             raise ValueError(
                 f"Not enough stock for {p.name} at {from_loc.name}. "
                 f"Available {available}, trying to transfer {qty}."
             )
 
-        # Use the oldest available FIFO layer cost for the transfer record
-        from .fifo import get_available_layers
-        layers = get_available_layers(p)
-        unit_cost = safe_cost(layers[0].unit_cost if layers else ZERO)
+        fifo_rows = simulate_fifo_consumption(p, qty)
 
-        rows.append({
-            "product": p,
-            "qty_in": ZERO,
-            "qty_out": qty,
-            "unit_cost": unit_cost,
-            "location": from_loc,
-        })
-        rows.append({
-            "product": p,
-            "qty_in": qty,
-            "qty_out": ZERO,
-            "unit_cost": unit_cost,
-            "location": to_loc,
-        })
+        if not fifo_rows:
+            raise ValueError(f"No FIFO stock layers available for transfer item: {p.name}.")
+
+        for fifo_cost, fifo_qty in fifo_rows:
+            rows.append({
+                "product": p,
+                "qty_in": ZERO,
+                "qty_out": fifo_qty,
+                "unit_cost": fifo_cost,
+                "location": from_loc,
+            })
+
+            rows.append({
+                "product": p,
+                "qty_in": fifo_qty,
+                "qty_out": ZERO,
+                "unit_cost": fifo_cost,
+                "location": to_loc,
+            })
 
     rebuild_inventory_movements(
         "TRANSFER",
