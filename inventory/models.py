@@ -169,7 +169,15 @@ class Product(TenantModel):
 
     @property
     def stock_value(self):
+        """Legacy: quantity × avg_cost (kept for backward compatibility)."""
         return (self.quantity or Decimal("0.00")) * (self.avg_cost or Decimal("0.00"))
+
+    def get_fifo_value(self):
+        """Return the value of on-hand stock using FIFO cost layers (oldest layer cost × qty)."""
+        oldest = self.fifo_layers.filter(is_exhausted=False).order_by("date_created", "id").first()
+        if oldest:
+            return (self.quantity or Decimal("0.00")) * oldest.qty_remaining
+        return Decimal("0.00")
 
     def __str__(self):
         return self.name or "Product"
@@ -365,6 +373,44 @@ class InventoryMovement(TenantModel):
         return f"{pname} @ {lname} +{self.qty_in} -{self.qty_out} ({self.source_type}#{self.source_id})"
 
 
+class InventoryLayer(TenantModel):
+    """
+    FIFO cost layer.  Each purchase (or opening stock / assembly build) creates
+    one layer.  Sales consume from the oldest layer first.
+    """
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="fifo_layers",
+    )
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    qty_in = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"),
+                                  help_text="Original purchased / received quantity")
+    qty_remaining = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"),
+                                         help_text="Units still available to be issued")
+    source_movement = models.ForeignKey(
+        InventoryMovement,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="fifo_layer",
+    )
+    date_created = models.DateField(default=timezone.localdate,
+                                     help_text="Date the layer was created (purchase / receipt date)")
+    is_exhausted = models.BooleanField(default=False,
+                                        help_text="True when qty_remaining reaches zero")
+
+    class Meta:
+        ordering = ["date_created", "id"]  # FIFO: oldest first
+        indexes = [
+            models.Index(fields=["company", "product", "date_created"]),
+            models.Index(fields=["company", "product", "is_exhausted"]),
+        ]
+
+    def __str__(self):
+        pname = self.product.name if self.product_id else "—"
+        return f"Layer {self.id}: {pname} {self.qty_remaining}/{self.qty_in} @ {self.unit_cost}"
+
+
 class StockTransfer(TenantModel):
     """
     Stock transfer header.
@@ -519,11 +565,12 @@ class Build(TenantModel):
 
     @property
     def total_component_cost(self):
-        """Sum of (component.avg_cost * qty_per_unit * build_qty) for all lines."""
+        """Sum of (FIFO cost * qty_per_unit * build_qty) for all component lines."""
         total = Decimal("0.00")
         for line in self.lines.select_related("component").all():
-            unit_cost = line.component.avg_cost or Decimal("0.00")
-            total += unit_cost * (line.qty_per_unit or Decimal("0.00")) * (self.build_qty or Decimal("1.00"))
+            from inventory.fifo import compute_fifo_cogs
+            qty = (line.qty_per_unit or Decimal("0.00")) * (self.build_qty or Decimal("1.00"))
+            total += compute_fifo_cogs(line.component, qty)
         return total
 
     def __str__(self):
@@ -576,9 +623,9 @@ class BuildLine(models.Model):
 
     @property
     def total_cost(self):
-        """Total cost = total_qty * component avg_cost."""
-        unit_cost = self.component.avg_cost or Decimal("0.00")
-        return self.total_qty * unit_cost
+        """Total cost = total_qty consumed using FIFO layers."""
+        from inventory.fifo import compute_fifo_cogs
+        return compute_fifo_cogs(self.component, self.total_qty)
 
     def __str__(self):
         c = self.component.name if self.component_id else "?"

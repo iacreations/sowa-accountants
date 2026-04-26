@@ -203,25 +203,17 @@ def _fallback_sales_account(product: Product, company=None):
 # -----------------------------
 def _apply_stock_in(product: Product, qty_in: Decimal, unit_cost: Decimal):
     """
-    Update avg_cost and quantity from the movement ledger only.
-    The new movement is already saved to DB before this is called, so
-    a pure ledger aggregate gives the correct weighted average without
-    being polluted by any initial product.quantity not backed by a movement.
+    Update product.quantity and FIFO layers after a stock-in movement.
+    The new movement is already saved to DB before this is called.
     """
     from django.db.models import Sum as _Sum
+    from inventory.fifo import rebuild_layers_from_movements
 
     agg = product.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
     product.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
+    product.save(update_fields=["quantity"])
 
-    purch = product.movements.filter(
-        qty_in__gt=0,
-        source_type__in=PURCHASE_SOURCE_TYPES,
-    ).aggregate(q=_Sum("qty_in"), v=_Sum("value"))
-    q = _dec(purch["q"])
-    v = _dec(purch["v"])
-    product.avg_cost = (v / q).quantize(_Q0, rounding=ROUND_HALF_UP) if q > DEC0 else DEC0
-
-    product.save(update_fields=["quantity", "avg_cost"])
+    rebuild_layers_from_movements(product, company=getattr(product, "company", None))
 
 
 def _get_or_create_ap_control_account(company=None):
@@ -566,9 +558,10 @@ def post_invoice_inventory_and_gl(invoice):
       B) COGS side for inventory products:
           Dr COGS (product.cogs_account OR product.expense_account OR fallback)
           Cr Inventory Asset (product.inventory_asset_account OR fallback)
-      C) InventoryMovement qty_out using product.avg_cost
+      C) InventoryMovement qty_out using FIFO cost layers (one movement per FIFO layer consumed)
     """
     from sales.models import InvoiceItem
+    from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
 
     company = getattr(invoice, "company", None)
     source_type = "INVOICE"
@@ -594,6 +587,7 @@ def post_invoice_inventory_and_gl(invoice):
             raise ValueError("Missing Accounts Receivable account. Create one or set customer.ar_account.")
 
         total_ar = DEC0
+        affected_products = set()
 
         lines = InvoiceItem.objects.filter(invoice=invoice).select_related("product")
         for ln in lines:
@@ -626,31 +620,37 @@ def post_invoice_inventory_and_gl(invoice):
                 if not inv_acc:
                     raise ValueError(f"Product '{product.name}' missing inventory_asset_account and no Inventory/Expense fallback found.")
 
-                unit_cost = _dec(getattr(product, "avg_cost", None))
-                cogs_value = (qty * unit_cost).quantize(_Q0, rounding=ROUND_HALF_UP)
+                # Use FIFO simulation to get per-layer unit costs (read-only)
+                fifo_rows = simulate_fifo_consumption(product, qty)
+                for layer_cost, layer_qty in fifo_rows:
+                    layer_value = (layer_qty * layer_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+                    InventoryMovement.objects.create(
+                        product=product,
+                        company=company,
+                        date=post_date,
+                        qty_in=DEC0,
+                        qty_out=layer_qty,
+                        unit_cost=layer_cost,
+                        value=layer_value,
+                        location=stock_location,
+                        source_type=source_type,
+                        source_id=source_id,
+                    )
+                    _add_line(je=je, account=cogs_acc, debit=layer_value, credit=DEC0)
+                    _add_line(je=je, account=inv_acc, debit=DEC0, credit=layer_value)
 
-                InventoryMovement.objects.create(
-                    product=product,
-                    company=company,
-                    date=post_date,
-                    qty_in=DEC0,
-                    qty_out=qty,
-                    unit_cost=unit_cost,
-                    value=cogs_value,
-                    location=stock_location,
-                    source_type=source_type,
-                    source_id=source_id,
-                )
-
-                # update cached qty (avg_cost maintained on purchases)
-                product.quantity = _dec(product.quantity) - qty
-                product.save(update_fields=["quantity"])
-
-                _add_line(je=je, account=cogs_acc, debit=cogs_value, credit=DEC0)
-                _add_line(je=je, account=inv_acc, debit=DEC0, credit=cogs_value)
+                affected_products.add(product)
 
         if total_ar > 0:
             _add_line(je=je, account=ar_acc, debit=total_ar, credit=DEC0, customer=customer)
+
+        # Rebuild FIFO layers and update cached qty for all affected products
+        for product in affected_products:
+            from django.db.models import Sum as _Sum
+            agg = product.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
+            product.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
+            product.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(product, company=company)
 
         invoice.journal_entry = je
         invoice.is_posted = True
@@ -677,6 +677,9 @@ def post_sales_receipt_to_gl(receipt):
     with transaction.atomic():
         _clear_inventory_movements(source_type, source_id)
 
+        from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
+        affected_products = set()
+
         for ln in SalesReceiptLine.objects.filter(receipt=receipt).select_related("product"):
             product = ln.product
             if not product or not getattr(product, 'track_inventory', False):
@@ -685,23 +688,29 @@ def post_sales_receipt_to_gl(receipt):
             if qty <= 0:
                 continue
 
-            unit_cost = _dec(product.avg_cost)
-            value = (qty * unit_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+            fifo_rows = simulate_fifo_consumption(product, qty)
+            for layer_cost, layer_qty in fifo_rows:
+                layer_value = (layer_qty * layer_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+                InventoryMovement.objects.create(
+                    product=product,
+                    company=company,
+                    date=post_date,
+                    qty_in=DEC0,
+                    qty_out=layer_qty,
+                    unit_cost=layer_cost,
+                    value=layer_value,
+                    source_type=source_type,
+                    source_id=source_id,
+                )
 
-            InventoryMovement.objects.create(
-                product=product,
-                company=company,
-                date=post_date,
-                qty_in=DEC0,
-                qty_out=qty,
-                unit_cost=unit_cost,
-                value=value,
-                source_type=source_type,
-                source_id=source_id,
-            )
+            affected_products.add(product)
 
-            product.quantity = _dec(product.quantity) - qty
+        for product in affected_products:
+            from django.db.models import Sum as _Sum
+            agg = product.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
+            product.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
             product.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(product, company=company)
 
 
 # --- Assembly Build Completion ---
@@ -757,24 +766,36 @@ def complete_build(build):
             if qty_consumed <= 0:
                 continue
 
-            unit_cost = _dec(component.avg_cost).quantize(TWO)
-            value = (qty_consumed * unit_cost).quantize(TWO)
+            # Use FIFO simulation to determine the cost of consumed components
+            from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
+            fifo_rows = simulate_fifo_consumption(component, qty_consumed)
+            component_cost = DEC0
+            for layer_cost, layer_qty in fifo_rows:
+                layer_value = (layer_qty * layer_cost).quantize(TWO)
+                component_cost += layer_value
 
-            # Stock OUT for component
-            InventoryMovement.objects.create(
-                product=component,
-                company=company,
-                date=post_date,
-                qty_in=DEC0,
-                qty_out=qty_consumed,
-                unit_cost=unit_cost,
-                value=value,
-                source_type=source_type,
-                source_id=source_id,
-            )
+                # Stock OUT for component (one movement per FIFO layer)
+                InventoryMovement.objects.create(
+                    product=component,
+                    company=company,
+                    date=post_date,
+                    qty_in=DEC0,
+                    qty_out=layer_qty,
+                    unit_cost=layer_cost,
+                    value=layer_value,
+                    source_type=source_type,
+                    source_id=source_id,
+                )
 
-            component.quantity = _dec(component.quantity) - qty_consumed
+            # Update component qty and rebuild layers
+            from django.db.models import Sum as _Sum
+            agg = component.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
+            component.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
             component.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(component, company=company)
+
+            unit_cost = (component_cost / qty_consumed).quantize(TWO) if qty_consumed > 0 else DEC0
+            value = component_cost
 
             # CR component inventory asset
             comp_inv_acc = _fallback_inventory_asset_account(component, company=company)

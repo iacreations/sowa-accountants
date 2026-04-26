@@ -6,6 +6,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from .models import InventoryMovement, InventoryLocation, Product, MainStore
+from .fifo import record_purchase_layer, simulate_fifo_consumption, rebuild_layers_from_movements
 
 ZERO = Decimal("0.00")
 
@@ -261,17 +262,22 @@ def rebuild_inventory_movements(
     if movements:
         InventoryMovement.objects.bulk_create(movements)
 
-    # Only recalculate avg_cost if this is a purchase movement.
-    # Sales/transfers should NOT trigger recalculation so the existing
-    # avg_cost is preserved.
+    # Recalculate product quantity cache
     if source_type in PURCHASE_SOURCE_TYPES:
         for pid in affected:
             _recalc_product_qty_and_avg_cost(pid)
     else:
-        # For non-purchase movements (sales, transfers, adjustments) we still
-        # need to update product.quantity, but must NOT touch avg_cost.
         for pid in affected:
             _recalc_product_quantity(pid)
+
+    # Rebuild FIFO layers for all affected products from the full movement ledger.
+    # This is always correct regardless of whether this is a purchase or sale.
+    for pid in affected:
+        try:
+            p = Product.objects.get(id=pid)
+            rebuild_layers_from_movements(p, company=company)
+        except Product.DoesNotExist:
+            pass
 
 
 # -----------------------
@@ -406,14 +412,15 @@ def rebuild_movements_for_invoice(invoice):
         if qty <= ZERO:
             continue
 
-        unit_cost = safe_cost(getattr(p, "avg_cost", ZERO))
-        rows.append({
-            "product": p,
-            "qty_in": ZERO,
-            "qty_out": qty,
-            "unit_cost": unit_cost,
-            "location": loc,
-        })
+        fifo_rows = simulate_fifo_consumption(p, qty)
+        for fifo_cost, fifo_qty in fifo_rows:
+            rows.append({
+                "product": p,
+                "qty_in": ZERO,
+                "qty_out": fifo_qty,
+                "unit_cost": fifo_cost,
+                "location": loc,
+            })
 
     rebuild_inventory_movements(
         "INVOICE",
@@ -453,14 +460,15 @@ def rebuild_movements_for_sales_receipt(receipt):
         if qty <= ZERO:
             continue
 
-        unit_cost = safe_cost(getattr(p, "avg_cost", ZERO))
-        rows.append({
-            "product": p,
-            "qty_in": ZERO,
-            "qty_out": qty,
-            "unit_cost": unit_cost,
-            "location": loc,
-        })
+        fifo_rows = simulate_fifo_consumption(p, qty)
+        for fifo_cost, fifo_qty in fifo_rows:
+            rows.append({
+                "product": p,
+                "qty_in": ZERO,
+                "qty_out": fifo_qty,
+                "unit_cost": fifo_cost,
+                "location": loc,
+            })
 
     rebuild_inventory_movements(
         "SALES_RECEIPT",
@@ -503,7 +511,10 @@ def rebuild_movements_for_stock_transfer(transfer):
                 f"Available {available}, trying to transfer {qty}."
             )
 
-        unit_cost = safe_cost(getattr(p, "avg_cost", ZERO))
+        # Use the oldest available FIFO layer cost for the transfer record
+        from .fifo import get_available_layers
+        layers = get_available_layers(p)
+        unit_cost = safe_cost(layers[0].unit_cost if layers else ZERO)
 
         rows.append({
             "product": p,
