@@ -230,13 +230,22 @@ def compute_fifo_cogs(product, qty: Decimal) -> Decimal:
 
 
 @transaction.atomic
-def rebuild_layers_from_movements(product, company=None):
+def rebuild_layers_from_movements(product, company=None, from_date=None):
     """
     Rebuild FIFO layers for a product by replaying InventoryMovement records.
 
     Purchases create layers.
     Sales consume the oldest layers.
     This function is idempotent.
+
+    Args:
+        product: The product whose layers to rebuild.
+        company: Optional company instance (defaults to product.company).
+        from_date: Optional date (datetime.date).  When supplied, only movements
+                   on or after this date are replayed.  Movements before this
+                   date are excluded from FIFO reconstruction; the assumption is
+                   that an OPENING movement at the cut-off date already captures
+                   the historical position.
     """
     from inventory.models import InventoryLayer, InventoryMovement
     from inventory.services import PURCHASE_SOURCE_TYPES
@@ -245,15 +254,18 @@ def rebuild_layers_from_movements(product, company=None):
 
     InventoryLayer.objects.filter(product=product).delete()
 
-    movements = (
+    movements_qs = (
         InventoryMovement.objects
         .filter(product=product)
         .order_by("date", "id")
     )
 
+    if from_date is not None:
+        movements_qs = movements_qs.filter(date__gte=from_date)
+
     pending_layers = []
 
-    for mv in movements:
+    for mv in movements_qs:
         qty_in = _q2(mv.qty_in)
         qty_out = _q2(mv.qty_out)
         unit_cost = _q2(mv.unit_cost)

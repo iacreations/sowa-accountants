@@ -7,10 +7,12 @@ Usage:
     python manage.py rebuild_inventory_fifo --dry-run
     python manage.py rebuild_inventory_fifo --company <id>
     python manage.py rebuild_inventory_fifo --product <id>
+    python manage.py rebuild_inventory_fifo --from-date 2026-04-26
 """
+from datetime import date as date_type
 from decimal import Decimal
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 
@@ -39,6 +41,17 @@ class Command(BaseCommand):
             default=None,
             help="Limit rebuild to a specific product ID.",
         )
+        parser.add_argument(
+            "--from-date",
+            default=None,
+            dest="from_date",
+            help=(
+                "Only replay movements on or after this date (YYYY-MM-DD). "
+                "Movements before this date are excluded from FIFO reconstruction. "
+                "Requires that an OPENING movement exists at the cut-off date to "
+                "seed the starting balance."
+            ),
+        )
 
     def handle(self, *args, **options):
         from inventory.models import Product, InventoryLayer
@@ -48,6 +61,16 @@ class Command(BaseCommand):
         company_id = options["company"]
         product_id = options["product"]
 
+        # --- Parse optional from_date ---
+        from_date = None
+        if options.get("from_date"):
+            try:
+                from_date = date_type.fromisoformat(options["from_date"])
+            except ValueError:
+                raise CommandError(
+                    f"Invalid date format: '{options['from_date']}'. Use YYYY-MM-DD."
+                )
+
         qs = Product.objects.all()
         if company_id:
             qs = qs.filter(company_id=company_id)
@@ -55,8 +78,9 @@ class Command(BaseCommand):
             qs = qs.filter(id=product_id)
 
         total = qs.count()
+        date_suffix = f" (from {from_date})" if from_date else ""
         self.stdout.write(
-            f"{'[DRY RUN] ' if dry_run else ''}Processing {total} product(s)…"
+            f"{'[DRY RUN] ' if dry_run else ''}Processing {total} product(s){date_suffix}…"
         )
 
         rebuilt = 0
@@ -64,17 +88,25 @@ class Command(BaseCommand):
 
         for product in qs.iterator():
             try:
+                # Use product.cut_off_date as fallback if no --from-date provided
+                effective_from_date = from_date
+                if effective_from_date is None:
+                    effective_from_date = getattr(product, "cut_off_date", None)
+
                 if dry_run:
                     # Simulate without saving
                     from inventory.models import InventoryMovement
                     from inventory.services import PURCHASE_SOURCE_TYPES
 
-                    movements = (
-                        InventoryMovement.objects.filter(product=product)
-                        .order_by("date", "id")
-                    )
+                    movements_qs = InventoryMovement.objects.filter(
+                        product=product
+                    ).order_by("date", "id")
+
+                    if effective_from_date:
+                        movements_qs = movements_qs.filter(date__gte=effective_from_date)
+
                     pending = []
-                    for mv in movements:
+                    for mv in movements_qs:
                         qty_in = Decimal(str(mv.qty_in or 0))
                         qty_out = Decimal(str(mv.qty_out or 0))
                         unit_cost = Decimal(str(mv.unit_cost or 0))
@@ -106,7 +138,11 @@ class Command(BaseCommand):
                 else:
                     with transaction.atomic():
                         company = getattr(product, "company", None)
-                        rebuild_layers_from_movements(product, company=company)
+                        rebuild_layers_from_movements(
+                            product,
+                            company=company,
+                            from_date=effective_from_date,
+                        )
 
                     layer_count = InventoryLayer.objects.filter(product=product).count()
                     self.stdout.write(
@@ -132,3 +168,4 @@ class Command(BaseCommand):
                 f"Done. Processed={rebuilt}, Errors={errors}"
             )
         )
+

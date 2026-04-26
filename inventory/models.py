@@ -72,6 +72,12 @@ class Product(TenantModel):
         help_text="When checked, an Inventory Asset account is created in the COA and stock is tracked.",
     )
 
+    cut_off_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date from which FIFO was reset. Movements before this date are historical only.",
+    )
+
     is_bundle = models.BooleanField(default=False, blank=True, null=True)
     display_bundle_contents = models.BooleanField(default=False, blank=True, null=True)
 
@@ -334,6 +340,11 @@ class InventoryMovement(TenantModel):
     source_id = models.IntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+
+    is_opening_balance = models.BooleanField(
+        default=False,
+        help_text="True when this movement was created as a cut-off opening balance.",
+    )
 
     class Meta:
         ordering = ["date", "id"]
