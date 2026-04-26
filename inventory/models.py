@@ -176,7 +176,7 @@ class Product(TenantModel):
         """Return the value of on-hand stock using FIFO cost layers (oldest layer cost × qty)."""
         oldest = self.fifo_layers.filter(is_exhausted=False).order_by("date_created", "id").first()
         if oldest:
-            return (self.quantity or Decimal("0.00")) * oldest.qty_remaining
+            return (self.quantity or Decimal("0.00")) * (oldest.unit_cost or Decimal("0.00"))
         return Decimal("0.00")
 
     def __str__(self):
@@ -623,9 +623,18 @@ class BuildLine(models.Model):
 
     @property
     def total_cost(self):
-        """Total cost = total_qty consumed using FIFO layers."""
+        """Total FIFO cost for this component line."""
         from inventory.fifo import compute_fifo_cogs
         return compute_fifo_cogs(self.component, self.total_qty)
+
+    @property
+    def fifo_unit_cost(self):
+        """FIFO unit cost = total_cost / total_qty (cost of oldest available layer)."""
+        from inventory.fifo import get_available_layers
+        layers = get_available_layers(self.component)
+        if layers:
+            return layers[0].unit_cost
+        return Decimal("0.00")
 
     def __str__(self):
         c = self.component.name if self.component_id else "?"
