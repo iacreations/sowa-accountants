@@ -124,7 +124,7 @@
               <th>Component</th>
               <th>Qty Per Unit</th>
               <th>Total Qty</th>
-              <th>Unit Cost (Avg)</th>
+              <th>Unit Cost (FIFO)</th>
               <th>Total Cost</th>
             </tr>
           </thead>
@@ -135,7 +135,7 @@
               <td>{{ line.component.name }}</td>
               <td>{{ line.qty_per_unit }}</td>
               <td>{{ line.total_qty|floatformat:2 }}</td>
-              <td>{{ line.component.avg_cost|floatformat:2 }}</td>
+              <td>{{ line.fifo_unit_cost|floatformat:2 }}</td>
               <td>{{ line.total_cost|floatformat:2 }}</td>
             </tr>
             {% empty %}

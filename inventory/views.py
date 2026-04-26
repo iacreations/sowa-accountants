@@ -122,9 +122,13 @@ def product_detail(request, pk: int):
     total_in = totals["total_in"] or ZERO_DEC
     total_out = totals["total_out"] or ZERO_DEC
 
-    # NEW: Stock value (cached qty * cached avg cost)
+    # FIFO stock value: use oldest available layer cost × on-hand qty
+    from inventory.fifo import get_available_layers, compute_fifo_cogs
+    fifo_layers = get_available_layers(product)
+    fifo_unit_cost = Decimal(fifo_layers[0].unit_cost) if fifo_layers else Decimal("0")
+    stock_value = compute_fifo_cogs(product, on_hand) if on_hand > Decimal("0") else Decimal("0")
+    # Keep avg_cost for backward compat in template (legacy field)
     avg_cost = Decimal(product.avg_cost or 0)
-    stock_value = on_hand * avg_cost
 
     context = {
         "product": product,
@@ -135,12 +139,14 @@ def product_detail(request, pk: int):
         "is_low_stock": is_low_stock,
         "bundle_rows": bundle_rows,
 
-        # NEW context
+        # FIFO context
         "movements": movements,
         "total_in": total_in,
         "total_out": total_out,
         "stock_value": stock_value,
         "avg_cost": avg_cost,
+        "fifo_unit_cost": fifo_unit_cost,
+        "fifo_layers": fifo_layers,
     }
     return render(request, "product_detail.html", context)
 
