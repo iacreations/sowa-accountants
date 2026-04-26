@@ -3,17 +3,15 @@
 FIFO (First In, First Out) costing engine.
 
 Purchases create InventoryLayer records.
-Sales consume layers starting from the oldest (lowest id / earliest date).
+Sales consume layers starting from the oldest available purchase layer.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Tuple, Optional, TYPE_CHECKING
+from typing import List, Tuple
 
 from django.db import transaction
-
-if TYPE_CHECKING:
-    from inventory.models import InventoryLayer, InventoryMovement, Product
 
 ZERO = Decimal("0.00")
 _Q2 = Decimal("0.01")
@@ -22,19 +20,24 @@ _Q2 = Decimal("0.01")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 def _dec(v) -> Decimal:
     if v is None:
         return ZERO
     if isinstance(v, Decimal):
         return v
-    return Decimal(str(v))
+    try:
+        return Decimal(str(v))
+    except Exception:
+        return ZERO
+
+
+def _q2(v: Decimal) -> Decimal:
+    return _dec(v).quantize(_Q2, rounding=ROUND_HALF_UP)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
 @transaction.atomic
 def record_purchase_layer(
     product,
@@ -43,32 +46,24 @@ def record_purchase_layer(
     date=None,
     movement=None,
     company=None,
-) -> "InventoryLayer":
+):
     """
-    Create a new FIFO cost layer for an incoming stock movement (purchase, opening,
-    assembly build output, etc.).
-
-    Args:
-        product:   Product instance
-        unit_cost: Cost per unit for this batch
-        qty_in:    Number of units received
-        date:      Date of the receipt (defaults to today)
-        movement:  The InventoryMovement that created this stock (optional FK)
-        company:   Company instance (taken from product if None)
-
-    Returns:
-        The newly-created InventoryLayer.
+    Create one FIFO layer for a stock-in transaction.
     """
     from django.utils import timezone
     from inventory.models import InventoryLayer
 
     company = company or getattr(product, "company", None)
     date = date or timezone.localdate()
-    unit_cost = _dec(unit_cost)
-    qty_in = _dec(qty_in)
+
+    unit_cost = _q2(unit_cost)
+    qty_in = _q2(qty_in)
 
     if qty_in <= ZERO:
-        raise ValueError(f"record_purchase_layer: qty_in must be > 0, got {qty_in!r}")
+        raise ValueError(f"FIFO purchase layer quantity must be greater than zero for {product}.")
+
+    if unit_cost <= ZERO:
+        raise ValueError(f"FIFO purchase layer cost must be greater than zero for {product}.")
 
     create_kwargs = {
         "product": product,
@@ -79,96 +74,110 @@ def record_purchase_layer(
         "date_created": date,
         "is_exhausted": False,
     }
+
     if company is not None:
         create_kwargs["company"] = company
 
     return InventoryLayer.objects.create(**create_kwargs)
 
 
-def get_available_layers(product) -> "list[InventoryLayer]":
+def get_available_layers(product):
     """
-    Return non-exhausted FIFO layers for *product* ordered oldest-first.
+    Return active FIFO layers for a product, oldest first.
     """
     return list(
-        product.fifo_layers.filter(is_exhausted=False).order_by("date_created", "id")
+        product.fifo_layers
+        .filter(is_exhausted=False, qty_remaining__gt=ZERO)
+        .order_by("date_created", "id")
     )
 
 
-def simulate_fifo_consumption(
-    product,
-    qty_to_consume: Decimal,
-) -> List[Tuple[Decimal, Decimal]]:
+def simulate_fifo_consumption(product, qty_to_consume: Decimal) -> List[Tuple[Decimal, Decimal]]:
     """
-    Read-only simulation of FIFO consumption.  Returns the same
-    ``[(unit_cost, qty)]`` list as ``consume_fifo_layers`` but does NOT
-    modify any InventoryLayer records.
+    Read-only FIFO simulation.
 
-    Use this when you need per-layer unit costs for recording sale movements
-    without actually updating layer state (the layers will be rebuilt from
-    movements afterwards via ``rebuild_layers_from_movements``).
+    Returns:
+        [(unit_cost, qty), ...]
+
+    Important:
+        This does NOT update layers.
+        It raises an error if there is not enough FIFO stock.
     """
-    qty_to_consume = _dec(qty_to_consume)
+    qty_to_consume = _q2(qty_to_consume)
+
     if qty_to_consume <= ZERO:
         return []
 
     layers = get_available_layers(product)
+
+    total_available = sum(_dec(layer.qty_remaining) for layer in layers)
+
+    if total_available < qty_to_consume:
+        raise ValueError(
+            f"Not enough FIFO stock for {product.name}. "
+            f"Available {total_available}, trying to consume {qty_to_consume}."
+        )
+
     result: List[Tuple[Decimal, Decimal]] = []
     remaining = qty_to_consume
 
     for layer in layers:
         if remaining <= ZERO:
             break
-        available = _dec(layer.qty_remaining)
+
+        available = _q2(layer.qty_remaining)
+
         if available <= ZERO:
             continue
+
         take = min(available, remaining)
-        result.append((_dec(layer.unit_cost), take))
-        remaining = (remaining - take).quantize(_Q2, rounding=ROUND_HALF_UP)
+
+        result.append((_q2(layer.unit_cost), _q2(take)))
+
+        remaining = _q2(remaining - take)
 
     if remaining > ZERO:
-        result.append((ZERO, remaining))
+        raise ValueError(
+            f"FIFO simulation failed for {product.name}. "
+            f"Remaining quantity: {remaining}."
+        )
 
     return result
 
 
 @transaction.atomic
-def consume_fifo_layers(
-    product,
-    qty_to_consume: Decimal,
-) -> List[Tuple[Decimal, Decimal]]:
+def consume_fifo_layers(product, qty_to_consume: Decimal) -> List[Tuple[Decimal, Decimal]]:
     """
-    Consume *qty_to_consume* units from the oldest available FIFO layers.
+    Consume FIFO layers permanently.
 
-    Layers are locked with SELECT FOR UPDATE inside an atomic block so that
-    concurrent sales don't double-consume the same stock.
-
-    Returns:
-        A list of (unit_cost, qty_consumed) tuples — one entry per layer
-        touched.  When a single layer covers the entire sale the list has
-        one element.  When the sale spans multiple layers there is one
-        element per layer.
-
-    Raises:
-        ValueError: if there is not enough stock in the layers (negative
-                    inventory guard).
+    Use this only when you really want to update InventoryLayer.qty_remaining.
+    If your system rebuilds layers from movements after posting, use
+    simulate_fifo_consumption() instead.
     """
     from inventory.models import InventoryLayer
 
-    qty_to_consume = _dec(qty_to_consume)
+    qty_to_consume = _q2(qty_to_consume)
+
     if qty_to_consume <= ZERO:
         return []
 
     layers = list(
         InventoryLayer.objects.select_for_update()
-        .filter(product=product, is_exhausted=False)
+        .filter(
+            product=product,
+            is_exhausted=False,
+            qty_remaining__gt=ZERO,
+        )
         .order_by("date_created", "id")
     )
 
-    total_available = sum(_dec(l.qty_remaining) for l in layers)
+    total_available = sum(_dec(layer.qty_remaining) for layer in layers)
+
     if total_available < qty_to_consume:
-        # Allow the sale to proceed at zero cost for the shortfall rather than
-        # blocking the user.  The caller may log or warn.
-        pass
+        raise ValueError(
+            f"Not enough FIFO stock for {product.name}. "
+            f"Available {total_available}, trying to consume {qty_to_consume}."
+        )
 
     result: List[Tuple[Decimal, Decimal]] = []
     remaining = qty_to_consume
@@ -177,117 +186,132 @@ def consume_fifo_layers(
         if remaining <= ZERO:
             break
 
-        available = _dec(layer.qty_remaining)
-        if available <= ZERO:
-            layer.is_exhausted = True
-            layer.save(update_fields=["is_exhausted"])
-            continue
-
+        available = _q2(layer.qty_remaining)
         take = min(available, remaining)
-        layer.qty_remaining = (available - take).quantize(_Q2, rounding=ROUND_HALF_UP)
+
+        layer.qty_remaining = _q2(available - take)
+
         if layer.qty_remaining <= ZERO:
             layer.qty_remaining = ZERO
             layer.is_exhausted = True
+
         layer.save(update_fields=["qty_remaining", "is_exhausted"])
 
-        result.append((_dec(layer.unit_cost), take))
-        remaining = (remaining - take).quantize(_Q2, rounding=ROUND_HALF_UP)
+        result.append((_q2(layer.unit_cost), _q2(take)))
 
-    # If we still have remaining (insufficient layers), issue at zero cost
+        remaining = _q2(remaining - take)
+
     if remaining > ZERO:
-        result.append((ZERO, remaining))
+        raise ValueError(
+            f"FIFO consumption failed for {product.name}. "
+            f"Remaining quantity: {remaining}."
+        )
 
     return result
 
 
 def compute_fifo_cogs(product, qty: Decimal) -> Decimal:
     """
-    Calculate the total COGS for selling *qty* units using FIFO without
-    actually consuming any layers (read-only).
-
-    Returns the total cost (not unit cost).
+    Calculate total FIFO COGS without consuming stock.
     """
-    qty = _dec(qty)
+    qty = _q2(qty)
+
     if qty <= ZERO:
         return ZERO
 
-    layers = get_available_layers(product)
-    total_cost = ZERO
-    remaining = qty
+    fifo_rows = simulate_fifo_consumption(product, qty)
 
-    for layer in layers:
-        if remaining <= ZERO:
-            break
-        available = _dec(layer.qty_remaining)
-        take = min(available, remaining)
-        total_cost += take * _dec(layer.unit_cost)
-        remaining -= take
+    total_cost = sum(
+        _q2(unit_cost) * _q2(qty_used)
+        for unit_cost, qty_used in fifo_rows
+    )
 
-    return total_cost.quantize(_Q2, rounding=ROUND_HALF_UP)
+    return _q2(total_cost)
 
 
 @transaction.atomic
 def rebuild_layers_from_movements(product, company=None):
     """
-    Rebuild FIFO layers for *product* from scratch by replaying all its
-    InventoryMovements in chronological order.
+    Rebuild FIFO layers for a product by replaying InventoryMovement records.
 
-    This is called by the management command ``rebuild_inventory_fifo``.
-    It is safe to run multiple times (idempotent — deletes existing layers
-    first).
+    Purchases create layers.
+    Sales consume the oldest layers.
+    This function is idempotent.
     """
     from inventory.models import InventoryLayer, InventoryMovement
     from inventory.services import PURCHASE_SOURCE_TYPES
 
     company = company or getattr(product, "company", None)
 
-    # Wipe existing layers for this product
     InventoryLayer.objects.filter(product=product).delete()
 
     movements = (
-        InventoryMovement.objects.filter(product=product)
+        InventoryMovement.objects
+        .filter(product=product)
         .order_by("date", "id")
     )
 
-    # Simulate FIFO queue in memory for speed
-    pending_layers: List[dict] = []  # {"unit_cost": Decimal, "qty_remaining": Decimal, "movement": obj, "date": date}
+    pending_layers = []
 
     for mv in movements:
-        qty_in = _dec(mv.qty_in)
-        qty_out = _dec(mv.qty_out)
-        unit_cost = _dec(mv.unit_cost)
-        source = mv.source_type or ""
+        qty_in = _q2(mv.qty_in)
+        qty_out = _q2(mv.qty_out)
+        unit_cost = _q2(mv.unit_cost)
+        source_type = mv.source_type or ""
 
-        if qty_in > ZERO and source in PURCHASE_SOURCE_TYPES:
+        if qty_in > ZERO and source_type in PURCHASE_SOURCE_TYPES:
+            if unit_cost <= ZERO:
+                raise ValueError(
+                    f"Cannot rebuild FIFO layer for {product.name}: "
+                    f"movement #{mv.id} has zero unit cost."
+                )
+
             pending_layers.append({
                 "unit_cost": unit_cost,
-                "qty_remaining": qty_in,
                 "qty_in": qty_in,
+                "qty_remaining": qty_in,
                 "movement": mv,
                 "date": mv.date,
             })
 
         elif qty_out > ZERO:
-            # Consume from pending layers
             remaining = qty_out
+
             for layer in pending_layers:
                 if remaining <= ZERO:
                     break
-                available = layer["qty_remaining"]
-                take = min(available, remaining)
-                layer["qty_remaining"] -= take
-                remaining -= take
 
-    # Persist the layers to DB
+                available = _q2(layer["qty_remaining"])
+
+                if available <= ZERO:
+                    continue
+
+                take = min(available, remaining)
+
+                layer["qty_remaining"] = _q2(available - take)
+                remaining = _q2(remaining - take)
+
+            if remaining > ZERO:
+                raise ValueError(
+                    f"Cannot rebuild FIFO layers for {product.name}: "
+                    f"stock goes negative by {remaining} on movement #{mv.id}."
+                )
+
     for layer in pending_layers:
-        is_exhausted = layer["qty_remaining"] <= ZERO
-        InventoryLayer.objects.create(
-            product=product,
-            company=company,
-            unit_cost=layer["unit_cost"],
-            qty_in=layer["qty_in"],
-            qty_remaining=max(layer["qty_remaining"], ZERO),
-            source_movement=layer["movement"],
-            date_created=layer["date"],
-            is_exhausted=is_exhausted,
-        )
+        qty_remaining = _q2(layer["qty_remaining"])
+        is_exhausted = qty_remaining <= ZERO
+
+        create_kwargs = {
+            "product": product,
+            "unit_cost": _q2(layer["unit_cost"]),
+            "qty_in": _q2(layer["qty_in"]),
+            "qty_remaining": ZERO if is_exhausted else qty_remaining,
+            "source_movement": layer["movement"],
+            "date_created": layer["date"],
+            "is_exhausted": is_exhausted,
+        }
+
+        if company is not None:
+            create_kwargs["company"] = company
+
+        InventoryLayer.objects.create(**create_kwargs)
