@@ -9,6 +9,9 @@ from .models import InventoryMovement, InventoryLocation, Product, MainStore
 
 ZERO = Decimal("0.00")
 
+# Source types that represent actual purchases and should contribute to avg_cost
+PURCHASE_SOURCE_TYPES = ["BILL", "EXPENSE", "CHEQUE", "OPENING", "ASSEMBLY"]
+
 
 # -----------------------
 # Helpers
@@ -170,7 +173,10 @@ def _recalc_product_qty_and_avg_cost(product_id: int):
     tout = agg["tout"] or ZERO
     p.quantity = tin - tout
 
-    purch = p.movements.filter(qty_in__gt=0).aggregate(q=Sum("qty_in"), v=Sum("value"))
+    purch = p.movements.filter(
+        qty_in__gt=0,
+        source_type__in=PURCHASE_SOURCE_TYPES,
+    ).aggregate(q=Sum("qty_in"), v=Sum("value"))
     q = purch["q"] or ZERO
     v = purch["v"] or ZERO
     p.avg_cost = ((v / q).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if q > ZERO else ZERO
