@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 
 from django.db import models
@@ -8,6 +9,8 @@ from tenancy.base import TenantModel
 
 from accounts.models import Account
 from sowaf.models import Newsupplier
+
+logger = logging.getLogger(__name__)
 
 
 class Category(TenantModel):
@@ -576,12 +579,18 @@ class Build(TenantModel):
 
     @property
     def total_component_cost(self):
-        """Sum of (FIFO cost * qty_per_unit * build_qty) for all component lines."""
+        """Sum of (FIFO cost * qty_per_unit * build_qty) for all component lines.
+
+        Returns 0.00 if FIFO stock is insufficient (e.g. for pending builds).
+        """
         total = Decimal("0.00")
         for line in self.lines.select_related("component").all():
             from inventory.fifo import compute_fifo_cogs
             qty = (line.qty_per_unit or Decimal("0.00")) * (self.build_qty or Decimal("1.00"))
-            total += compute_fifo_cogs(line.component, qty)
+            try:
+                total += compute_fifo_cogs(line.component, qty)
+            except ValueError as exc:
+                logger.warning("Could not compute FIFO cost for component %s in Build #%s: %s", line.component_id, self.pk, exc)
         return total
 
     def __str__(self):
@@ -634,9 +643,16 @@ class BuildLine(models.Model):
 
     @property
     def total_cost(self):
-        """Total FIFO cost for this component line."""
+        """Total FIFO cost for this component line.
+
+        Returns 0.00 if FIFO stock is insufficient (e.g. for pending builds).
+        """
         from inventory.fifo import compute_fifo_cogs
-        return compute_fifo_cogs(self.component, self.total_qty)
+        try:
+            return compute_fifo_cogs(self.component, self.total_qty)
+        except ValueError as exc:
+            logger.warning("Could not compute FIFO cost for component %s in BuildLine #%s: %s", self.component_id, self.pk, exc)
+            return Decimal("0.00")
 
     @property
     def fifo_unit_cost(self):
