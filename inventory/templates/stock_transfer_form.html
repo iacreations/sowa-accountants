@@ -1,38 +1,167 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Transfer Form</title>
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Transfer</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    :root { --brand: #39B54B; --brand-dark: #2f9a3f; --border: #e6e6e6; --muted: #6b7280; --bg: #f6f7fb; --card: #ffffff; }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); font-family: "Poppins", system-ui, Arial, sans-serif; margin: 0; padding: 0; }
+    .app-container { display: flex; min-height: 100vh; }
+    .sidebar { width: 260px; background: linear-gradient(180deg, var(--brand), var(--brand-dark)); color: #fff; padding: 24px 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; box-shadow: 2px 0 8px rgba(0,0,0,.08); }
+    .sidebar-brand { font-weight: 800; font-size: 16px; letter-spacing: 0.5px; padding: 12px 0 20px 0; border-bottom: 2px solid rgba(255,255,255,.15); margin-bottom: 24px; display: flex; align-items: center; gap: 8px; }
+    .sidebar-brand i { font-size: 20px; }
+    .sidebar-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,.6); margin-top: 20px; margin-bottom: 12px; }
+    .sidebar-link { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; color: rgba(255,255,255,.85); text-decoration: none; margin-bottom: 6px; font-weight: 500; font-size: 14px; transition: all 0.2s ease; }
+    .sidebar-link:hover { background: rgba(255,255,255,.12); color: #fff; transform: translateX(4px); }
+    .sidebar-link.active { background: rgba(255,255,255,.22); color: #fff; font-weight: 600; }
+    .main-content { flex: 1; padding: 24px; overflow-y: auto; }
+    .topbar { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.04); margin-bottom: 24px; }
+    .topbar h1 { font-size: 22px; margin: 0; font-weight: 800; color: #111827; display: flex; align-items: center; gap: 8px; }
+    .crumb { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .card-box { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.03); margin-bottom: 20px; }
+    .card-title { font-weight: 800; font-size: 15px; color: #111827; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .card-hint { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+    .form-label { font-weight: 700; font-size: 12px; color: #111827; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .form-control, .form-select { border-radius: 10px; border: 1px solid var(--border); padding: 10px 12px; font-size: 14px; }
+    .form-control:focus, .form-select:focus { box-shadow: 0 0 0 3px rgba(57,181,75,.1); border-color: var(--brand); }
+    .table-container { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .table { margin: 0; }
+    .table thead th { background: #f8fafc; font-size: 12px; font-weight: 700; color: #111827; border-bottom: 1px solid var(--border); padding: 12px !important; white-space: nowrap; }
+    .table tbody td { padding: 12px !important; vertical-align: middle; border-bottom: 1px solid #f1f5f9; }
+    .row-number { font-weight: 600; color: var(--muted); }
+    .btn-primary-green { background: var(--brand); border: none; color: #fff; font-weight: 700; border-radius: 10px; padding: 10px 16px; font-size: 14px; }
+    .btn-primary-green:hover { background: var(--brand-dark); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(57,181,75,.25); }
+    .btn-secondary { background: #f0fdf4; border: 1px solid rgba(57,181,75,.25); color: var(--brand-dark); font-weight: 700; border-radius: 10px; padding: 10px 16px; font-size: 14px; }
+    .btn-secondary:hover { background: #e8fce4; }
+    .btn-danger-soft { background: #fff1f2; border: 1px solid rgba(244,63,94,.25); color: #be123c; font-weight: 600; border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+    .btn-sm-add { background: #f0fdf4; border: 1px solid rgba(57,181,75,.25); color: var(--brand-dark); padding: 8px 12px; font-size: 13px; border-radius: 8px; }
+    .footer-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .footer-hint { font-size: 12px; color: var(--muted); }
+    .add-location-box { display: none; margin-top: 8px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+    .add-location-box.open { display: block; }
+    @media (max-width: 992px) { .app-container { flex-direction: column; } .sidebar { width: 100%; height: auto; position: relative; } }
+  </style>
 </head>
 <body>
-    <div class="sidebar">
-        <h2>Navigation</h2>
-        <ul>
-            <li><a href="#">Home</a></li>
-            <li><a href="#">Stock</a></li>
-            <li><a href="#">Reports</a></li>
-            <li><a href="#">Settings</a></li>
-        </ul>
-    </div>
-    <div class="main-content">
-        <h1>Stock Transfer Form</h1>
-        <form action="#" method="post">
-            <label for="item">Item:</label>
-            <input type="text" id="item" name="item" required>
+  <div class="app-container">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-brand"><i class="bx bx-package"></i> <span>YoAccountant</span></div>
+      <div class="sidebar-title">Inventory</div>
+      <a class="sidebar-link active" href="{% url 'inventory:add-stock-transfer' %}"><i class="bx bx-transfer-alt"></i> <span>Stock Transfer</span></a>
+      <a class="sidebar-link" href="{% url 'inventory:stock-adjustment-create' %}"><i class="bx bx-adjust"></i> <span>Stock Adjustment</span></a>
+      <a class="sidebar-link" href="{% url 'inventory:add-build' %}"><i class="bx bx-wrench"></i> <span>Build Assembly</span></a>
+      <a class="sidebar-link" href="{% url 'inventory:report-stock-valuation' %}"><i class="bx bx-chart"></i> <span>Stock Levels</span></a>
+      <div class="sidebar-title">Other</div>
+      <a class="sidebar-link" href="{% url 'inventory:products-list' %}"><i class="bx bx-cube"></i> <span>Products</span></a>
+      <a class="sidebar-link" href="{% url 'inventory:stock-transfer-list' %}"><i class="bx bx-list-check"></i> <span>View Transfers</span></a>
+    </aside>
 
-            <label for="quantity">Quantity:</label>
-            <input type="number" id="quantity" name="quantity" required>
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+      <!-- TOPBAR -->
+      <div class="topbar">
+        <div><h1><i class="bx bx-transfer-alt"></i>Stock Transfer</h1><div class="crumb">Inventory / Stock Transfer / New</div></div>
+        <a class="btn btn-secondary" href="{% url 'inventory:stock-transfer-list' %}"><i class="bx bx-list-check"></i> View Transfers</a>
+      </div>
 
-            <label for="from-location">From Location:</label>
-            <input type="text" id="from-location" name="from-location" required>
+      <!-- FORM -->
+      <form method="POST" id="transferForm" novalidate>
+        {% csrf_token %}
 
-            <label for="to-location">To Location:</label>
-            <input type="text" id="to-location" name="to-location" required>
+        <!-- Transfer Details -->
+        <div class="card-box">
+          <div class="card-title"><i class="bx bx-info-circle"></i> Transfer Details</div>
+          <div class="card-hint">Move stock between locations (no GL posting)</div>
+          <div class="row g-3">
+            <div class="col-lg-3 col-md-6">
+              <label class="form-label">From Location <span class="text-danger">*</span></label>
+              <div style="display:flex;gap:8px;">
+                <select name="from_location" id="fromLocationSelect" class="form-select" required style="flex:1;">
+                  <option value="">Select location…</option>
+                  {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+                </select>
+                <button type="button" class="btn btn-sm-add" onclick="toggleAddLocationBox('fromLocationSelect')"><i class="bx bx-plus"></i></button>
+              </div>
+              <div id="addLocationBox_fromLocationSelect" class="add-location-box">
+                <input type="text" class="newLocationName form-control form-control-sm" placeholder="Location name" style="margin-bottom: 8px;">
+                <button type="button" class="btn btn-sm btn-primary-green" onclick="saveNewLocation('fromLocationSelect')">Save</button>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6">
+              <label class="form-label">To Location <span class="text-danger">*</span></label>
+              <div style="display:flex;gap:8px;">
+                <select name="to_location" id="toLocationSelect" class="form-select" required style="flex:1;">
+                  <option value="">Select location…</option>
+                  {% for l in locations %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+                </select>
+                <button type="button" class="btn btn-sm-add" onclick="toggleAddLocationBox('toLocationSelect')"><i class="bx bx-plus"></i></button>
+              </div>
+              <div id="addLocationBox_toLocationSelect" class="add-location-box">
+                <input type="text" class="newLocationName form-control form-control-sm" placeholder="Location name" style="margin-bottom: 8px;">
+                <button type="button" class="btn btn-sm btn-primary-green" onclick="saveNewLocation('toLocationSelect')">Save</button>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6"><label class="form-label">Transfer Date</label><input type="date" name="transfer_date" class="form-control" value="{{ today|date:'Y-m-d' }}"></div>
+            <div class="col-lg-3 col-md-6"><label class="form-label">Memo</label><input type="text" name="memo" class="form-control" placeholder="Optional note…"></div>
+          </div>
+        </div>
 
-            <input type="submit" value="Submit">
-        </form>
-    </div>
+        <!-- Product Details -->
+        <div class="card-box">
+          <div class="card-title"><i class="bx bx-cube"></i> Product Details</div>
+          <div class="card-hint">Add one or more items to transfer</div>
+          <div class="table-container">
+            <table class="table table-sm">
+              <thead><tr><th style="width:50px;">#</th><th>Product</th><th style="width:160px;">Quantity</th><th style="width:120px;">Operations</th></tr></thead>
+              <tbody id="linesBody">
+                <tr class="line-row">
+                  <td class="row-number">1</td>
+                  <td><select name="product[]" class="form-select" required><option value="">Select product…</option>{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}<option value="add_new">➕ Add New</option></select></td>
+                  <td><input name="qty[]" type="number" step="0.01" min="0" class="form-control" placeholder="0.00" required></td>
+                  <td><button type="button" class="btn btn-danger-soft" onclick="removeRow(this)">Remove</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:16px;flex-wrap:wrap;">
+            <div class="footer-hint"><i class="bx bx-info-circle"></i> Quantity must be > 0.</div>
+            <button type="button" class="btn btn-secondary" onclick="addRow()"><i class="bx bx-plus"></i> Add Line</button>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="card-box">
+          <div class="footer-actions">
+            <div class="footer-hint"><i class="bx bx-shield-alt-2"></i> No GL impact (inventory only).</div>
+            <div style="display:flex;gap:12px;">
+              <a href="{% url 'inventory:stock-transfer-list' %}" class="btn btn-secondary">Cancel</a>
+              <button type="submit" class="btn btn-primary-green"><i class="bx bx-check"></i> Transfer Stock</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const ADD_LOCATION_AJAX_URL = "{% url 'inventory:add_location_ajax' %}";
+    const ADD_PRODUCT_URL = "{% url 'inventory:add-products' %}";
+    function getCookie(name) { let cookieValue = null; if (document.cookie) { const cookies = document.cookie.split(';'); for (let i = 0; i < cookies.length; i++) { const cookie = cookies[i].trim(); if (cookie.substring(0, name.length + 1) === (name + '=')) { cookieValue = decodeURIComponent(cookie.substring(name.length + 1)); break; } } } return cookieValue; }
+    function toggleAddLocationBox(selectId) { const box = document.getElementById('addLocationBox_' + selectId); box.classList.toggle('open'); if (box.classList.contains('open')) box.querySelector('.newLocationName').focus(); }
+    function saveNewLocation(selectId) { const box = document.getElementById('addLocationBox_' + selectId); const nameInput = box.querySelector('.newLocationName'); const name = (nameInput.value || '').trim(); if (!name) { nameInput.focus(); return; } fetch(ADD_LOCATION_AJAX_URL, { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken'), 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'name=' + encodeURIComponent(name) }).then(res => res.json()).then(data => { if (data && data.success) { ['fromLocationSelect', 'toLocationSelect'].forEach(sid => { const sel = document.getElementById(sid); if (!sel) return; const opt = document.createElement('option'); opt.value = data.id; opt.textContent = data.name; if (sid === selectId) opt.selected = true; sel.appendChild(opt); }); nameInput.value = ''; box.classList.remove('open'); } else alert((data && data.error) ? data.error : 'Failed'); }).catch(() => alert('Network error')); }
+    function openAddProduct(selectEl) { window.open(ADD_PRODUCT_URL, "_blank", "noopener"); if (selectEl) selectEl.value = ""; }
+    function renumberRows() { document.querySelectorAll("#linesBody .line-row").forEach((r, idx) => { r.querySelector(".row-number").textContent = (idx + 1); }); }
+    function addRow() { const body = document.getElementById("linesBody"); const clone = body.querySelector(".line-row").cloneNode(true); clone.querySelectorAll("select").forEach(s => s.value = ""); clone.querySelectorAll("input").forEach(i => i.value = ""); body.appendChild(clone); renumberRows(); }
+    function removeRow(btn) { const body = document.getElementById("linesBody"); const rows = body.querySelectorAll(".line-row"); if (rows.length <= 1) { rows[0].querySelectorAll("select").forEach(s => s.value = ""); rows[0].querySelectorAll("input").forEach(i => i.value = ""); return; } btn.closest(".line-row").remove(); renumberRows(); }
+    document.addEventListener("change", function(e) { const el = e.target; if (!el || el.tagName !== "SELECT") return; if (el.getAttribute("name") === "product[]" && el.value === "add_new") { openAddProduct(el); return; } });
+    document.getElementById("transferForm").addEventListener("submit", function(e) { const fromLoc = document.querySelector("select[name='from_location']").value; const toLoc = document.querySelector("select[name='to_location']").value; if (fromLoc && toLoc && fromLoc === toLoc) { e.preventDefault(); alert("From and To locations cannot be the same."); return; } const rows = document.querySelectorAll("#linesBody .line-row"); let ok = false; rows.forEach(r => { const p = r.querySelector("select[name='product[]']").value; const q = parseFloat(r.querySelector("input[name='qty[]']").value || "0"); if (p && q > 0) ok = true; }); if (!ok) { e.preventDefault(); alert("Please add at least one product with quantity > 0."); } });
+  </script>
 </body>
 </html>
