@@ -410,3 +410,302 @@ class FIFOFromDateTests(TestCase):
         self.assertEqual(p.cut_off_date, date(2026, 4, 26))
 
 
+
+
+# ==========================================================
+# PHASE 3 - New Models Tests
+# ==========================================================
+
+class PhaseThreeModelsTests(TestCase):
+    """Tests for new Phase 3 models: StockAdjustment, Batch, InventoryAlert, etc."""
+
+    def _make_company(self, name="TestCo"):
+        from tenancy.models import Company
+        return Company.objects.create(name=name, country="UG")
+
+    def _make_product(self, company, name="Widget"):
+        from inventory.models import Product
+        return Product.objects.create(
+            company=company, name=name, type="Inventory",
+            quantity=Decimal("0.00"), avg_cost=Decimal("0.00"),
+        )
+
+    def _make_location(self, company):
+        from inventory.models import MainStore, InventoryLocation
+        store, _ = MainStore.objects.get_or_create(
+            company=company, name="Main", defaults={"is_active": True},
+        )
+        loc, _ = InventoryLocation.objects.get_or_create(
+            company=company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+        return loc
+
+    def test_stock_adjustment_creation(self):
+        from inventory.models import StockAdjustment, StockAdjustmentLine
+        company = self._make_company("AdjCo")
+        product = self._make_product(company)
+        adj = StockAdjustment.objects.create(
+            company=company, reason="damage", status="draft"
+        )
+        line = StockAdjustmentLine.objects.create(
+            adjustment=adj, product=product,
+            qty_decrease=Decimal("5.00"), unit_cost=Decimal("100.00"),
+        )
+        self.assertEqual(adj.status, "draft")
+        self.assertEqual(line.qty_decrease, Decimal("5.00"))
+
+    def test_stock_count_worksheet_variance(self):
+        from inventory.models import StockCountWorksheet, StockCountLine
+        company = self._make_company("CountCo")
+        product = self._make_product(company)
+        loc = self._make_location(company)
+        ws = StockCountWorksheet.objects.create(company=company, location=loc, status="draft")
+        line = StockCountLine.objects.create(
+            worksheet=ws, product=product,
+            expected_qty=Decimal("10.00"), counted_qty=Decimal("8.00"),
+        )
+        self.assertEqual(line.variance, Decimal("-2.00"))
+
+    def test_batch_creation(self):
+        from inventory.models import Batch
+        from datetime import date
+        company = self._make_company("BatchCo")
+        product = self._make_product(company)
+        batch = Batch.objects.create(
+            company=company, product=product,
+            batch_number="BATCH-001",
+            expiry_date=date(2027, 12, 31),
+            quantity_purchased=Decimal("100.00"),
+            quantity_available=Decimal("100.00"),
+            status="active",
+        )
+        self.assertEqual(batch.batch_number, "BATCH-001")
+        self.assertEqual(batch.status, "active")
+
+    def test_inventory_alert_creation(self):
+        from inventory.models import InventoryAlert
+        company = self._make_company("AlertCo")
+        product = self._make_product(company)
+        alert = InventoryAlert.objects.create(
+            company=company, product=product,
+            alert_type="low_stock", severity="warning",
+            message="Stock is low",
+        )
+        self.assertFalse(alert.is_resolved)
+        self.assertEqual(alert.alert_type, "low_stock")
+
+    def test_inventory_alert_threshold(self):
+        from inventory.models import InventoryAlertThreshold
+        company = self._make_company("ThreshCo")
+        product = self._make_product(company)
+        threshold = InventoryAlertThreshold.objects.create(
+            company=company, product=product,
+            low_stock_threshold=Decimal("5.00"),
+            expiry_warning_days=14,
+        )
+        self.assertEqual(threshold.low_stock_threshold, Decimal("5.00"))
+
+    def test_supplier_price_history(self):
+        from inventory.models import SupplierPriceHistory
+        from sowaf.models import Newsupplier
+        company = self._make_company("SupplierCo")
+        product = self._make_product(company)
+        supplier = Newsupplier.objects.create(company=company, company_name="TestSupplier")
+        price_record = SupplierPriceHistory.objects.create(
+            company=company, product=product, supplier=supplier,
+            unit_price=Decimal("500.00"), currency="UGX",
+            purchase_qty=Decimal("50.00"),
+        )
+        self.assertEqual(price_record.unit_price, Decimal("500.00"))
+
+
+# ==========================================================
+# PHASE 4 - FIFO Engine Enhancements Tests
+# ==========================================================
+
+class PhaseFourFIFOTests(TestCase):
+    """Tests for Phase 4 FIFO engine enhancements."""
+
+    def _make_product(self):
+        from inventory.models import Product
+        from tenancy.models import Company
+        company = Company.objects.create(name="FIFOCo4", country="UG")
+        return Product.objects.create(
+            company=company, name="Widget4", type="Inventory",
+            quantity=Decimal("0.00"), avg_cost=Decimal("0.00"),
+        )
+
+    def _make_movement_in(self, product, qty, cost, date=None):
+        from inventory.models import InventoryMovement, MainStore, InventoryLocation
+        from django.utils import timezone
+        company = product.company
+        store, _ = MainStore.objects.get_or_create(company=company, name="Main", defaults={"is_active": True})
+        loc, _ = InventoryLocation.objects.get_or_create(
+            company=company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+        return InventoryMovement.objects.create(
+            product=product, company=company, location=loc,
+            date=date or timezone.localdate(),
+            qty_in=qty, qty_out=Decimal("0.00"), unit_cost=cost,
+            value=qty * cost, source_type="BILL", source_id=1,
+        )
+
+    def test_record_stock_in(self):
+        from inventory.fifo import record_stock_in
+        p = self._make_product()
+        mv = self._make_movement_in(p, Decimal("10"), Decimal("100"))
+        layer = record_stock_in(p, Decimal("100"), Decimal("10"), mv.date, mv, p.company)
+        self.assertEqual(layer.qty_in, Decimal("10.00"))
+        self.assertEqual(layer.unit_cost, Decimal("100.00"))
+
+    def test_validate_available_stock_passes(self):
+        from inventory.fifo import record_purchase_layer, validate_available_stock
+        p = self._make_product()
+        mv = self._make_movement_in(p, Decimal("10"), Decimal("100"))
+        record_purchase_layer(p, Decimal("100"), Decimal("10"), mv.date, mv, p.company)
+        validate_available_stock(p, Decimal("5"))
+
+    def test_validate_available_stock_fails(self):
+        from inventory.fifo import record_purchase_layer, validate_available_stock
+        p = self._make_product()
+        mv = self._make_movement_in(p, Decimal("3"), Decimal("100"))
+        record_purchase_layer(p, Decimal("100"), Decimal("3"), mv.date, mv, p.company)
+        with self.assertRaises(ValueError):
+            validate_available_stock(p, Decimal("10"))
+
+    def test_calculate_inventory_value_fifo(self):
+        from inventory.fifo import record_purchase_layer, calculate_inventory_value_fifo
+        p = self._make_product()
+        mv = self._make_movement_in(p, Decimal("10"), Decimal("500"))
+        record_purchase_layer(p, Decimal("500"), Decimal("10"), mv.date, mv, p.company)
+        value = calculate_inventory_value_fifo(p)
+        self.assertEqual(value, Decimal("5000.00"))
+
+    def test_calculate_cogs_fifo(self):
+        from inventory.fifo import record_purchase_layer, calculate_cogs_fifo
+        p = self._make_product()
+        mv = self._make_movement_in(p, Decimal("10"), Decimal("750"))
+        record_purchase_layer(p, Decimal("750"), Decimal("10"), mv.date, mv, p.company)
+        cogs = calculate_cogs_fifo(p, Decimal("3"))
+        self.assertEqual(cogs, Decimal("2250.00"))
+
+
+# ==========================================================
+# PHASE 8 - Alert Generation Tests
+# ==========================================================
+
+class PhaseEightAlertsTests(TestCase):
+    """Tests for Phase 8 alert generation."""
+
+    def _make_product(self, name, qty=0):
+        from inventory.models import Product, InventoryMovement, MainStore, InventoryLocation
+        from inventory.fifo import record_purchase_layer
+        from tenancy.models import Company
+        from django.utils import timezone
+
+        company = Company.objects.create(name=f"AlertCo-{name}", country="UG")
+        p = Product.objects.create(
+            company=company, name=name, type="Inventory",
+            quantity=Decimal(str(qty)), avg_cost=Decimal("100.00"),
+        )
+        if qty > 0:
+            store, _ = MainStore.objects.get_or_create(company=company, name="Main", defaults={"is_active": True})
+            loc, _ = InventoryLocation.objects.get_or_create(
+                company=company, store=store, name="Default",
+                defaults={"is_default": True, "is_active": True},
+            )
+            mv = InventoryMovement.objects.create(
+                product=p, company=company, location=loc,
+                date=timezone.localdate(),
+                qty_in=Decimal(str(qty)), qty_out=Decimal("0.00"),
+                unit_cost=Decimal("100.00"), value=Decimal(str(qty)) * Decimal("100.00"),
+                source_type="BILL", source_id=1,
+            )
+            record_purchase_layer(p, Decimal("100.00"), Decimal(str(qty)), mv.date, mv, company)
+        return p
+
+    def test_out_of_stock_alert(self):
+        from inventory.services import generate_inventory_alerts
+        from inventory.models import InventoryAlert
+        p = self._make_product("OutOfStock", qty=0)
+        generate_inventory_alerts(company=p.company)
+        alert = InventoryAlert.objects.filter(product=p, alert_type="out_of_stock").first()
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert.severity, "critical")
+
+    def test_low_stock_alert(self):
+        from inventory.services import generate_inventory_alerts
+        from inventory.models import InventoryAlert, InventoryAlertThreshold
+        p = self._make_product("LowStock", qty=3)
+        InventoryAlertThreshold.objects.create(
+            company=p.company, product=p, low_stock_threshold=Decimal("10.00")
+        )
+        generate_inventory_alerts(company=p.company)
+        alert = InventoryAlert.objects.filter(product=p, alert_type="low_stock").first()
+        self.assertIsNotNone(alert)
+
+    def test_no_sku_alert(self):
+        from inventory.services import generate_inventory_alerts
+        from inventory.models import InventoryAlert
+        p = self._make_product("NoSKU", qty=5)
+        p.sku = None
+        p.save(update_fields=["sku"])
+        generate_inventory_alerts(company=p.company)
+        alert = InventoryAlert.objects.filter(product=p, alert_type="no_sku").first()
+        self.assertIsNotNone(alert)
+
+
+# ==========================================================
+# PHASE 10 - Validator Tests
+# ==========================================================
+
+class PhaseTenValidatorTests(TestCase):
+    """Tests for Phase 10 validators."""
+
+    def test_validate_non_zero_purchase_cost_fails(self):
+        from inventory.validators import validate_non_zero_purchase_cost
+        from inventory.models import Product
+        from tenancy.models import Company
+        company = Company.objects.create(name="ValidatorCo", country="UG")
+        p = Product.objects.create(company=company, name="Widget", type="Inventory")
+        with self.assertRaises(ValueError):
+            validate_non_zero_purchase_cost(p, Decimal("0.00"))
+
+    def test_validate_non_zero_purchase_cost_passes_free(self):
+        from inventory.validators import validate_non_zero_purchase_cost
+        from inventory.models import Product
+        from tenancy.models import Company
+        company = Company.objects.create(name="FreeCo", country="UG")
+        p = Product.objects.create(company=company, name="FreeWidget", type="Inventory")
+        validate_non_zero_purchase_cost(p, Decimal("0.00"), is_free=True)
+
+    def test_validate_not_service_item_fails(self):
+        from inventory.validators import validate_not_service_item
+        from inventory.models import Product
+        from tenancy.models import Company
+        company = Company.objects.create(name="ServiceCo", country="UG")
+        p = Product.objects.create(company=company, name="Consulting", type="Service")
+        with self.assertRaises(ValueError):
+            validate_not_service_item(p)
+
+    def test_validate_movement_qty_both_zero_fails(self):
+        from inventory.validators import validate_movement_qty
+        with self.assertRaises(ValueError):
+            validate_movement_qty(Decimal("0.00"), Decimal("0.00"))
+
+    def test_validate_movement_qty_both_positive_fails(self):
+        from inventory.validators import validate_movement_qty
+        with self.assertRaises(ValueError):
+            validate_movement_qty(Decimal("5.00"), Decimal("3.00"))
+
+    def test_validate_fifo_layer_qty_fails(self):
+        from inventory.validators import validate_fifo_layer_qty
+        with self.assertRaises(ValueError):
+            validate_fifo_layer_qty(Decimal("0.00"))
+
+    def test_validate_fifo_layer_cost_fails(self):
+        from inventory.validators import validate_fifo_layer_cost
+        with self.assertRaises(ValueError):
+            validate_fifo_layer_cost(Decimal("0.00"))

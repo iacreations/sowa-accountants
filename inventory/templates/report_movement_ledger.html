@@ -1,0 +1,65 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+body { background: #f4f6f8; padding: 30px; }
+.container { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 80%; margin-top: 5%; margin-left: 20%; padding: 5%; }
+h2.title { text-align: center; color: #39B54B; margin-bottom: 20px; font-size: 28px; font-weight: 700; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.filters select, .filters input { padding: 8px; border: 1px solid #ddd; border-radius: 6px; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; }
+.btn-green { background: #39B54B; color: #fff; }
+.btn-green:hover { background: #2da73e; }
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ddd; padding: 10px; }
+th { background-color: #fafafa; text-align: left; }
+.muted { color: #777; }
+</style>
+{% include 'includes/sidebar.html' %}
+<div class="container">
+  <h2 class="title">Inventory Movement Ledger</h2>
+  <form method="get" class="filters">
+    <select name="product">
+      <option value="">All Products</option>
+      {% for p in products %}<option value="{{ p.id }}" {% if filters.product == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+    <select name="source_type">
+      <option value="">All Types</option>
+      {% for code, label in source_types %}<option value="{{ code }}" {% if filters.source_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <input type="date" name="date_from" value="{{ filters.date_from|default:'' }}" placeholder="From">
+    <input type="date" name="date_to" value="{{ filters.date_to|default:'' }}" placeholder="To">
+    <select name="location">
+      <option value="">All Locations</option>
+      {% for l in locations %}<option value="{{ l.id }}" {% if filters.location == l.id|stringformat:"s" %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn btn-green">Filter</button>
+  </form>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>Product</th><th>Location</th><th>Source</th>
+          <th>Qty In</th><th>Qty Out</th><th>Unit Cost</th><th>Balance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in movements %}
+        <tr>
+          <td>{{ row.movement.date }}</td>
+          <td>{{ row.movement.product }}</td>
+          <td>{{ row.movement.location }}</td>
+          <td>{{ row.movement.source_type }} #{{ row.movement.source_id }}</td>
+          <td>{{ row.movement.qty_in }}</td>
+          <td>{{ row.movement.qty_out }}</td>
+          <td>{{ row.movement.unit_cost }}</td>
+          <td>{{ row.balance }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="muted" style="text-align:center;">No movements found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

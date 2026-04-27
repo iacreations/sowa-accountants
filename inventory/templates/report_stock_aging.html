@@ -1,0 +1,39 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+body { background: #f4f6f8; padding: 30px; }
+.container { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 80%; margin-top: 5%; margin-left: 20%; padding: 5%; }
+h2.title { text-align: center; color: #39B54B; margin-bottom: 20px; font-size: 28px; font-weight: 700; }
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ddd; padding: 10px; }
+th { background-color: #fafafa; text-align: left; }
+.muted { color: #777; }
+.band-slow { color: #c0392b; font-weight: 600; }
+.band-warn { color: #e67e22; }
+</style>
+{% include 'includes/sidebar.html' %}
+<div class="container">
+  <h2 class="title">Stock Aging Report</h2>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr><th>Product</th><th>Oldest Layer Date</th><th>Age (Days)</th><th>Band</th><th>Qty On Hand</th></tr>
+      </thead>
+      <tbody>
+        {% for row in aging_data %}
+        <tr>
+          <td>{{ row.product.name }}</td>
+          <td>{{ row.oldest_date|default:"-" }}</td>
+          <td>{{ row.age_days }}</td>
+          <td class="{% if '180+' in row.band %}band-slow{% elif '90-180' in row.band %}band-warn{% endif %}">{{ row.band }}</td>
+          <td>{{ row.qty_on_hand }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="muted" style="text-align:center;">No aged stock found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

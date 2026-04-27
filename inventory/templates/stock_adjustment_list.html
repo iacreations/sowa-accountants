@@ -1,0 +1,54 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+body { background: #f4f6f8; padding: 30px; }
+.container { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 80%; margin-top: 5%; margin-left: 20%; padding: 5%; }
+h2.title { text-align: center; color: #39B54B; margin-bottom: 20px; font-size: 28px; font-weight: 700; }
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.btn { padding: 10px 16px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+.btn-green { background: #39B54B; color: #fff; }
+.btn-green:hover { background: #2da73e; }
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ddd; padding: 10px; }
+th { background-color: #fafafa; text-align: left; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+.badge-draft { background: #fef9c3; color: #854d0e; }
+.badge-posted { background: #d2f4dc; color: #2a8b3f; }
+.badge-void { background: #fee2e2; color: #991b1b; }
+.muted { color: #777; }
+.actions a { color: #39B54B; font-weight: 600; text-decoration: none; }
+.actions a:hover { text-decoration: underline; }
+</style>
+{% include 'includes/sidebar.html' %}
+<div class="container">
+  <div class="topbar">
+    <h2 class="title" style="margin:0;">Stock Adjustments</h2>
+    <a href="{% url 'inventory:stock-adjustment-create' %}" class="btn btn-green">+ New Adjustment</a>
+  </div>
+  {% for message in messages %}
+  <div style="padding:10px; margin-bottom:10px; background:{% if message.tags == 'error' %}#fee2e2{% else %}#d2f4dc{% endif %}; border-radius:6px;">{{ message }}</div>
+  {% endfor %}
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Date</th><th>Reason</th><th>Status</th><th>Memo</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for adj in adjustments %}
+        <tr>
+          <td>{{ adj.id }}</td>
+          <td>{{ adj.date }}</td>
+          <td>{{ adj.get_reason_display }}</td>
+          <td><span class="badge badge-{{ adj.status }}">{{ adj.status|capfirst }}</span></td>
+          <td>{{ adj.memo|default:"-"|truncatechars:40 }}</td>
+          <td class="actions"><a href="{% url 'inventory:stock-adjustment-detail' adj.id %}">View</a></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="muted" style="text-align:center;">No stock adjustments yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
