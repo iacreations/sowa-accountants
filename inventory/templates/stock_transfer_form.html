@@ -4,35 +4,35 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stock Transfer Form</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <header>
-        <h1>Stock Transfer Form</h1>
-    </header>
-    <nav>
+    <div class="sidebar">
+        <h2>Navigation</h2>
         <ul>
             <li><a href="#">Home</a></li>
-            <li><a href="#">Inventory</a></li>
+            <li><a href="#">Stock</a></li>
             <li><a href="#">Reports</a></li>
             <li><a href="#">Settings</a></li>
         </ul>
-    </nav>
-    <main>
+    </div>
+    <div class="main-content">
+        <h1>Stock Transfer Form</h1>
         <form action="#" method="post">
             <label for="item">Item:</label>
             <input type="text" id="item" name="item" required>
+
             <label for="quantity">Quantity:</label>
             <input type="number" id="quantity" name="quantity" required>
-            <label for="from_location">From Location:</label>
-            <input type="text" id="from_location" name="from_location" required>
-            <label for="to_location">To Location:</label>
-            <input type="text" id="to_location" name="to_location" required>
-            <button type="submit">Transfer</button>
+
+            <label for="from-location">From Location:</label>
+            <input type="text" id="from-location" name="from-location" required>
+
+            <label for="to-location">To Location:</label>
+            <input type="text" id="to-location" name="to-location" required>
+
+            <input type="submit" value="Submit">
         </form>
-    </main>
-    <footer>
-        <p>&copy; 2026 Sowa Accountants</p>
-    </footer>
+    </div>
 </body>
 </html>
