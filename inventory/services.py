@@ -565,3 +565,115 @@ def rebuild_movements_for_stock_transfer(transfer):
         rows=rows,
         company=company,
     )
+
+
+# -----------------------
+# Stock Adjustment — Stock IN / OUT
+# -----------------------
+@transaction.atomic
+def rebuild_movements_for_stock_adjustment(adjustment):
+    """
+    Create inventory movements for a posted StockAdjustment.
+    Increases create positive qty_in movements.
+    Decreases create negative qty_out movements.
+    """
+    company = getattr(adjustment, "company", None)
+    loc = get_default_location(company=company)
+    adj_date = adjustment.date or timezone.localdate()
+
+    rows = []
+    for line in adjustment.lines.select_related("product").all():
+        p = line.product
+        if not is_inventory(p):
+            continue
+
+        qty_increase = safe_qty(line.qty_increase)
+        qty_decrease = safe_qty(line.qty_decrease)
+        unit_cost = safe_cost(line.unit_cost)
+
+        if qty_increase > ZERO:
+            if unit_cost <= ZERO:
+                raise ValueError(f"Adjustment increase for {p.name} has no unit cost.")
+            rows.append({
+                "product": p,
+                "qty_in": qty_increase,
+                "qty_out": ZERO,
+                "unit_cost": unit_cost,
+                "location": loc,
+            })
+        elif qty_decrease > ZERO:
+            fifo_rows = simulate_fifo_consumption(p, qty_decrease)
+            if not fifo_rows:
+                raise ValueError(f"No FIFO stock available for adjustment decrease: {p.name}.")
+            for fifo_cost, fifo_qty in fifo_rows:
+                rows.append({
+                    "product": p,
+                    "qty_in": ZERO,
+                    "qty_out": fifo_qty,
+                    "unit_cost": fifo_cost,
+                    "location": loc,
+                })
+
+    rebuild_inventory_movements(
+        "ADJUSTMENT",
+        adjustment.id,
+        date=adj_date,
+        rows=rows,
+        company=company,
+    )
+
+
+# -----------------------
+# Alert Generation
+# -----------------------
+def generate_inventory_alerts(company=None):
+    """
+    Scan all inventory products and generate/update InventoryAlert records.
+    Called after any movement or product update.
+    """
+    from .models import Product, InventoryAlert, InventoryAlertThreshold
+    from .fifo import get_available_layers
+
+    qs = Product.objects.filter(type="Inventory")
+    if company is not None:
+        qs = qs.filter(company=company)
+
+    for product in qs.select_related("company").iterator():
+        comp = getattr(product, "company", None)
+        layers = get_available_layers(product)
+        qty_on_hand = sum(Decimal(str(l.qty_remaining)) for l in layers)
+
+        try:
+            threshold = product.alert_threshold.low_stock_threshold
+        except Exception:
+            threshold = Decimal("10.00")
+
+        def _create_alert(alert_type, severity, message, _product=product, _comp=comp):
+            existing = InventoryAlert.objects.filter(
+                product=_product,
+                alert_type=alert_type,
+                resolved_at__isnull=True,
+            )
+            if _comp:
+                existing = existing.filter(company=_comp)
+            if not existing.exists():
+                kwargs = {
+                    "product": _product,
+                    "alert_type": alert_type,
+                    "severity": severity,
+                    "message": message,
+                }
+                if _comp:
+                    kwargs["company"] = _comp
+                InventoryAlert.objects.create(**kwargs)
+
+        if qty_on_hand <= ZERO:
+            _create_alert("out_of_stock", "critical", f"{product.name} is out of stock.")
+        elif qty_on_hand < threshold:
+            _create_alert("low_stock", "warning", f"{product.name} is low on stock: {qty_on_hand} remaining.")
+
+        if layers and all(Decimal(str(l.unit_cost)) <= ZERO for l in layers):
+            _create_alert("no_cost", "warning", f"{product.name} has FIFO layers with no cost.")
+
+        if not product.sku:
+            _create_alert("no_sku", "info", f"{product.name} has no SKU assigned.")

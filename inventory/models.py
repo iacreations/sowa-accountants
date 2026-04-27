@@ -650,3 +650,179 @@ class BuildLine(models.Model):
     def __str__(self):
         c = self.component.name if self.component_id else "?"
         return f"{c} x {self.qty_per_unit}/unit (Build #{self.build_id})"
+
+
+# ==========================================================
+# PHASE 3 MODELS
+# ==========================================================
+
+class StockAdjustment(TenantModel):
+    STATUS_CHOICES = [("draft", "Draft"), ("posted", "Posted"), ("void", "Void")]
+    REASON_CHOICES = [
+        ("damage", "Damage"), ("theft", "Theft"), ("write_off", "Write-off"),
+        ("donation", "Donation"), ("shrinkage", "Shrinkage"), ("other", "Other"),
+    ]
+    date = models.DateField(default=timezone.localdate)
+    reason = models.CharField(max_length=30, choices=REASON_CHOICES, default="other")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="draft")
+    memo = models.TextField(blank=True, null=True)
+    approved_by = models.ForeignKey(
+        "sowaAuth.Newuser",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="approved_adjustments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+        indexes = [
+            models.Index(fields=["company", "date"]),
+            models.Index(fields=["company", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Adjustment #{self.id} ({self.get_reason_display()}) - {self.status}"
+
+
+class StockAdjustmentLine(models.Model):
+    adjustment = models.ForeignKey(StockAdjustment, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="adjustment_lines")
+    qty_increase = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    qty_decrease = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    def __str__(self):
+        return f"{self.product} +{self.qty_increase} -{self.qty_decrease} @ {self.unit_cost}"
+
+
+class StockCountWorksheet(TenantModel):
+    STATUS_CHOICES = [("draft", "Draft"), ("posted", "Posted")]
+    location = models.ForeignKey(
+        InventoryLocation, on_delete=models.PROTECT,
+        null=True, blank=True, related_name="count_worksheets",
+    )
+    count_date = models.DateField(default=timezone.localdate)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="draft")
+    memo = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-count_date", "-id"]
+        indexes = [
+            models.Index(fields=["company", "count_date"]),
+            models.Index(fields=["company", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Count #{self.id} @ {self.location} ({self.count_date})"
+
+
+class StockCountLine(models.Model):
+    worksheet = models.ForeignKey(StockCountWorksheet, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="count_lines")
+    expected_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    counted_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    @property
+    def variance(self):
+        return (self.counted_qty or Decimal("0.00")) - (self.expected_qty or Decimal("0.00"))
+
+    def __str__(self):
+        return f"{self.product}: expected={self.expected_qty}, counted={self.counted_qty}"
+
+
+class Batch(TenantModel):
+    STATUS_CHOICES = [("active", "Active"), ("expired", "Expired"), ("used_up", "Used Up")]
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="batches")
+    batch_number = models.CharField(max_length=100)
+    manufacturing_date = models.DateField(null=True, blank=True)
+    expiry_date = models.DateField(null=True, blank=True)
+    quantity_purchased = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    quantity_available = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    supplier = models.ForeignKey(
+        "sowaf.Newsupplier", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="batches",
+    )
+    location = models.ForeignKey(
+        InventoryLocation, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="batches",
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="active")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["expiry_date", "id"]
+        indexes = [
+            models.Index(fields=["company", "product"]),
+            models.Index(fields=["company", "status"]),
+            models.Index(fields=["company", "expiry_date"]),
+        ]
+
+    def __str__(self):
+        return f"Batch {self.batch_number} - {self.product}"
+
+
+class InventoryAlert(TenantModel):
+    ALERT_TYPES = [
+        ("low_stock", "Low Stock"), ("out_of_stock", "Out of Stock"),
+        ("expiry_soon", "Expiry Soon"), ("no_cost", "No Cost"), ("no_sku", "No SKU"),
+    ]
+    SEVERITY_CHOICES = [("info", "Info"), ("warning", "Warning"), ("critical", "Critical")]
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="alerts")
+    alert_type = models.CharField(max_length=20, choices=ALERT_TYPES)
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default="warning")
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["company", "alert_type"]),
+            models.Index(fields=["company", "resolved_at"]),
+        ]
+
+    @property
+    def is_resolved(self):
+        return self.resolved_at is not None
+
+    def __str__(self):
+        return f"{self.get_alert_type_display()} - {self.product} ({self.severity})"
+
+
+class InventoryAlertThreshold(TenantModel):
+    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name="alert_threshold")
+    low_stock_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("10.00"))
+    expiry_warning_days = models.IntegerField(default=30)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["company", "product"]),
+        ]
+
+    def __str__(self):
+        return f"Threshold for {self.product}"
+
+
+class SupplierPriceHistory(TenantModel):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="supplier_prices")
+    supplier = models.ForeignKey(
+        "sowaf.Newsupplier", on_delete=models.CASCADE, related_name="price_history",
+    )
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=10, default="UGX")
+    purchase_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("1.00"))
+    date = models.DateField(default=timezone.localdate)
+    source_document = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+        indexes = [
+            models.Index(fields=["company", "product", "supplier"]),
+            models.Index(fields=["company", "date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.supplier} → {self.product}: {self.unit_price} ({self.date})"

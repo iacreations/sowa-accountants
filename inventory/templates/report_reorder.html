@@ -1,0 +1,50 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+body { background: #f4f6f8; padding: 30px; }
+.container { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 80%; margin-top: 5%; margin-left: 20%; padding: 5%; }
+h2.title { text-align: center; color: #39B54B; margin-bottom: 20px; font-size: 28px; font-weight: 700; }
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; }
+.btn-green { background: #39B54B; color: #fff; }
+.btn-green:hover { background: #2da73e; }
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ddd; padding: 10px; }
+th { background-color: #fafafa; text-align: left; }
+.muted { color: #777; }
+.reorder { color: #c0392b; font-weight: 600; }
+</style>
+{% include 'includes/sidebar.html' %}
+<div class="container">
+  <h2 class="title">Reorder Report</h2>
+  <div class="topbar">
+    <span>Products {% if not show_all %}needing reorder{% else %}(all){% endif %}</span>
+    {% if show_all %}
+      <a href="?" class="btn btn-green">Show Reorder Only</a>
+    {% else %}
+      <a href="?show_all=1" class="btn btn-green">Show All</a>
+    {% endif %}
+  </div>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr><th>Product</th><th>Supplier</th><th>Qty On Hand</th><th>Reorder Level</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for row in reorder_data %}
+        <tr>
+          <td>{{ row.product.name }}</td>
+          <td>{{ row.supplier|default:"-" }}</td>
+          <td>{{ row.qty_on_hand }}</td>
+          <td>{{ row.reorder_level }}</td>
+          <td>{% if row.needs_reorder %}<span class="reorder">Reorder</span>{% else %}OK{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="muted" style="text-align:center;">No products need reordering.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

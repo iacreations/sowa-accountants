@@ -1,0 +1,67 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+body { background: #f4f6f8; padding: 30px; }
+.container { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 80%; margin-top: 5%; margin-left: 20%; padding: 5%; }
+h2.title { text-align: center; color: #39B54B; margin-bottom: 20px; font-size: 28px; font-weight: 700; }
+.info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.info-box { background: #f9fafb; padding: 14px; border-radius: 8px; }
+.info-box .label { font-weight: 600; color: #555; margin-bottom: 4px; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+.badge-draft { background: #fef9c3; color: #854d0e; }
+.badge-posted { background: #d2f4dc; color: #2a8b3f; }
+.badge-void { background: #fee2e2; color: #991b1b; }
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ddd; padding: 10px; }
+th { background-color: #fafafa; text-align: left; }
+.actions { display: flex; gap: 10px; margin-top: 20px; }
+.btn { padding: 10px 16px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; }
+.btn-green { background: #39B54B; color: #fff; }
+.btn-green:hover { background: #2da73e; }
+.btn-light { background: #f5f5f5; color: #333; }
+.muted { color: #777; }
+</style>
+{% include 'includes/sidebar.html' %}
+<div class="container">
+  <h2 class="title">Adjustment #{{ adjustment.id }}</h2>
+  {% for message in messages %}
+  <div style="padding:10px; margin-bottom:10px; background:{% if message.tags == 'error' %}#fee2e2{% else %}#d2f4dc{% endif %}; border-radius:6px;">{{ message }}</div>
+  {% endfor %}
+  <div class="info-grid">
+    <div class="info-box"><div class="label">Date</div>{{ adjustment.date }}</div>
+    <div class="info-box"><div class="label">Reason</div>{{ adjustment.get_reason_display }}</div>
+    <div class="info-box"><div class="label">Status</div><span class="badge badge-{{ adjustment.status }}">{{ adjustment.status|capfirst }}</span></div>
+    <div class="info-box"><div class="label">Memo</div>{{ adjustment.memo|default:"-" }}</div>
+  </div>
+  <h3 style="margin-bottom:10px;">Lines</h3>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr><th>Product</th><th>Qty Increase</th><th>Qty Decrease</th><th>Unit Cost</th></tr>
+      </thead>
+      <tbody>
+        {% for line in adjustment.lines.all %}
+        <tr>
+          <td>{{ line.product.name }}</td>
+          <td>{{ line.qty_increase }}</td>
+          <td>{{ line.qty_decrease }}</td>
+          <td>{{ line.unit_cost }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="muted" style="text-align:center;">No lines.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="actions">
+    {% if adjustment.status == 'draft' %}
+    <form method="post" action="{% url 'inventory:stock-adjustment-post' adjustment.id %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-green">Post Adjustment</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'inventory:stock-adjustment-list' %}" class="btn btn-light">Back to List</a>
+  </div>
+</div>

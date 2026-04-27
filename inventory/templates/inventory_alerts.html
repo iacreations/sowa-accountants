@@ -1,0 +1,66 @@
+{% load static %}
+{% include 'includes/navbar.html' %}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Poppins", sans-serif; font-size: 14px; }
+body { background: #f4f6f8; padding: 30px; }
+.container { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 80%; margin-top: 5%; margin-left: 20%; padding: 5%; }
+h2.title { text-align: center; color: #39B54B; margin-bottom: 20px; font-size: 28px; font-weight: 700; }
+.topbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.filters { display: flex; gap: 10px; }
+.filters select { padding: 8px; border: 1px solid #ddd; border-radius: 6px; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; }
+.btn-green { background: #39B54B; color: #fff; }
+.btn-green:hover { background: #2da73e; }
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ddd; padding: 10px; }
+th { background-color: #fafafa; text-align: left; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+.sev-critical { background: #fee2e2; color: #991b1b; }
+.sev-warning { background: #fef9c3; color: #854d0e; }
+.sev-info { background: #e0f2fe; color: #075985; }
+.muted { color: #777; }
+</style>
+{% include 'includes/sidebar.html' %}
+<div class="container">
+  <div class="topbar">
+    <h2 class="title" style="margin:0;">Inventory Alerts</h2>
+    <form method="get" class="filters">
+      <select name="type" onchange="this.form.submit()">
+        <option value="">All Types</option>
+        {% for code, label in alert_types %}
+        <option value="{{ code }}" {% if request.GET.type == code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      {% if request.GET.resolved == '1' %}
+        <a href="?" class="btn btn-green">Show Open</a>
+      {% else %}
+        <a href="?resolved=1" class="btn btn-green">Show Resolved</a>
+      {% endif %}
+    </form>
+  </div>
+  {% for message in messages %}
+  <div style="padding:10px; margin-bottom:10px; background:#d2f4dc; border-radius:6px;">{{ message }}</div>
+  {% endfor %}
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr><th>Product</th><th>Type</th><th>Severity</th><th>Message</th><th>Created</th><th>Resolved</th></tr>
+      </thead>
+      <tbody>
+        {% for alert in alerts %}
+        <tr>
+          <td>{{ alert.product.name }}</td>
+          <td>{{ alert.get_alert_type_display }}</td>
+          <td><span class="badge sev-{{ alert.severity }}">{{ alert.severity|capfirst }}</span></td>
+          <td>{{ alert.message }}</td>
+          <td>{{ alert.created_at|date:"Y-m-d" }}</td>
+          <td>{% if alert.resolved_at %}{{ alert.resolved_at|date:"Y-m-d" }}{% else %}<span class="muted">Open</span>{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="muted" style="text-align:center;">No alerts.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

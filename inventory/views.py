@@ -994,3 +994,322 @@ def complete_build_view(request, pk: int):
         return redirect("inventory:build-detail", pk=build.pk)
 
     return redirect("inventory:build-detail", pk=build.pk)
+
+# ==========================================================
+# PHASE 7: Reports and StockAdjustment views
+# ==========================================================
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_movement_ledger(request):
+    """Inventory Movement Ledger with filters."""
+    company = request.company
+
+    movements = InventoryMovement.objects.for_company(company).select_related(
+        "product", "location"
+    ).order_by("date", "id")
+
+    product_id = request.GET.get("product")
+    source_type = request.GET.get("source_type")
+    date_from = request.GET.get("date_from")
+    date_to = request.GET.get("date_to")
+    location_id = request.GET.get("location")
+
+    if product_id:
+        movements = movements.filter(product_id=product_id)
+    if source_type:
+        movements = movements.filter(source_type=source_type)
+    if date_from:
+        movements = movements.filter(date__gte=date_from)
+    if date_to:
+        movements = movements.filter(date__lte=date_to)
+    if location_id:
+        movements = movements.filter(location_id=location_id)
+
+    products = Product.objects.for_company(company).order_by("name")
+    locations = InventoryLocation.objects.for_company(company).order_by("name")
+    source_types = InventoryMovement.SOURCE_TYPES
+
+    running_movements = []
+    balance = Decimal("0.00")
+    current_product_id = None
+
+    for mv in movements:
+        if mv.product_id != current_product_id:
+            balance = Decimal("0.00")
+            current_product_id = mv.product_id
+        balance += (mv.qty_in or Decimal("0.00")) - (mv.qty_out or Decimal("0.00"))
+        running_movements.append({"movement": mv, "balance": balance})
+
+    return render(request, "report_movement_ledger.html", {
+        "movements": running_movements,
+        "products": products,
+        "locations": locations,
+        "source_types": source_types,
+        "filters": {
+            "product": product_id, "source_type": source_type,
+            "date_from": date_from, "date_to": date_to, "location": location_id,
+        },
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_stock_valuation(request):
+    """Stock Valuation Report - FIFO value per product."""
+    from .fifo import get_available_layers
+
+    company = request.company
+    products = Product.objects.for_company(company).filter(type="Inventory").order_by("name")
+
+    valuation_data = []
+    total_value = Decimal("0.00")
+
+    for p in products:
+        layers = get_available_layers(p)
+        qty_on_hand = sum(Decimal(str(l.qty_remaining)) for l in layers)
+        fifo_value = sum(Decimal(str(l.qty_remaining)) * Decimal(str(l.unit_cost)) for l in layers)
+        total_value += fifo_value
+        valuation_data.append({
+            "product": p,
+            "qty_on_hand": qty_on_hand,
+            "layers": layers,
+            "fifo_value": fifo_value,
+        })
+
+    return render(request, "report_stock_valuation.html", {
+        "valuation_data": valuation_data,
+        "total_value": total_value,
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_stock_aging(request):
+    """Stock Aging Report - age bands and slow-moving products."""
+    from .fifo import get_available_layers
+
+    company = request.company
+    today = timezone.localdate()
+
+    products = Product.objects.for_company(company).filter(type="Inventory").order_by("name")
+
+    aging_data = []
+    for p in products:
+        layers = get_available_layers(p)
+        if not layers:
+            continue
+        oldest_layer = layers[0]
+        if oldest_layer.date_created:
+            age_days = (today - oldest_layer.date_created).days
+        else:
+            age_days = 0
+
+        if age_days < 30:
+            band = "0-30 days"
+        elif age_days < 90:
+            band = "30-90 days"
+        elif age_days < 180:
+            band = "90-180 days"
+        else:
+            band = "180+ days (Slow/Dead)"
+
+        aging_data.append({
+            "product": p,
+            "oldest_date": oldest_layer.date_created,
+            "age_days": age_days,
+            "band": band,
+            "qty_on_hand": sum(Decimal(str(l.qty_remaining)) for l in layers),
+        })
+
+    return render(request, "report_stock_aging.html", {"aging_data": aging_data})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_reorder(request):
+    """Reorder Report - products below reorder level."""
+    from .fifo import get_available_layers
+
+    company = request.company
+    show_all = request.GET.get("show_all") == "1"
+
+    products = Product.objects.for_company(company).filter(type="Inventory").select_related("supplier").order_by("name")
+
+    reorder_data = []
+    for p in products:
+        layers = get_available_layers(p)
+        qty_on_hand = sum(Decimal(str(l.qty_remaining)) for l in layers)
+
+        try:
+            threshold = p.alert_threshold.low_stock_threshold
+        except Exception:
+            threshold = Decimal("10.00")
+
+        needs_reorder = qty_on_hand <= threshold
+
+        if show_all or needs_reorder:
+            reorder_data.append({
+                "product": p,
+                "qty_on_hand": qty_on_hand,
+                "reorder_level": threshold,
+                "needs_reorder": needs_reorder,
+                "supplier": p.supplier,
+            })
+
+    return render(request, "report_reorder.html", {"reorder_data": reorder_data, "show_all": show_all})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_expiry(request):
+    """Expiry Report - batches expiring soon."""
+    from .models import Batch
+
+    company = request.company
+    today = timezone.localdate()
+    days_ahead = int(request.GET.get("days", 90))
+
+    batches = Batch.objects.for_company(company).select_related("product", "location").filter(
+        status="active",
+        expiry_date__isnull=False,
+    ).order_by("expiry_date")
+
+    expiry_data = []
+    for b in batches:
+        days_to_expiry = (b.expiry_date - today).days if b.expiry_date else None
+        if days_to_expiry is not None and days_to_expiry <= days_ahead:
+            severity = "critical" if days_to_expiry < 30 else "warning"
+            expiry_data.append({"batch": b, "days_to_expiry": days_to_expiry, "severity": severity})
+
+    return render(request, "report_expiry.html", {"expiry_data": expiry_data, "days_ahead": days_ahead})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def stock_adjustment_list(request):
+    from .models import StockAdjustment
+    company = request.company
+    adjustments = StockAdjustment.objects.for_company(company).order_by("-date", "-id")
+    return render(request, "stock_adjustment_list.html", {"adjustments": adjustments})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def stock_adjustment_create(request):
+    from .models import StockAdjustment, StockAdjustmentLine
+    company = request.company
+    products = Product.objects.for_company(company).filter(type="Inventory").order_by("name")
+
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                adj = StockAdjustment(
+                    company=company,
+                    date=request.POST.get("date") or timezone.localdate(),
+                    reason=request.POST.get("reason", "other"),
+                    memo=request.POST.get("memo", ""),
+                    status="draft",
+                )
+                adj.save()
+
+                product_ids = request.POST.getlist("product_id[]")
+                qty_increases = request.POST.getlist("qty_increase[]")
+                qty_decreases = request.POST.getlist("qty_decrease[]")
+                unit_costs = request.POST.getlist("unit_cost[]")
+
+                for i, pid in enumerate(product_ids):
+                    if not pid:
+                        continue
+                    try:
+                        p = Product.objects.for_company(company).get(id=pid)
+                    except Product.DoesNotExist:
+                        continue
+
+                    line = StockAdjustmentLine(
+                        adjustment=adj,
+                        product=p,
+                        qty_increase=_dec(qty_increases[i] if i < len(qty_increases) else 0),
+                        qty_decrease=_dec(qty_decreases[i] if i < len(qty_decreases) else 0),
+                        unit_cost=_dec(unit_costs[i] if i < len(unit_costs) else 0),
+                    )
+                    line.save()
+
+                messages.success(request, f"Stock adjustment #{adj.id} created.")
+                return redirect("inventory:stock-adjustment-detail", pk=adj.id)
+        except Exception as e:
+            messages.error(request, f"Error creating adjustment: {e}")
+
+    return render(request, "stock_adjustment_form.html", {
+        "products": products,
+        "reason_choices": StockAdjustment.REASON_CHOICES,
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def stock_adjustment_detail(request, pk):
+    from .models import StockAdjustment
+    company = request.company
+    adjustment = get_object_or_404(
+        StockAdjustment.objects.for_company(company).prefetch_related("lines__product"), pk=pk
+    )
+    return render(request, "stock_adjustment_detail.html", {"adjustment": adjustment})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def stock_adjustment_post(request, pk):
+    from .models import StockAdjustment
+    from .services import rebuild_movements_for_stock_adjustment
+    company = request.company
+    adjustment = get_object_or_404(StockAdjustment.objects.for_company(company), pk=pk)
+
+    if request.method == "POST":
+        if adjustment.status != "draft":
+            messages.error(request, "Only draft adjustments can be posted.")
+            return redirect("inventory:stock-adjustment-detail", pk=pk)
+        try:
+            with transaction.atomic():
+                adjustment.status = "posted"
+                adjustment._skip_inventory_signal = True
+                adjustment.save(update_fields=["status"])
+                rebuild_movements_for_stock_adjustment(adjustment)
+            messages.success(request, f"Adjustment #{pk} posted successfully.")
+        except Exception as e:
+            messages.error(request, f"Could not post adjustment: {e}")
+
+    return redirect("inventory:stock-adjustment-detail", pk=pk)
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def inventory_alerts(request):
+    from .models import InventoryAlert
+    company = request.company
+    alert_type = request.GET.get("type")
+    resolved = request.GET.get("resolved") == "1"
+
+    alerts = InventoryAlert.objects.for_company(company).select_related("product").order_by("-created_at")
+
+    if alert_type:
+        alerts = alerts.filter(alert_type=alert_type)
+    if resolved:
+        alerts = alerts.filter(resolved_at__isnull=False)
+    else:
+        alerts = alerts.filter(resolved_at__isnull=True)
+
+    return render(request, "inventory_alerts.html", {
+        "alerts": alerts,
+        "alert_types": InventoryAlert.ALERT_TYPES,
+    })

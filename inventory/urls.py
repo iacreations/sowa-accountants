@@ -27,4 +27,20 @@ urlpatterns = [
     path("builds/new/", views.add_build, name="add-build"),
     path("builds/<int:pk>/", views.build_detail, name="build-detail"),
     path("builds/<int:pk>/complete/", views.complete_build_view, name="complete-build"),
+
+    # Reports
+    path("reports/movements/", views.report_movement_ledger, name="report-movement-ledger"),
+    path("reports/valuation/", views.report_stock_valuation, name="report-stock-valuation"),
+    path("reports/aging/", views.report_stock_aging, name="report-stock-aging"),
+    path("reports/reorder/", views.report_reorder, name="report-reorder"),
+    path("reports/expiry/", views.report_expiry, name="report-expiry"),
+
+    # Stock Adjustments
+    path("adjustments/", views.stock_adjustment_list, name="stock-adjustment-list"),
+    path("adjustments/new/", views.stock_adjustment_create, name="stock-adjustment-create"),
+    path("adjustments/<int:pk>/", views.stock_adjustment_detail, name="stock-adjustment-detail"),
+    path("adjustments/<int:pk>/post/", views.stock_adjustment_post, name="stock-adjustment-post"),
+
+    # Alerts
+    path("alerts/", views.inventory_alerts, name="alerts"),
 ]

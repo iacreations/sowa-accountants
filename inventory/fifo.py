@@ -327,3 +327,47 @@ def rebuild_layers_from_movements(product, company=None, from_date=None):
             create_kwargs["company"] = company
 
         InventoryLayer.objects.create(**create_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 additions
+# ---------------------------------------------------------------------------
+
+def record_stock_in(product, unit_cost, qty_in, date=None, movement=None, company=None):
+    """Alias for record_purchase_layer for clarity."""
+    return record_purchase_layer(product, unit_cost, qty_in, date=date, movement=movement, company=company)
+
+
+def record_stock_out_fifo(product, qty_out, company=None):
+    """
+    Record a FIFO stock-out. Consumes oldest layers first.
+    Returns list of (unit_cost, qty) tuples consumed.
+    """
+    return consume_fifo_layers(product, qty_out)
+
+
+def validate_available_stock(product, qty_required):
+    """
+    Raise ValueError if product doesn't have enough FIFO stock.
+    """
+    qty_required = _q2(_dec(qty_required))
+    if qty_required <= ZERO:
+        return
+    layers = get_available_layers(product)
+    total_available = sum(_dec(l.qty_remaining) for l in layers)
+    if total_available < qty_required:
+        raise ValueError(
+            f"Insufficient stock for '{product.name}': "
+            f"required {qty_required}, available {total_available}."
+        )
+
+
+def calculate_inventory_value_fifo(product):
+    """Return total FIFO value (qty_remaining × unit_cost) for all active layers."""
+    layers = get_available_layers(product)
+    return sum(_q2(_dec(l.qty_remaining) * _dec(l.unit_cost)) for l in layers)
+
+
+def calculate_cogs_fifo(product, qty):
+    """Calculate COGS for selling qty units using FIFO. Alias for compute_fifo_cogs."""
+    return compute_fifo_cogs(product, qty)
