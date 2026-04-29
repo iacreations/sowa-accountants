@@ -45,6 +45,11 @@ class Product(TenantModel):
         ("Bundle", "Bundle"),
     ]
 
+    VALUATION_METHODS = [
+        ("FIFO", "FIFO (First In, First Out)"),
+        ("WEIGHTED_AVERAGE", "Weighted Average"),
+    ]
+
     type = models.CharField(max_length=20, choices=PRODUCT_TYPES, blank=True, null=True)
     name = models.CharField(max_length=255, blank=True, null=True)
     sku = models.CharField(max_length=100, blank=True, null=True)
@@ -79,6 +84,27 @@ class Product(TenantModel):
         null=True,
         blank=True,
         help_text="Date from which FIFO was reset. Movements before this date are historical only.",
+    )
+
+    valuation_method = models.CharField(
+        max_length=20,
+        choices=VALUATION_METHODS,
+        default="FIFO",
+        help_text="Inventory costing method. FIFO is the default and currently the only active method.",
+    )
+
+    opening_stock_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Cut-off date for opening stock GL posting to Opening Balance Equity.",
+    )
+
+    opening_stock_value = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Total value of opening stock (for reporting and GL posting).",
     )
 
     is_bundle = models.BooleanField(default=False, blank=True, null=True)
@@ -347,6 +373,20 @@ class InventoryMovement(TenantModel):
     is_opening_balance = models.BooleanField(
         default=False,
         help_text="True when this movement was created as a cut-off opening balance.",
+    )
+
+    gl_entry = models.ForeignKey(
+        "accounts.JournalEntry",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="inventory_movements",
+        help_text="Journal entry that generated this movement (audit trail).",
+    )
+
+    is_gl_posted = models.BooleanField(
+        default=False,
+        help_text="True when a GL journal entry has been created for this movement (prevents double-posting).",
     )
 
     class Meta:
@@ -689,6 +729,15 @@ class StockAdjustment(TenantModel):
         related_name="approved_adjustments",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+
+    journal_entry = models.OneToOneField(
+        "accounts.JournalEntry",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="adjustment_source",
+        help_text="GL journal entry created when this adjustment was posted.",
+    )
 
     class Meta:
         ordering = ["-date", "-id"]
