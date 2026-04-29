@@ -573,10 +573,19 @@ def rebuild_movements_for_stock_transfer(transfer):
 @transaction.atomic
 def rebuild_movements_for_stock_adjustment(adjustment):
     """
-    Create inventory movements for a posted StockAdjustment.
-    Increases create positive qty_in movements.
-    Decreases create negative qty_out movements.
+    Create inventory movements and post GL entries for a StockAdjustment.
+
+    When adjustment.status == "posted":
+      - Delegates to post_stock_adjustment_to_gl which handles movements AND GL posting.
+    Otherwise (draft):
+      - Creates movements only (no GL).
     """
+    if getattr(adjustment, "status", None) == "posted":
+        from inventory.accounting import post_stock_adjustment_to_gl
+        post_stock_adjustment_to_gl(adjustment)
+        return
+
+    # Draft: create movements only (no GL)
     company = getattr(adjustment, "company", None)
     loc = get_default_location(company=company)
     adj_date = adjustment.date or timezone.localdate()

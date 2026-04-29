@@ -709,3 +709,560 @@ class PhaseTenValidatorTests(TestCase):
         from inventory.validators import validate_fifo_layer_cost
         with self.assertRaises(ValueError):
             validate_fifo_layer_cost(Decimal("0.00"))
+
+
+# ==========================================================
+# GL Posting / Accounting Tests
+# ==========================================================
+
+class InventoryAccountingGLTests(TestCase):
+    """
+    Tests for the GL posting engine in inventory/accounting.py.
+
+    Verifies that purchases, sales, stock adjustments, and opening stock
+    all produce correct double-entry journal entries with proper FIFO costing.
+    """
+
+    def setUp(self):
+        from tenancy.models import Company
+        from accounts.models import Account
+        from inventory.models import Product, MainStore, InventoryLocation
+        from sowaf.models import Newsupplier, Newcustomer
+
+        self.company = Company.objects.create(name="GLTestCo", country="UG")
+
+        # Chart of Accounts
+        self.inv_asset_acc = Account.objects.create(
+            company=self.company,
+            account_name="Inventory Asset",
+            account_number="1200",
+            account_type="CURRENT_ASSET",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+        self.cogs_acc = Account.objects.create(
+            company=self.company,
+            account_name="Cost of Goods Sold",
+            account_number="5000",
+            account_type="OPERATING_EXPENSE",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+        self.ap_acc = Account.objects.create(
+            company=self.company,
+            account_name="Accounts Payable",
+            account_number="2000",
+            account_type="CURRENT_LIABILITY",
+            detail_type="Accounts Payable (A/P)",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+        self.ar_acc = Account.objects.create(
+            company=self.company,
+            account_name="Accounts Receivable",
+            account_number="1100",
+            account_type="CURRENT_ASSET",
+            detail_type="Accounts Receivable (A/R)",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+        self.income_acc = Account.objects.create(
+            company=self.company,
+            account_name="Sales Revenue",
+            account_number="4000",
+            account_type="OPERATING_INCOME",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+        self.adj_acc = Account.objects.create(
+            company=self.company,
+            account_name="Inventory Adjustment",
+            account_number="5100",
+            account_type="OPERATING_EXPENSE",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+        self.equity_acc = Account.objects.create(
+            company=self.company,
+            account_name="Opening Balance Equity",
+            account_number="3000",
+            account_type="OWNER_EQUITY",
+            is_active=True,
+            as_of=timezone.localdate(),
+        )
+
+        # Product
+        self.product = Product.objects.create(
+            company=self.company,
+            name="Widget",
+            type="Inventory",
+            track_inventory=True,
+            quantity=Decimal("0.00"),
+            avg_cost=Decimal("0.00"),
+            inventory_asset_account=self.inv_asset_acc,
+            cogs_account=self.cogs_acc,
+            income_account=self.income_acc,
+        )
+
+        # Supplier and customer
+        self.supplier = Newsupplier.objects.create(
+            company=self.company,
+            company_name="Test Supplier",
+            ap_account=self.ap_acc,
+        )
+        self.customer = Newcustomer.objects.create(
+            company=self.company,
+            customer_name="Test Customer",
+            ar_account=self.ar_acc,
+        )
+
+        # Inventory location
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main",
+            defaults={"is_active": True},
+        )
+        self.location, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+
+    def _make_bill(self, qty, unit_cost, bill_no="BILL-001"):
+        from expenses.models import Bill, BillItemLine
+        bill = Bill.objects.create(
+            company=self.company,
+            supplier=self.supplier,
+            bill_no=bill_no,
+            bill_date=timezone.localdate(),
+            total_amount=qty * unit_cost,
+            location=self.location,
+        )
+        BillItemLine.objects.create(
+            bill=bill,
+            product=self.product,
+            qty=qty,
+            rate=unit_cost,
+            amount=qty * unit_cost,
+        )
+        return bill
+
+    def _make_invoice(self, qty, unit_price, inv_num=1):
+        from sales.models import Newinvoice, InvoiceItem
+        invoice = Newinvoice.objects.create(
+            company=self.company,
+            customer=self.customer,
+            date_created=timezone.now(),
+            location=self.location,
+        )
+        InvoiceItem.objects.create(
+            invoice=invoice,
+            product=self.product,
+            qty=qty,
+            unit_price=unit_price,
+        )
+        return invoice
+
+    # ------------------------------------------------------------------
+    # Test 1: Purchase creates Inventory Asset debit
+    # ------------------------------------------------------------------
+    def test_purchase_creates_inventory_asset_debit(self):
+        from inventory.accounting import post_bill_to_gl
+        from accounts.models import JournalLine
+
+        bill = self._make_bill(Decimal("10"), Decimal("750"))
+        post_bill_to_gl(bill)
+
+        bill.refresh_from_db()
+        self.assertTrue(bill.is_posted)
+        self.assertIsNotNone(bill.journal_entry)
+
+        # Check Inventory Asset was debited
+        je = bill.journal_entry
+        inv_lines = JournalLine.objects.filter(entry=je, account=self.inv_asset_acc)
+        self.assertTrue(inv_lines.exists(), "No inventory asset debit line found")
+        total_debit = sum(ln.debit for ln in inv_lines)
+        self.assertEqual(total_debit, Decimal("7500.00"))
+
+        # Check AP (supplier subledger) was credited
+        ap_lines = JournalLine.objects.filter(entry=je, account__detail_type="Supplier Subledger (A/P)")
+        self.assertTrue(ap_lines.exists(), "No AP/supplier subledger credit line found")
+
+    # ------------------------------------------------------------------
+    # Test 2: Purchase links movements to GL entry
+    # ------------------------------------------------------------------
+    def test_purchase_links_movements_to_gl_entry(self):
+        from inventory.accounting import post_bill_to_gl
+        from inventory.models import InventoryMovement
+
+        bill = self._make_bill(Decimal("10"), Decimal("750"))
+        post_bill_to_gl(bill)
+        bill.refresh_from_db()
+
+        movements = InventoryMovement.objects.filter(source_type="BILL", source_id=bill.id)
+        self.assertTrue(movements.exists())
+        for mv in movements:
+            self.assertEqual(mv.gl_entry_id, bill.journal_entry_id,
+                             "Movement not linked to its journal entry")
+            self.assertTrue(mv.is_gl_posted, "Movement is_gl_posted not True")
+
+    # ------------------------------------------------------------------
+    # Test 3: Sale creates COGS debit + Inventory Asset credit at FIFO cost
+    # ------------------------------------------------------------------
+    def test_sale_creates_cogs_debit_and_inventory_credit(self):
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from accounts.models import JournalLine
+
+        # First, purchase stock at 750/unit
+        bill = self._make_bill(Decimal("10"), Decimal("750"))
+        post_bill_to_gl(bill)
+
+        # Then sell 3 units at 1200/unit (selling price should NOT affect COGS)
+        invoice = self._make_invoice(Decimal("3"), Decimal("1200"))
+        post_invoice_inventory_and_gl(invoice)
+
+        invoice.refresh_from_db()
+        self.assertTrue(invoice.is_posted)
+        je = invoice.journal_entry
+
+        # COGS debit = 3 * 750 = 2250 (FIFO cost, not selling price)
+        cogs_lines = JournalLine.objects.filter(entry=je, account=self.cogs_acc)
+        self.assertTrue(cogs_lines.exists(), "No COGS debit line found")
+        total_cogs = sum(ln.debit for ln in cogs_lines)
+        self.assertEqual(total_cogs, Decimal("2250.00"),
+                         "COGS should use FIFO cost (750), not selling price (1200)")
+
+        # Inventory Asset credit = 2250
+        inv_lines = JournalLine.objects.filter(entry=je, account=self.inv_asset_acc)
+        self.assertTrue(inv_lines.exists(), "No inventory asset credit line found")
+        total_inv_credit = sum(ln.credit for ln in inv_lines)
+        self.assertEqual(total_inv_credit, Decimal("2250.00"))
+
+    # ------------------------------------------------------------------
+    # Test 4: COGS is at FIFO cost, not selling price
+    # ------------------------------------------------------------------
+    def test_cogs_at_fifo_cost_not_selling_price(self):
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from accounts.models import JournalLine
+
+        # Purchase at cost 500
+        bill = self._make_bill(Decimal("5"), Decimal("500"), bill_no="BILL-FIFO")
+        post_bill_to_gl(bill)
+
+        # Sell at price 2000 (4x markup)
+        invoice = self._make_invoice(Decimal("5"), Decimal("2000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        je = invoice.journal_entry
+        cogs_lines = JournalLine.objects.filter(entry=je, account=self.cogs_acc)
+        total_cogs = sum(ln.debit for ln in cogs_lines)
+
+        # COGS must be 5 * 500 = 2500, NOT 5 * 2000 = 10000
+        self.assertEqual(total_cogs, Decimal("2500.00"),
+                         "COGS must use purchase cost (500), not selling price (2000)")
+
+    # ------------------------------------------------------------------
+    # Test 5: Partial stock depletion calculates correct COGS
+    # ------------------------------------------------------------------
+    def test_partial_stock_depletion(self):
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from accounts.models import JournalLine
+
+        # Purchase 10 units at 750 each
+        bill = self._make_bill(Decimal("10"), Decimal("750"), bill_no="BILL-PARTIAL")
+        post_bill_to_gl(bill)
+
+        # Sell only 4 units
+        invoice = self._make_invoice(Decimal("4"), Decimal("1000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        je = invoice.journal_entry
+        cogs_lines = JournalLine.objects.filter(entry=je, account=self.cogs_acc)
+        total_cogs = sum(ln.debit for ln in cogs_lines)
+        self.assertEqual(total_cogs, Decimal("3000.00"),
+                         "COGS for 4 units at 750 each = 3000")
+
+    # ------------------------------------------------------------------
+    # Test 6: Multiple FIFO layers consume oldest first
+    # ------------------------------------------------------------------
+    def test_multiple_batches_fifo_order(self):
+        from datetime import date
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from inventory.fifo import rebuild_layers_from_movements
+        from expenses.models import Bill, BillItemLine
+        from accounts.models import JournalLine
+
+        # Batch 1: Buy 10 at 500 (older)
+        bill1 = Bill.objects.create(
+            company=self.company, supplier=self.supplier,
+            bill_no="BILL-B1", bill_date=date(2026, 1, 1),
+            total_amount=Decimal("5000"), location=self.location,
+        )
+        BillItemLine.objects.create(
+            bill=bill1, product=self.product,
+            qty=Decimal("10"), rate=Decimal("500"), amount=Decimal("5000"),
+        )
+        post_bill_to_gl(bill1)
+
+        # Batch 2: Buy 10 at 800 (newer)
+        bill2 = Bill.objects.create(
+            company=self.company, supplier=self.supplier,
+            bill_no="BILL-B2", bill_date=date(2026, 2, 1),
+            total_amount=Decimal("8000"), location=self.location,
+        )
+        BillItemLine.objects.create(
+            bill=bill2, product=self.product,
+            qty=Decimal("10"), rate=Decimal("800"), amount=Decimal("8000"),
+        )
+        post_bill_to_gl(bill2)
+
+        # Sell 15 units — should use 10@500 + 5@800 = 5000 + 4000 = 9000
+        invoice = self._make_invoice(Decimal("15"), Decimal("2000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        je = invoice.journal_entry
+        cogs_lines = JournalLine.objects.filter(entry=je, account=self.cogs_acc)
+        total_cogs = sum(ln.debit for ln in cogs_lines)
+        self.assertEqual(total_cogs, Decimal("9000.00"),
+                         "FIFO: 10@500 + 5@800 = 9000")
+
+    # ------------------------------------------------------------------
+    # Test 7: GL journal entry totals are balanced (debits == credits)
+    # ------------------------------------------------------------------
+    def test_gl_entry_is_balanced(self):
+        from inventory.accounting import post_bill_to_gl
+        from accounts.models import JournalLine
+
+        bill = self._make_bill(Decimal("10"), Decimal("750"), bill_no="BILL-BAL")
+        post_bill_to_gl(bill)
+
+        bill.refresh_from_db()
+        je = bill.journal_entry
+        lines = JournalLine.objects.filter(entry=je)
+        total_debit = sum(ln.debit for ln in lines)
+        total_credit = sum(ln.credit for ln in lines)
+        self.assertEqual(total_debit, total_credit,
+                         f"Journal entry not balanced: DR={total_debit} CR={total_credit}")
+
+    # ------------------------------------------------------------------
+    # Test 8: Invoice GL entry is balanced
+    # ------------------------------------------------------------------
+    def test_invoice_gl_entry_is_balanced(self):
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from accounts.models import JournalLine
+
+        bill = self._make_bill(Decimal("10"), Decimal("750"), bill_no="BILL-INVBAL")
+        post_bill_to_gl(bill)
+
+        invoice = self._make_invoice(Decimal("5"), Decimal("1500"))
+        post_invoice_inventory_and_gl(invoice)
+
+        invoice.refresh_from_db()
+        je = invoice.journal_entry
+        lines = JournalLine.objects.filter(entry=je)
+        total_debit = sum(ln.debit for ln in lines)
+        total_credit = sum(ln.credit for ln in lines)
+        self.assertEqual(total_debit, total_credit,
+                         f"Invoice GL entry not balanced: DR={total_debit} CR={total_credit}")
+
+    # ------------------------------------------------------------------
+    # Test 9: Opening stock posts to Opening Balance Equity
+    # ------------------------------------------------------------------
+    def test_opening_stock_posts_to_opening_equity(self):
+        from inventory.accounting import post_opening_stock_to_gl
+        from accounts.models import JournalLine
+
+        je = post_opening_stock_to_gl(
+            product=self.product,
+            qty=Decimal("20"),
+            unit_cost=Decimal("600"),
+            date=timezone.localdate(),
+            company=self.company,
+        )
+
+        self.assertIsNotNone(je, "post_opening_stock_to_gl returned None")
+
+        lines = JournalLine.objects.filter(entry=je)
+        total_debit = sum(ln.debit for ln in lines)
+        total_credit = sum(ln.credit for ln in lines)
+        self.assertEqual(total_debit, Decimal("12000.00"))
+        self.assertEqual(total_credit, Decimal("12000.00"))
+
+        # Inventory Asset debited
+        inv_lines = JournalLine.objects.filter(entry=je, account=self.inv_asset_acc)
+        self.assertTrue(inv_lines.exists(), "No Inventory Asset debit for opening stock")
+
+        # Opening Balance Equity credited
+        eq_lines = JournalLine.objects.filter(entry=je, account=self.equity_acc)
+        self.assertTrue(eq_lines.exists(), "No Opening Balance Equity credit for opening stock")
+
+    # ------------------------------------------------------------------
+    # Test 10: Opening stock updates product.opening_stock_value
+    # ------------------------------------------------------------------
+    def test_opening_stock_updates_product_fields(self):
+        from inventory.accounting import post_opening_stock_to_gl
+        from datetime import date
+
+        cutoff = date(2026, 1, 1)
+        post_opening_stock_to_gl(
+            product=self.product,
+            qty=Decimal("15"),
+            unit_cost=Decimal("400"),
+            date=cutoff,
+            company=self.company,
+        )
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.opening_stock_value, Decimal("6000.00"))
+        self.assertEqual(self.product.opening_stock_date, cutoff)
+
+    # ------------------------------------------------------------------
+    # Test 11: Stock adjustment (increase) posts correct GL
+    # ------------------------------------------------------------------
+    def test_stock_adjustment_increase_gl(self):
+        from inventory.accounting import post_stock_adjustment_to_gl
+        from inventory.models import StockAdjustment, StockAdjustmentLine
+        from accounts.models import JournalLine
+
+        adj = StockAdjustment.objects.create(
+            company=self.company,
+            reason="other",
+            status="posted",
+        )
+        StockAdjustmentLine.objects.create(
+            adjustment=adj,
+            product=self.product,
+            qty_increase=Decimal("5"),
+            qty_decrease=Decimal("0"),
+            unit_cost=Decimal("600"),
+        )
+
+        post_stock_adjustment_to_gl(adj)
+
+        adj.refresh_from_db()
+        self.assertIsNotNone(adj.journal_entry)
+
+        je = adj.journal_entry
+        lines = JournalLine.objects.filter(entry=je)
+        total_debit = sum(ln.debit for ln in lines)
+        total_credit = sum(ln.credit for ln in lines)
+        self.assertEqual(total_debit, total_credit, "Adjustment GL not balanced")
+
+        # Inventory Asset debited
+        inv_lines = JournalLine.objects.filter(entry=je, account=self.inv_asset_acc)
+        self.assertTrue(inv_lines.exists(), "No Inventory Asset debit on adjustment increase")
+        total_inv_dr = sum(ln.debit for ln in inv_lines)
+        self.assertEqual(total_inv_dr, Decimal("3000.00"))
+
+    # ------------------------------------------------------------------
+    # Test 12: Stock adjustment (decrease) posts COGS/expense debit at FIFO cost
+    # ------------------------------------------------------------------
+    def test_stock_adjustment_decrease_gl_at_fifo_cost(self):
+        from inventory.accounting import post_bill_to_gl, post_stock_adjustment_to_gl
+        from inventory.models import StockAdjustment, StockAdjustmentLine
+        from accounts.models import JournalLine
+
+        # First, build inventory at 750/unit
+        bill = self._make_bill(Decimal("10"), Decimal("750"), bill_no="BILL-ADJ-DEC")
+        post_bill_to_gl(bill)
+
+        # Write off 3 units (damage)
+        adj = StockAdjustment.objects.create(
+            company=self.company,
+            reason="damage",
+            status="posted",
+        )
+        StockAdjustmentLine.objects.create(
+            adjustment=adj,
+            product=self.product,
+            qty_increase=Decimal("0"),
+            qty_decrease=Decimal("3"),
+            unit_cost=Decimal("0"),  # FIFO cost used for decreases
+        )
+
+        post_stock_adjustment_to_gl(adj)
+
+        adj.refresh_from_db()
+        je = adj.journal_entry
+        lines = JournalLine.objects.filter(entry=je)
+        total_debit = sum(ln.debit for ln in lines)
+        total_credit = sum(ln.credit for ln in lines)
+        self.assertEqual(total_debit, total_credit, "Adjustment decrease GL not balanced")
+
+        # Adjustment expense account debited at FIFO cost (3 * 750 = 2250)
+        adj_lines = JournalLine.objects.filter(entry=je, account=self.adj_acc)
+        self.assertTrue(adj_lines.exists(), "No adjustment expense debit found")
+        total_adj_dr = sum(ln.debit for ln in adj_lines)
+        self.assertEqual(total_adj_dr, Decimal("2250.00"),
+                         "Adjustment decrease should debit at FIFO cost (3 * 750 = 2250)")
+
+    # ------------------------------------------------------------------
+    # Test 13: Inventory movements are linked to GL entries (audit trail)
+    # ------------------------------------------------------------------
+    def test_sale_movements_linked_to_gl_entry(self):
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from inventory.models import InventoryMovement
+
+        bill = self._make_bill(Decimal("10"), Decimal("750"), bill_no="BILL-AUDIT")
+        post_bill_to_gl(bill)
+
+        invoice = self._make_invoice(Decimal("5"), Decimal("1500"))
+        post_invoice_inventory_and_gl(invoice)
+
+        invoice.refresh_from_db()
+        movements = InventoryMovement.objects.filter(source_type="INVOICE", source_id=invoice.id)
+        self.assertTrue(movements.exists())
+        for mv in movements:
+            self.assertEqual(mv.gl_entry_id, invoice.journal_entry_id,
+                             "Sale movement not linked to journal entry")
+            self.assertTrue(mv.is_gl_posted)
+
+    # ------------------------------------------------------------------
+    # Test 14: Idempotent re-posting (re-posting replaces previous GL entry)
+    # ------------------------------------------------------------------
+    def test_repost_replaces_previous_gl_entry(self):
+        from inventory.accounting import post_bill_to_gl
+        from accounts.models import JournalEntry
+
+        bill = self._make_bill(Decimal("10"), Decimal("750"), bill_no="BILL-IDEM")
+        post_bill_to_gl(bill)
+        bill.refresh_from_db()
+        first_je_id = bill.journal_entry_id
+
+        # Re-post the same bill
+        post_bill_to_gl(bill)
+        bill.refresh_from_db()
+        second_je_id = bill.journal_entry_id
+
+        self.assertNotEqual(first_je_id, second_je_id,
+                            "Re-posting should create a new JE (old one deleted)")
+        # Old JE should no longer exist
+        self.assertFalse(JournalEntry.objects.filter(id=first_je_id).exists())
+
+    # ------------------------------------------------------------------
+    # Test 15: Product valuation_method and opening_stock_date fields exist
+    # ------------------------------------------------------------------
+    def test_product_new_fields_exist(self):
+        from inventory.models import Product
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.valuation_method, "FIFO")
+        self.assertIsNone(self.product.opening_stock_value)
+        self.assertIsNone(self.product.opening_stock_date)
+
+    # ------------------------------------------------------------------
+    # Test 16: InventoryMovement new fields default values
+    # ------------------------------------------------------------------
+    def test_movement_new_fields_defaults(self):
+        from inventory.models import InventoryMovement
+        mv = InventoryMovement.objects.create(
+            product=self.product,
+            company=self.company,
+            location=self.location,
+            date=timezone.localdate(),
+            qty_in=Decimal("5"),
+            qty_out=Decimal("0"),
+            unit_cost=Decimal("100"),
+            value=Decimal("500"),
+            source_type="BILL",
+            source_id=999,
+        )
+        self.assertIsNone(mv.gl_entry_id)
+        self.assertFalse(mv.is_gl_posted)

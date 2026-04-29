@@ -392,6 +392,8 @@ def post_bill_to_gl(bill):
                         location=stock_location,
                         source_type=source_type,
                         source_id=source_id,
+                        gl_entry=je,
+                        is_gl_posted=True,
                     )
                     _apply_stock_in(product, qty, unit_cost)
             else:
@@ -414,6 +416,7 @@ def post_bill_to_gl(bill):
         bill.journal_entry = je
         bill.is_posted = True
         bill.posted_at = timezone.now()
+        bill._skip_inventory_signal = True
         bill.save(update_fields=["journal_entry", "is_posted", "posted_at"])
 
 
@@ -520,6 +523,8 @@ def post_expense_to_gl(expense):
                         location=stock_location,
                         source_type=source_type,
                         source_id=source_id,
+                        gl_entry=je,
+                        is_gl_posted=True,
                     )
                     _apply_stock_in(product, qty, unit_cost)
             else:
@@ -539,6 +544,7 @@ def post_expense_to_gl(expense):
         expense.journal_entry = je
         expense.is_posted = True
         expense.posted_at = timezone.now()
+        expense._skip_inventory_signal = True
         expense.save(update_fields=["journal_entry", "is_posted", "posted_at"])
 
 
@@ -580,6 +586,10 @@ def post_invoice_inventory_and_gl(invoice):
             source_type=source_type,
             source_id=source_id,
         )
+        company_id = getattr(company, "id", company) if company is not None else None
+        if company_id:
+            je.company_id = company_id
+            je.save(update_fields=["company"])
 
         # A/R account (fallback safe)
         ar_acc = _fallback_ar_account(customer, company=company)
@@ -635,6 +645,8 @@ def post_invoice_inventory_and_gl(invoice):
                         location=stock_location,
                         source_type=source_type,
                         source_id=source_id,
+                        gl_entry=je,
+                        is_gl_posted=True,
                     )
                     _add_line(je=je, account=cogs_acc, debit=layer_value, credit=DEC0)
                     _add_line(je=je, account=inv_acc, debit=DEC0, credit=layer_value)
@@ -655,6 +667,7 @@ def post_invoice_inventory_and_gl(invoice):
         invoice.journal_entry = je
         invoice.is_posted = True
         invoice.posted_at = timezone.now()
+        invoice._skip_inventory_signal = True
         invoice.save(update_fields=["journal_entry", "is_posted", "posted_at"])
 
 # --- Sales Receipt Posting ---
@@ -855,3 +868,280 @@ def complete_build(build):
         build.status = "COMPLETED"
         build.completed_at = timezone.now()
         build.save(update_fields=["journal_entry", "status", "completed_at"])
+
+
+# -----------------------------
+# Opening Stock GL Posting
+# -----------------------------
+def _fallback_opening_equity_account(company=None):
+    """
+    Returns the Opening Balance Equity account for the company.
+
+    Priority:
+      1) Account named exactly "Opening Balance Equity"
+      2) Account contains "Opening Balance"
+      3) Account contains "Retained Earnings"
+      4) Any equity-type account
+    """
+    company_id = getattr(company, "id", company) if company is not None else None
+
+    for term in ("Opening Balance Equity", "Opening Balance", "Retained Earnings", "Equity"):
+        qs = Account.objects.filter(is_active=True, account_name__icontains=term)
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        acc = qs.first()
+        if acc:
+            return acc
+
+    qs = Account.objects.filter(
+        is_active=True,
+        account_type__in=["OWNER_EQUITY"],
+    )
+    if company_id:
+        qs = qs.filter(company_id=company_id)
+    return qs.first()
+
+
+def _fallback_adjustment_account(reason=None, company=None):
+    """
+    Returns an appropriate GL account for stock adjustment posting.
+
+    Loss reasons (damage, theft, write_off, shrinkage, donation) use expense accounts.
+    Other reasons use an inventory adjustment account.
+    """
+    LOSS_REASONS = {"damage", "theft", "write_off", "shrinkage", "donation"}
+    company_id = getattr(company, "id", company) if company is not None else None
+
+    for term in ("Inventory Adjustment", "Stock Adjustment", "Inventory Write",):
+        qs = Account.objects.filter(is_active=True, account_name__icontains=term)
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        acc = qs.first()
+        if acc:
+            return acc
+
+    if reason in LOSS_REASONS:
+        for term in ("Shrinkage", "Damage", "Loss", "Write", "COGS", "Cost of Goods"):
+            qs = Account.objects.filter(is_active=True, account_name__icontains=term)
+            if company_id:
+                qs = qs.filter(company_id=company_id)
+            acc = qs.first()
+            if acc:
+                return acc
+
+    return _fallback_expense_account(None, company=company)
+
+
+def post_opening_stock_to_gl(product, qty, unit_cost, date=None, company=None):
+    """
+    Post opening stock GL entry for a product:
+
+      Dr Inventory Asset Account  (qty * unit_cost)
+      Cr Opening Balance Equity   (qty * unit_cost)
+
+    This is called when a product is assigned an opening stock balance
+    at a cut-off date (e.g., when track_inventory is first enabled).
+
+    Returns the created JournalEntry or None if GL accounts are missing.
+    """
+    company = company or getattr(product, "company", None)
+    company_id = getattr(company, "id", company) if company is not None else None
+    date = date or timezone.localdate()
+    qty = _dec(qty)
+    unit_cost = _dec(unit_cost)
+
+    if qty <= DEC0 or unit_cost < DEC0:
+        return None
+
+    inv_acc = _fallback_inventory_asset_account(product, company=company)
+    equity_acc = _fallback_opening_equity_account(company=company)
+
+    if not inv_acc or not equity_acc:
+        return None
+
+    value = (qty * unit_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+    source_type = "OPENING"
+    source_id = product.id
+
+    with transaction.atomic():
+        # Delete any existing opening-stock GL entry for this product
+        existing = JournalEntry.objects.filter(
+            source_type=source_type,
+            source_id=source_id,
+        )
+        if company_id:
+            existing = existing.filter(company_id=company_id)
+        existing.delete()
+
+        je = JournalEntry.objects.create(
+            date=date,
+            description=f"Opening Stock – {product.name}",
+            source_type=source_type,
+            source_id=source_id,
+        )
+        if company_id:
+            je.company_id = company_id
+            je.save(update_fields=["company"])
+
+        _add_line(je=je, account=inv_acc, debit=value)
+        _add_line(je=je, account=equity_acc, credit=value)
+
+        # Mark matching OPENING movements as GL-posted
+        from inventory.models import InventoryMovement
+        InventoryMovement.objects.filter(
+            source_type=source_type,
+            source_id=source_id,
+        ).update(gl_entry=je, is_gl_posted=True)
+
+        # Update product opening_stock_value for reporting
+        product.opening_stock_value = value
+        if not product.opening_stock_date:
+            product.opening_stock_date = date
+        product.save(update_fields=["opening_stock_value", "opening_stock_date"])
+
+    return je
+
+
+# -----------------------------
+# Stock Adjustment GL Posting
+# -----------------------------
+def post_stock_adjustment_to_gl(adjustment):
+    """
+    Post GL entries for a StockAdjustment that has already been posted
+    (adjustment.status == "posted").
+
+    For each line:
+      - qty_increase > 0:
+          Dr Inventory Asset       (qty * unit_cost)
+          Cr Inventory Adjustment  (expense/income)
+      - qty_decrease > 0 (at FIFO cost):
+          Dr Inventory Adjustment  (expense/income)
+          Cr Inventory Asset       (FIFO cost)
+
+    Creates InventoryMovements and links them to the JournalEntry.
+    Sets adjustment.journal_entry, is_posted, posted_at.
+    """
+    from inventory.models import StockAdjustment, StockAdjustmentLine
+    from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
+    from inventory.services import get_default_location
+
+    if adjustment.status != "posted":
+        raise ValueError("Only posted adjustments can be GL-posted.")
+
+    company = getattr(adjustment, "company", None)
+    company_id = getattr(company, "id", company) if company is not None else None
+    source_type = "ADJUSTMENT"
+    source_id = adjustment.id
+    post_date = adjustment.date or timezone.localdate()
+    adj_loc = get_default_location(company=company)
+
+    with transaction.atomic():
+        # Clear existing movements for this adjustment
+        _clear_inventory_movements(source_type, source_id)
+        _delete_journal_entry_if_exists(adjustment)
+
+        je = _create_journal_entry(
+            date=post_date,
+            description=f"Stock Adjustment #{adjustment.id} – {adjustment.get_reason_display()}",
+            source_type=source_type,
+            source_id=source_id,
+        )
+        if company_id:
+            je.company_id = company_id
+            je.save(update_fields=["company"])
+
+        adj_acc = _fallback_adjustment_account(reason=adjustment.reason, company=company)
+        if not adj_acc:
+            je.delete()
+            raise ValueError(
+                "No adjustment/expense account found. "
+                "Please create an 'Inventory Adjustment' account in the Chart of Accounts."
+            )
+
+        total_debit = DEC0
+        total_credit = DEC0
+        affected_products = set()
+
+        for line in StockAdjustmentLine.objects.filter(adjustment=adjustment).select_related("product"):
+            product = line.product
+            if not product or not getattr(product, "track_inventory", False):
+                continue
+
+            qty_increase = _dec(line.qty_increase)
+            qty_decrease = _dec(line.qty_decrease)
+            unit_cost = _dec(line.unit_cost)
+
+            inv_acc = _fallback_inventory_asset_account(product, company=company)
+            if not inv_acc:
+                continue
+
+            if qty_increase > DEC0:
+                value = (qty_increase * unit_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+                if value <= DEC0:
+                    continue
+                mv = InventoryMovement.objects.create(
+                    product=product,
+                    company=company,
+                    date=post_date,
+                    qty_in=qty_increase,
+                    qty_out=DEC0,
+                    unit_cost=unit_cost,
+                    value=value,
+                    location=adj_loc,
+                    source_type=source_type,
+                    source_id=source_id,
+                    gl_entry=je,
+                    is_gl_posted=True,
+                )
+                # Dr Inventory Asset (increase)
+                _add_line(je=je, account=inv_acc, debit=value)
+                total_debit += value
+                # Cr Adjustment Account
+                _add_line(je=je, account=adj_acc, credit=value)
+                total_credit += value
+                affected_products.add(product)
+
+            elif qty_decrease > DEC0:
+                fifo_rows = simulate_fifo_consumption(product, qty_decrease)
+                if not fifo_rows:
+                    continue
+                for layer_cost, layer_qty in fifo_rows:
+                    layer_value = (layer_qty * layer_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
+                    if layer_value <= DEC0:
+                        continue
+                    InventoryMovement.objects.create(
+                        product=product,
+                        company=company,
+                        date=post_date,
+                        qty_in=DEC0,
+                        qty_out=layer_qty,
+                        unit_cost=layer_cost,
+                        value=layer_value,
+                        location=adj_loc,
+                        source_type=source_type,
+                        source_id=source_id,
+                        gl_entry=je,
+                        is_gl_posted=True,
+                    )
+                    # Dr Adjustment Account (loss/write-off)
+                    _add_line(je=je, account=adj_acc, debit=layer_value)
+                    total_debit += layer_value
+                    # Cr Inventory Asset
+                    _add_line(je=je, account=inv_acc, credit=layer_value)
+                    total_credit += layer_value
+                affected_products.add(product)
+
+        if total_debit <= DEC0:
+            je.delete()
+            return
+
+        # Rebuild FIFO layers and update cached qty for affected products
+        for product in affected_products:
+            from django.db.models import Sum as _Sum
+            agg = product.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
+            product.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
+            product.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(product, company=company)
+
+        adjustment.journal_entry = je
+        adjustment.save(update_fields=["journal_entry"])
