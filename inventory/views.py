@@ -21,7 +21,7 @@ from django.core.files import File
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from accounts.utils import income_accounts_qs, expense_accounts_qs
-from .models import Product, BundleItem, Category, Pclass, InventoryLocation, InventoryMovement, StockTransfer, StockTransferLine, Build, BuildLine
+from .models import Product, BundleItem, Category, Pclass, InventoryLocation, InventoryMovement, StockTransfer, StockTransferLine, Build, BuildLine, BillOfMaterials, BOMItem
 from sowaf.models import Newsupplier
 from accounts.models import Account
 from sales.models import InvoiceItem
@@ -928,47 +928,81 @@ def add_build(request):
         build_qty = _dec(request.POST.get("build_qty", "1"), "1")
         build_date = request.POST.get("build_date") or timezone.localdate()
         memo = request.POST.get("memo", "")
+        location_id = request.POST.get("location") or None
+        bom_id = request.POST.get("bom") or None
+        action = request.POST.get("action", "draft")  # "draft" or "complete"
 
         finished = Product.objects.for_company(company).filter(pk=finished_id).first()
         if not finished:
             return redirect("inventory:add-build")
+
+        location = None
+        if location_id:
+            location = InventoryLocation.objects.for_company(company).filter(pk=location_id).first()
+
+        bom = None
+        if bom_id:
+            bom = BillOfMaterials.objects.for_company(company).filter(pk=bom_id).first()
 
         build = Build.objects.create(
             company=company,
             finished_product=finished,
             build_qty=build_qty,
             build_date=build_date,
+            location=location,
+            bom=bom,
             memo=memo,
-            status="PENDING",
+            status="DRAFT",
+            created_by=request.user if hasattr(request.user, "id") else None,
         )
 
-        # Parse component lines
-        comp_ids = request.POST.getlist("component_id[]")
-        comp_qtys = request.POST.getlist("qty_per_unit[]")
+        # If BOM selected, auto-load components from it
+        if bom:
+            from inventory.assembly_engine import load_bom_into_build
+            load_bom_into_build(build, bom)
+        else:
+            # Parse manually entered component lines
+            comp_ids = request.POST.getlist("component_id[]")
+            comp_qtys = request.POST.getlist("qty_per_unit[]")
 
-        bulk = []
-        for i, cid in enumerate(comp_ids):
-            if not cid:
-                continue
-            component = Product.objects.for_company(company).filter(pk=cid).first()
-            if not component:
-                continue
-            qty = _dec(comp_qtys[i] if i < len(comp_qtys) else "0", "0")
-            if qty <= 0:
-                continue
-            bulk.append(BuildLine(build=build, component=component, qty_per_unit=qty))
+            bulk = []
+            for i, cid in enumerate(comp_ids):
+                if not cid:
+                    continue
+                component = Product.objects.for_company(company).filter(pk=cid).first()
+                if not component:
+                    continue
+                qty = _dec(comp_qtys[i] if i < len(comp_qtys) else "0", "0")
+                if qty <= 0:
+                    continue
+                bulk.append(BuildLine(build=build, component=component, qty_per_unit=qty))
 
-        if not bulk:
+            if bulk:
+                BuildLine.objects.bulk_create(bulk)
+
+        if not build.lines.exists():
             build.delete()
+            messages.error(request, "Assembly must have at least one component line.")
             return redirect("inventory:add-build")
 
-        BuildLine.objects.bulk_create(bulk)
+        # Optionally complete immediately
+        if action == "complete":
+            try:
+                from inventory.assembly_engine import complete_assembly
+                complete_assembly(build, completed_by=request.user if hasattr(request.user, "id") else None)
+                messages.success(request, f"Assembly {build.assembly_number} completed successfully.")
+            except (ValueError, Exception) as e:
+                messages.error(request, f"Could not complete assembly: {e}")
 
         return redirect("inventory:build-detail", pk=build.pk)
 
     products = Product.objects.for_company(company).all().order_by("name")
+    boms = BillOfMaterials.objects.for_company(company).filter(is_active=True).select_related("finished_product").order_by("finished_product__name")
+    locations = InventoryLocation.objects.for_company(company).filter(is_active=True).order_by("name")
     return render(request, "build_form.html", {
         "products": products,
+        "boms": boms,
+        "locations": locations,
         "today": timezone.localdate(),
     })
 
@@ -978,7 +1012,7 @@ def add_build(request):
 @module_required("inventory")
 @transaction.atomic
 def complete_build_view(request, pk: int):
-    from inventory.accounting import complete_build
+    from inventory.assembly_engine import complete_assembly
 
     company = request.company
     build = get_object_or_404(Build.objects.for_company(company), pk=pk)
@@ -987,11 +1021,50 @@ def complete_build_view(request, pk: int):
         return redirect("inventory:build-detail", pk=build.pk)
 
     try:
-        complete_build(build)
+        complete_assembly(build, completed_by=request.user if hasattr(request.user, "id") else None)
+        messages.success(request, f"Assembly {build.assembly_number} completed successfully.")
     except ValueError as e:
-        from django.contrib import messages
         messages.error(request, str(e))
-        return redirect("inventory:build-detail", pk=build.pk)
+
+    return redirect("inventory:build-detail", pk=build.pk)
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@require_POST
+@transaction.atomic
+def cancel_build_view(request, pk: int):
+    from inventory.assembly_engine import cancel_assembly
+
+    company = request.company
+    build = get_object_or_404(Build.objects.for_company(company), pk=pk)
+
+    try:
+        cancel_assembly(build)
+        messages.success(request, f"Assembly {build.assembly_number} cancelled.")
+    except ValueError as e:
+        messages.error(request, str(e))
+
+    return redirect("inventory:build-detail", pk=build.pk)
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@require_POST
+@transaction.atomic
+def reverse_build_view(request, pk: int):
+    from inventory.assembly_engine import reverse_assembly
+
+    company = request.company
+    build = get_object_or_404(Build.objects.for_company(company), pk=pk)
+
+    try:
+        reverse_assembly(build)
+        messages.success(request, f"Assembly {build.assembly_number} reversed successfully.")
+    except ValueError as e:
+        messages.error(request, str(e))
 
     return redirect("inventory:build-detail", pk=build.pk)
 
@@ -1313,3 +1386,232 @@ def inventory_alerts(request):
         "alerts": alerts,
         "alert_types": InventoryAlert.ALERT_TYPES,
     })
+
+
+# ==========================================================
+# BILL OF MATERIALS (BOM)
+# ==========================================================
+
+@login_required
+@company_required
+@module_required("inventory")
+def bom_list(request):
+    company = request.company
+    boms = (
+        BillOfMaterials.objects.for_company(company)
+        .select_related("finished_product")
+        .prefetch_related("items__component_item")
+        .order_by("finished_product__name", "-version")
+    )
+    return render(request, "bom_list.html", {"boms": boms})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def bom_detail(request, pk):
+    company = request.company
+    bom = get_object_or_404(
+        BillOfMaterials.objects.for_company(company).select_related("finished_product"),
+        pk=pk,
+    )
+    items = bom.items.select_related("component_item").all()
+    return render(request, "bom_detail.html", {"bom": bom, "items": items})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@transaction.atomic
+def bom_create(request):
+    company = request.company
+
+    if request.method == "POST":
+        finished_id = request.POST.get("finished_product")
+        notes = request.POST.get("notes", "")
+
+        finished = Product.objects.for_company(company).filter(pk=finished_id).first()
+        if not finished:
+            messages.error(request, "Please select a valid finished product.")
+            return redirect("inventory:bom-create")
+
+        # Determine next version for this product
+        latest = (
+            BillOfMaterials.objects.for_company(company)
+            .filter(finished_product=finished)
+            .order_by("-version")
+            .first()
+        )
+        version = (latest.version + 1) if latest else 1
+
+        bom = BillOfMaterials.objects.create(
+            company=company,
+            finished_product=finished,
+            version=version,
+            is_active=True,
+            notes=notes,
+        )
+
+        comp_ids = request.POST.getlist("component_id[]")
+        comp_qtys = request.POST.getlist("quantity_required[]")
+        comp_costs = request.POST.getlist("unit_cost[]")
+
+        bulk = []
+        for i, cid in enumerate(comp_ids):
+            if not cid:
+                continue
+            comp = Product.objects.for_company(company).filter(pk=cid).first()
+            if not comp:
+                continue
+            qty = _dec(comp_qtys[i] if i < len(comp_qtys) else "0", "0")
+            if qty <= 0:
+                continue
+            cost_val = _dec(comp_costs[i] if i < len(comp_costs) else "0", None)
+            bulk.append(BOMItem(
+                bom=bom,
+                component_item=comp,
+                quantity_required=qty,
+                unit_cost=cost_val if cost_val and cost_val > 0 else None,
+            ))
+
+        if not bulk:
+            bom.delete()
+            messages.error(request, "BOM must have at least one component.")
+            return redirect("inventory:bom-create")
+
+        BOMItem.objects.bulk_create(bulk)
+        messages.success(request, f"BOM v{version} created for {finished.name}.")
+        return redirect("inventory:bom-detail", pk=bom.pk)
+
+    products = Product.objects.for_company(company).order_by("name")
+    return render(request, "bom_form.html", {"products": products})
+
+
+@login_required
+@company_required
+@module_required("inventory")
+@require_POST
+@transaction.atomic
+def bom_delete(request, pk):
+    company = request.company
+    bom = get_object_or_404(BillOfMaterials.objects.for_company(company), pk=pk)
+
+    if bom.builds.filter(status="COMPLETED").exists():
+        messages.error(request, "Cannot delete a BOM that has completed assemblies.")
+        return redirect("inventory:bom-detail", pk=pk)
+
+    bom.delete()
+    messages.success(request, "BOM deleted.")
+    return redirect("inventory:bom-list")
+
+
+# ==========================================================
+# ASSEMBLY REPORTS
+# ==========================================================
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_assembly(request):
+    """Assembly Summary Report."""
+    from inventory.assembly_engine import assembly_report_data
+
+    company = request.company
+    date_from = request.GET.get("date_from") or None
+    date_to = request.GET.get("date_to") or None
+    status = request.GET.get("status") or None
+
+    builds = assembly_report_data(company, date_from=date_from, date_to=date_to, status=status)
+
+    return render(request, "report_assembly.html", {
+        "builds": builds,
+        "status_choices": Build.STATUS_CHOICES,
+        "filters": {"date_from": date_from, "date_to": date_to, "status": status},
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_component_consumption(request):
+    """Component Consumption Report."""
+    from inventory.assembly_engine import component_consumption_report
+
+    company = request.company
+    date_from = request.GET.get("date_from") or None
+    date_to = request.GET.get("date_to") or None
+
+    data = component_consumption_report(company, date_from=date_from, date_to=date_to)
+
+    return render(request, "report_component_consumption.html", {
+        "data": data,
+        "filters": {"date_from": date_from, "date_to": date_to},
+    })
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def report_wip(request):
+    """WIP (Work In Progress) Report."""
+    from inventory.assembly_engine import wip_report_data
+
+    company = request.company
+    builds = wip_report_data(company)
+
+    return render(request, "report_wip.html", {"builds": builds})
+
+
+# ==========================================================
+# ASSEMBLY IMPORT / EXPORT
+# ==========================================================
+
+@login_required
+@company_required
+@module_required("inventory")
+def assembly_export_csv(request):
+    """Export assemblies to CSV download."""
+    from inventory.assembly_engine import export_assemblies_csv
+    from django.http import HttpResponse
+
+    company = request.company
+    date_from = request.GET.get("date_from") or None
+    date_to = request.GET.get("date_to") or None
+
+    csv_content = export_assemblies_csv(company, date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(csv_content, content_type="text/csv")
+    response["Content-Disposition"] = 'attachment; filename="assemblies_export.csv"'
+    return response
+
+
+@login_required
+@company_required
+@module_required("inventory")
+def assembly_import_csv(request):
+    """Import assemblies from CSV upload."""
+    from inventory.assembly_engine import import_assemblies_csv
+
+    company = request.company
+    result = None
+
+    if request.method == "POST":
+        csv_file = request.FILES.get("csv_file")
+        if not csv_file:
+            messages.error(request, "Please upload a CSV file.")
+        else:
+            try:
+                csv_content = csv_file.read().decode("utf-8")
+                result = import_assemblies_csv(
+                    csv_content, company,
+                    created_by=request.user if hasattr(request.user, "id") else None,
+                )
+                if result["created"]:
+                    messages.success(request, f"Imported {result['created']} assemblies.")
+                for err in result["errors"]:
+                    messages.warning(request, err)
+            except Exception as e:
+                messages.error(request, f"Import failed: {e}")
+
+    return render(request, "assembly_import.html", {"result": result})
+

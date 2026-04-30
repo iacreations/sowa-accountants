@@ -1,0 +1,100 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create BOM</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    :root{--brand:#39B54B;--border:#e6e6e6;--muted:#6b7280;--bg:#f6f7fb;--card:#ffffff;}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px;}
+    .wrap{width:83%;margin-top:5%;margin-left:18.3%;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border)}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .body-content{padding:24px;}
+    .table-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-top:12px;}
+    table{margin:0;width:100%;}
+    thead th{background:#f8fafc;font-size:12px;font-weight:800;color:#111827;border-bottom:1px solid var(--border);padding:10px 12px!important;}
+    tbody td{padding:8px 12px!important;vertical-align:middle;border-bottom:1px solid #f1f5f9;}
+    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:10px 20px;cursor:pointer;}
+    .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .form-control,.form-select{border-radius:8px;border:1px solid var(--border);}
+    @media(max-width:992px){.wrap{width:95%;margin-left:2%;}}
+  </style>
+</head>
+<body>
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+<div class="wrap">
+  <div class="head">
+    <div class="title">Create Bill of Materials</div>
+    <a class="btn-soft" href="{% url 'inventory:bom-list' %}">Back to BOMs</a>
+  </div>
+  <div class="body-content">
+    {% if messages %}
+    <div class="mb-3">{% for msg in messages %}<div class="alert alert-warning alert-dismissible fade show">{{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>{% endfor %}</div>
+    {% endif %}
+    <form method="POST">
+      {% csrf_token %}
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <label class="form-label fw-bold">Finished Product *</label>
+          <select name="finished_product" class="form-select" required>
+            <option value="">— Select product —</option>
+            {% for p in products %}<option value="{{ p.pk }}">{{ p.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label fw-bold">Notes</label>
+          <input type="text" name="notes" class="form-control" placeholder="Optional notes…">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-borderless" id="bom-lines">
+          <thead>
+            <tr><th>#</th><th>Component *</th><th>Qty Required (per unit) *</th><th>Unit Cost Snapshot</th><th></th></tr>
+          </thead>
+          <tbody id="bom-body">
+            <tr>
+              <td>1</td>
+              <td><select name="component_id[]" class="form-select form-select-sm" required>
+                <option value="">— Select —</option>
+                {% for p in products %}<option value="{{ p.pk }}">{{ p.name }}</option>{% endfor %}
+              </select></td>
+              <td><input type="number" name="quantity_required[]" class="form-control form-control-sm" step="0.01" min="0.01" value="1" required></td>
+              <td><input type="number" name="unit_cost[]" class="form-control form-control-sm" step="0.01" min="0" placeholder="Optional"></td>
+              <td><button type="button" class="btn btn-sm btn-outline-danger remove-row">×</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="mt-2 mb-3">
+        <button type="button" id="add-row" class="btn btn-sm btn-outline-secondary">+ Add Component</button>
+      </div>
+      <button type="submit" class="btn-green">Save BOM</button>
+    </form>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const products = [{% for p in products %}{"id":"{{ p.pk }}","name":"{{ p.name|escapejs }}"},{% endfor %}];
+function makeOptions(){return products.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');}
+let rowNum=1;
+document.getElementById('add-row').addEventListener('click',()=>{
+  rowNum++;
+  const tr=document.createElement('tr');
+  tr.innerHTML=`<td>${rowNum}</td>
+    <td><select name="component_id[]" class="form-select form-select-sm" required><option value="">— Select —</option>${makeOptions()}</select></td>
+    <td><input type="number" name="quantity_required[]" class="form-control form-control-sm" step="0.01" min="0.01" value="1" required></td>
+    <td><input type="number" name="unit_cost[]" class="form-control form-control-sm" step="0.01" min="0" placeholder="Optional"></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger remove-row">×</button></td>`;
+  document.getElementById('bom-body').appendChild(tr);
+});
+document.getElementById('bom-body').addEventListener('click',e=>{
+  if(e.target.classList.contains('remove-row'))e.target.closest('tr').remove();
+});
+</script>
+</body>
+</html>

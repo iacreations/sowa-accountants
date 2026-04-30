@@ -1,0 +1,76 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Import Assemblies (CSV)</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    :root{--brand:#39B54B;--border:#e6e6e6;--muted:#6b7280;--bg:#f6f7fb;--card:#ffffff;}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px;}
+    .wrap{width:83%;margin-top:5%;margin-left:18.3%;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border)}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .body-content{padding:24px;}
+    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:10px 20px;cursor:pointer;}
+    .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .form-control{border-radius:8px;border:1px solid var(--border);}
+    .code-block{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:monospace;font-size:12px;}
+    @media(max-width:992px){.wrap{width:95%;margin-left:2%;}}
+  </style>
+</head>
+<body>
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+<div class="wrap">
+  <div class="head">
+    <div class="title">Import Assemblies from CSV</div>
+    <a class="btn-soft" href="{% url 'inventory:build-list' %}">Back to Assemblies</a>
+  </div>
+  <div class="body-content">
+    {% if messages %}
+    <div class="mb-3">{% for msg in messages %}<div class="alert alert-{{ msg.tags|default:'info' }} alert-dismissible fade show">{{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>{% endfor %}</div>
+    {% endif %}
+
+    <div class="mb-4">
+      <h6 class="fw-bold">Expected CSV Format</h6>
+      <div class="code-block">
+finished_product_id,build_qty,build_date,memo,status<br>
+42,10,2025-06-01,Summer batch,DRAFT<br>
+43,5,2025-06-02,,DRAFT
+      </div>
+      <p class="mt-2 text-muted" style="font-size:13px;">
+        <strong>Required columns:</strong> finished_product_id, build_qty, build_date<br>
+        <strong>Optional columns:</strong> memo, status (DRAFT or IN_PROGRESS)
+      </p>
+    </div>
+
+    <form method="POST" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label fw-bold">Upload CSV File</label>
+        <input type="file" name="csv_file" accept=".csv" class="form-control" required>
+      </div>
+      <button type="submit" class="btn-green">Import</button>
+    </form>
+
+    {% if result %}
+    <div class="mt-4">
+      <div class="alert alert-success">Successfully imported: <strong>{{ result.created }}</strong> assemblies.</div>
+      {% if result.errors %}
+      <div class="alert alert-warning">
+        <strong>Errors ({{ result.errors|length }}):</strong>
+        <ul class="mb-0 mt-1">
+          {% for err in result.errors %}<li>{{ err }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
