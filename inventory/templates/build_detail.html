@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Build #{{ build.id }} Detail</title>
+  <title>{{ build.assembly_number|default:build.id }} – Assembly Detail</title>
   <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
@@ -27,8 +27,12 @@
     .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;cursor:pointer;}
     .btn-green:hover{background:#2f9a3f;border-color:#2f9a3f;color:#fff;}
     .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .btn-danger-soft{background:#fef2f2;border:1px solid rgba(239,68,68,.25);color:#dc2626;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;cursor:pointer;}
+    .badge-draft{background:#f3f4f6;color:#374151;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
     .badge-pending{background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
     .badge-completed{background:#d1fae5;color:#065f46;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    .badge-cancelled{background:#fee2e2;color:#991b1b;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    .badge-in_progress{background:#dbeafe;color:#1e40af;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
     .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;}
     .detail-item label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
     .detail-item .val{font-size:15px;font-weight:600;color:#111827;}
@@ -42,16 +46,32 @@
 <div class="wrap">
   <div class="head">
     <div>
-      <div class="title">Build #{{ build.id }}</div>
-      <div class="crumb">Inventory / Builds / #{{ build.id }}</div>
+      <div class="title">{{ build.assembly_number|default:build.id }}</div>
+      <div class="crumb">Inventory / Assemblies / {{ build.assembly_number|default:build.id }}</div>
     </div>
-    <div class="d-flex gap-2">
-      <a class="btn-soft" href="{% url 'inventory:build-list' %}">Back to Builds</a>
-      {% if build.status != "COMPLETED" %}
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn-soft" href="{% url 'inventory:build-list' %}">Back to Assemblies</a>
+      {% if build.is_editable %}
       <form method="POST" action="{% url 'inventory:complete-build' build.pk %}" style="display:inline;">
         {% csrf_token %}
-        <button type="submit" class="btn btn-green" onclick="return confirm('Complete this build? Component stock will be deducted and finished product stock will increase.')">
-          Complete Build
+        <button type="submit" class="btn btn-green"
+          onclick="return confirm('Complete this assembly? Component stock will be deducted and finished product stock will increase.')">
+          Complete Assembly
+        </button>
+      </form>
+      <form method="POST" action="{% url 'inventory:cancel-build' build.pk %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn-danger-soft"
+          onclick="return confirm('Cancel this assembly?')">
+          Cancel
+        </button>
+      </form>
+      {% elif build.status == "COMPLETED" %}
+      <form method="POST" action="{% url 'inventory:reverse-build' build.pk %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn-danger-soft"
+          onclick="return confirm('Reverse this completed assembly? All stock movements and journal entries will be undone.')">
+          Reverse Assembly
         </button>
       </form>
       {% endif %}
@@ -71,8 +91,12 @@
     {% endif %}
 
     <div class="cardx">
-      <div class="section-title">Build Details</div>
+      <div class="section-title">Assembly Details</div>
       <div class="detail-grid">
+        <div class="detail-item">
+          <label>Assembly #</label>
+          <div class="val">{{ build.assembly_number|default:"—" }}</div>
+        </div>
         <div class="detail-item">
           <label>Finished Product</label>
           <div class="val">{{ build.finished_product.name }}</div>
@@ -86,33 +110,69 @@
           <div class="val">{{ build.build_date }}</div>
         </div>
         <div class="detail-item">
+          <label>Location</label>
+          <div class="val">{{ build.location.name|default:"—" }}</div>
+        </div>
+        <div class="detail-item">
           <label>Status</label>
           <div class="val">
-            {% if build.status == "COMPLETED" %}
-            <span class="badge-completed">Completed</span>
-            {% else %}
-            <span class="badge-pending">Pending</span>
+            {% if build.status == "COMPLETED" %}<span class="badge-completed">Completed</span>
+            {% elif build.status == "DRAFT" %}<span class="badge-draft">Draft</span>
+            {% elif build.status == "PENDING" %}<span class="badge-pending">Pending</span>
+            {% elif build.status == "IN_PROGRESS" %}<span class="badge-in_progress">In Progress</span>
+            {% elif build.status == "CANCELLED" %}<span class="badge-cancelled">Cancelled</span>
+            {% else %}<span class="badge-draft">{{ build.status }}</span>
             {% endif %}
           </div>
         </div>
         <div class="detail-item">
-          <label>Total Component Cost</label>
-          <div class="val">{{ build.total_component_cost|floatformat:2 }}</div>
+          <label>Total Cost</label>
+          <div class="val">{{ build.total_cost|floatformat:2 }}</div>
         </div>
+        {% if build.bom %}
+        <div class="detail-item">
+          <label>BOM</label>
+          <div class="val"><a href="{% url 'inventory:bom-detail' build.bom.pk %}">{{ build.bom }}</a></div>
+        </div>
+        {% endif %}
         {% if build.completed_at %}
         <div class="detail-item">
           <label>Completed At</label>
-          <div class="val">{{ build.completed_at }}</div>
+          <div class="val">{{ build.completed_at|date:"Y-m-d H:i" }}</div>
+        </div>
+        {% endif %}
+        {% if build.created_by %}
+        <div class="detail-item">
+          <label>Created By</label>
+          <div class="val">{{ build.created_by }}</div>
+        </div>
+        {% endif %}
+        {% if build.completed_by %}
+        <div class="detail-item">
+          <label>Completed By</label>
+          <div class="val">{{ build.completed_by }}</div>
         </div>
         {% endif %}
         {% if build.memo %}
-        <div class="detail-item">
+        <div class="detail-item" style="grid-column:1/-1;">
           <label>Memo</label>
           <div class="val">{{ build.memo }}</div>
         </div>
         {% endif %}
       </div>
     </div>
+
+    {% if build.wip_journal_entry or build.journal_entry %}
+    <div class="cardx">
+      <div class="section-title">Accounting Entries</div>
+      {% if build.wip_journal_entry %}
+      <p class="text-muted mb-1" style="font-size:13px;"><strong>Step 1 — WIP Journal Entry:</strong> {{ build.wip_journal_entry }}</p>
+      {% endif %}
+      {% if build.journal_entry %}
+      <p class="text-muted mb-0" style="font-size:13px;"><strong>Step 2 — Finished Goods Journal Entry:</strong> {{ build.journal_entry }}</p>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <div class="cardx">
       <div class="section-title">Components</div>
@@ -123,9 +183,9 @@
               <th>#</th>
               <th>Component</th>
               <th>Qty Per Unit</th>
-              <th>Total Qty</th>
-              <th>Unit Cost (FIFO)</th>
-              <th>Total Cost</th>
+              <th>Total Qty Needed</th>
+              <th>FIFO Unit Cost</th>
+              <th>Est. Total Cost</th>
             </tr>
           </thead>
           <tbody>
@@ -144,7 +204,7 @@
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="5" class="text-end">Total Component Cost</td>
+              <td colspan="5" class="text-end">Estimated Total Cost</td>
               <td>{{ build.total_component_cost|floatformat:2 }}</td>
             </tr>
           </tfoot>
@@ -156,3 +216,4 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
+

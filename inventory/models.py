@@ -554,21 +554,158 @@ class StockTransferLine(models.Model):
 
 
 # ==========================================================
+# BILL OF MATERIALS (BOM)
+# ==========================================================
+
+class BillOfMaterials(TenantModel):
+    """
+    Defines the recipe for a composite/finished product.
+    One active BOM per product at a time (is_active flag).
+    """
+    finished_product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="boms",
+        help_text="The product that this BOM produces.",
+    )
+    version = models.PositiveIntegerField(default=1, help_text="BOM version number.")
+    is_active = models.BooleanField(default=True, help_text="Only one active BOM per product.")
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-is_active", "-version"]
+        indexes = [
+            models.Index(fields=["company", "finished_product"]),
+            models.Index(fields=["company", "is_active"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "finished_product", "version"],
+                name="uniq_bom_version_per_product",
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.finished_product_id and self.finished_product.company_id != self.company_id:
+            errors["finished_product"] = "Finished product must belong to the same company."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean(validate_constraints=False)
+        super().save(*args, **kwargs)
+        # Deactivate other BOM versions for this product if this one is active
+        if self.is_active and self.finished_product_id:
+            BillOfMaterials.objects.filter(
+                company=self.company,
+                finished_product=self.finished_product,
+            ).exclude(id=self.id).update(is_active=False)
+
+    @property
+    def total_cost(self):
+        """Estimated total cost based on component purchase prices."""
+        total = Decimal("0.00")
+        for item in self.items.select_related("component_item").all():
+            cost = item.unit_cost or (item.component_item.purchase_price or Decimal("0.00"))
+            total += cost * (item.quantity_required or Decimal("0.00"))
+        return total
+
+    def __str__(self):
+        name = self.finished_product.name if self.finished_product_id else "?"
+        return f"BOM v{self.version} – {name}"
+
+
+class BOMItem(models.Model):
+    """
+    A component line inside a BOM — quantity of one component needed per
+    unit of the finished product.
+    """
+    bom = models.ForeignKey(BillOfMaterials, on_delete=models.CASCADE, related_name="items")
+    component_item = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="used_in_boms",
+        help_text="The raw material / component.",
+    )
+    quantity_required = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("1.00"),
+        help_text="Quantity of this component needed per ONE unit of the finished product.",
+    )
+    unit_cost = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Optional cost snapshot at time of BOM creation.",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["bom", "component_item"]),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.bom_id and self.component_item_id:
+            if self.bom.company_id != self.component_item.company_id:
+                errors["component_item"] = "Component must belong to the same company as the BOM."
+            if self.bom.finished_product_id == self.component_item_id:
+                errors["component_item"] = "A BOM cannot use the finished product as a component."
+        if self.quantity_required is not None and self.quantity_required <= 0:
+            errors["quantity_required"] = "Quantity must be greater than zero."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        comp = self.component_item.name if self.component_item_id else "?"
+        return f"{comp} x {self.quantity_required}"
+
+
+# ==========================================================
 # ASSEMBLY / BUILD
 # ==========================================================
 
 class Build(TenantModel):
     """
     Represents an assembly build that converts raw materials (components)
-    into a finished product. When completed:
-      - Component quantities decrease
-      - Finished product quantity increases at accumulated cost
-      - GL: DR Finished Goods Inventory Asset, CR Component Inventory Assets
+    into a finished product.
+
+    Lifecycle:
+      DRAFT       → no stock or GL impact
+      IN_PROGRESS → reserved but not committed (optional)
+      COMPLETED   → stock consumed, GL posted (2-step: WIP then FG)
+      CANCELLED   → reversed / voided
+
+    GL on completion:
+      Step 1: DR WIP Inventory   CR Component Inventory Asset (per component)
+      Step 2: DR Finished Goods  CR WIP Inventory
     """
     STATUS_CHOICES = [
-        ("PENDING", "Pending"),
+        ("DRAFT", "Draft"),
+        ("IN_PROGRESS", "In Progress"),
         ("COMPLETED", "Completed"),
+        ("CANCELLED", "Cancelled"),
+        # Legacy value kept for backward compatibility
+        ("PENDING", "Pending (Legacy)"),
     ]
+
+    # Auto-generated assembly number, e.g. "ASM-0001"
+    assembly_number = models.CharField(
+        max_length=30, blank=True, null=True,
+        help_text="Auto-generated assembly reference number.",
+    )
+
+    bom = models.ForeignKey(
+        BillOfMaterials,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="builds",
+        help_text="Source BOM (optional; components may be entered manually).",
+    )
 
     finished_product = models.ForeignKey(
         Product,
@@ -582,26 +719,63 @@ class Build(TenantModel):
         help_text="How many units of the finished product to build.",
     )
 
+    location = models.ForeignKey(
+        InventoryLocation,
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name="assembly_builds",
+        help_text="Location where components are consumed and FG is received.",
+    )
+
     build_date = models.DateField(default=timezone.localdate)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
-    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="DRAFT")
+
+    total_cost = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00"),
+        help_text="Total component cost captured at completion time.",
+    )
 
     memo = models.TextField(blank=True, null=True)
 
+    # GL entries: wip_journal_entry (step 1) + journal_entry (step 2 / FG)
+    wip_journal_entry = models.OneToOneField(
+        "accounts.JournalEntry",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="build_wip_source",
+        help_text="Journal entry for Step 1: DR WIP / CR Raw Materials.",
+    )
     journal_entry = models.OneToOneField(
         "accounts.JournalEntry",
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name="build_source",
+        help_text="Journal entry for Step 2: DR Finished Goods / CR WIP.",
     )
 
+    created_by = models.ForeignKey(
+        "sowaAuth.Newuser",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="assemblies_created",
+    )
+    completed_by = models.ForeignKey(
+        "sowaAuth.Newuser",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="assemblies_completed",
+    )
+
+    completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-build_date", "-id"]
         indexes = [
             models.Index(fields=["company", "build_date"]),
             models.Index(fields=["company", "status"]),
+            models.Index(fields=["company", "assembly_number"]),
         ]
 
     def clean(self):
@@ -610,18 +784,26 @@ class Build(TenantModel):
             errors["finished_product"] = "Finished product must belong to the same company."
         if self.build_qty is not None and self.build_qty <= 0:
             errors["build_qty"] = "Build quantity must be greater than zero."
+        if self.location_id and self.location.company_id != self.company_id:
+            errors["location"] = "Location must belong to the same company."
         if errors:
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
+        self.full_clean(validate_constraints=False)
+        # Auto-generate assembly number on first save
+        if not self.assembly_number:
+            super().save(*args, **kwargs)
+            self.assembly_number = f"ASM-{self.id:04d}"
+            Build.objects.filter(id=self.id).update(assembly_number=self.assembly_number)
+        else:
+            super().save(*args, **kwargs)
 
     @property
     def total_component_cost(self):
         """Sum of (FIFO cost * qty_per_unit * build_qty) for all component lines.
 
-        Returns 0.00 if FIFO stock is insufficient (e.g. for pending builds).
+        Returns 0.00 if FIFO stock is insufficient (e.g. for draft builds).
         """
         total = Decimal("0.00")
         for line in self.lines.select_related("component").all():
@@ -633,9 +815,14 @@ class Build(TenantModel):
                 logger.warning("Could not compute FIFO cost for component %s in Build #%s: %s", line.component_id, self.pk, exc)
         return total
 
+    @property
+    def is_editable(self):
+        return self.status in ("DRAFT", "PENDING")
+
     def __str__(self):
+        num = self.assembly_number or f"#{self.id}"
         name = self.finished_product.name if self.finished_product_id else "?"
-        return f"Build #{self.id} – {name} x{self.build_qty} ({self.status})"
+        return f"{num} – {name} x{self.build_qty} ({self.status})"
 
 
 class BuildLine(models.Model):

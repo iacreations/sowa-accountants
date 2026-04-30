@@ -727,147 +727,20 @@ def post_sales_receipt_to_gl(receipt):
 
 
 # --- Assembly Build Completion ---
-def complete_build(build):
+def complete_build(build, completed_by=None):
     """
-    Complete an assembly build:
+    Complete an assembly build using the 2-step WIP accounting engine.
 
-      1) For each component line:
-         - Deduct qty (component.qty_per_unit * build.build_qty)
-         - Create InventoryMovement OUT
-         - CR Component Inventory Asset account
+    Delegates to inventory.assembly_engine.complete_assembly which implements:
+      Step 1: DR WIP / CR Raw Materials Inventory (per component, per FIFO layer)
+      Step 2: DR Finished Goods / CR WIP
 
-      2) For the finished product:
-         - Add build_qty at accumulated component cost
-         - Create InventoryMovement IN
-         - DR Finished Product Inventory Asset account
-
-      GL:
-        DR Finished product Inventory Asset  = total component cost
-        CR Component Inventory Asset accounts = per-component cost
+    Args:
+        build: Build instance (status DRAFT, PENDING, or IN_PROGRESS).
+        completed_by: Optional user performing the completion.
     """
-    from inventory.models import Build, BuildLine
-
-    if build.status == "COMPLETED":
-        raise ValueError("Build is already completed.")
-
-    company = build.company
-    source_type = "ASSEMBLY"
-    source_id = build.id
-    post_date = build.build_date or timezone.localdate()
-
-    with transaction.atomic():
-        _clear_inventory_movements(source_type, source_id)
-        _delete_journal_entry_if_exists(build)
-
-        je = _create_journal_entry(
-            date=post_date,
-            description=f"Assembly Build #{build.id} – {build.finished_product.name}",
-            source_type=source_type,
-            source_id=source_id,
-        )
-        if hasattr(je, "company_id"):
-            je.company_id = getattr(company, "id", company)
-            je.save(update_fields=["company"])
-
-        TWO = Decimal("0.01")
-        total_component_cost = DEC0
-        build_qty = _dec(build.build_qty).quantize(TWO)
-
-        for line in BuildLine.objects.filter(build=build).select_related("component"):
-            component = line.component
-            qty_consumed = (_dec(line.qty_per_unit) * build_qty).quantize(TWO)
-            if qty_consumed <= 0:
-                continue
-
-            # Use FIFO simulation to determine the cost of consumed components
-            from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
-            fifo_rows = simulate_fifo_consumption(component, qty_consumed)
-            component_cost = DEC0
-            for layer_cost, layer_qty in fifo_rows:
-                layer_value = (layer_qty * layer_cost).quantize(TWO)
-                component_cost += layer_value
-
-                # Stock OUT for component (one movement per FIFO layer)
-                InventoryMovement.objects.create(
-                    product=component,
-                    company=company,
-                    date=post_date,
-                    qty_in=DEC0,
-                    qty_out=layer_qty,
-                    unit_cost=layer_cost,
-                    value=layer_value,
-                    source_type=source_type,
-                    source_id=source_id,
-                )
-
-            # Update component qty and rebuild layers
-            from django.db.models import Sum as _Sum
-            agg = component.movements.aggregate(tin=_Sum("qty_in"), tout=_Sum("qty_out"))
-            component.quantity = _dec(agg["tin"]) - _dec(agg["tout"])
-            component.save(update_fields=["quantity"])
-            rebuild_layers_from_movements(component, company=company)
-
-            unit_cost = (component_cost / qty_consumed).quantize(TWO) if qty_consumed > 0 else DEC0
-            value = component_cost
-
-            # CR component inventory asset
-            comp_inv_acc = _fallback_inventory_asset_account(component, company=company)
-            if comp_inv_acc and value > 0:
-                _add_line(je=je, account=comp_inv_acc, credit=value)
-
-            total_component_cost += value
-
-        if total_component_cost <= 0:
-            # Zero-cost build: still complete stock movements, skip GL
-            je.delete()
-            finished = build.finished_product
-            _apply_stock_in(finished, build_qty, DEC0)
-
-            InventoryMovement.objects.create(
-                product=finished,
-                company=company,
-                date=post_date,
-                qty_in=build_qty,
-                qty_out=DEC0,
-                unit_cost=DEC0,
-                value=DEC0,
-                source_type=source_type,
-                source_id=source_id,
-            )
-
-            build.status = "COMPLETED"
-            build.completed_at = timezone.now()
-            build.save(update_fields=["status", "completed_at"])
-            return
-
-        # Stock IN for finished product (weighted average)
-        finished = build.finished_product
-        unit_cost_finished = (total_component_cost / build_qty).quantize(TWO) if build_qty > 0 else DEC0
-
-        InventoryMovement.objects.create(
-            product=finished,
-            company=company,
-            date=post_date,
-            qty_in=build_qty,
-            qty_out=DEC0,
-            unit_cost=unit_cost_finished,
-            value=total_component_cost.quantize(TWO),
-            source_type=source_type,
-            source_id=source_id,
-        )
-
-        _apply_stock_in(finished, build_qty, unit_cost_finished)
-
-        # DR finished product inventory asset
-        fin_inv_acc = _fallback_inventory_asset_account(finished, company=company)
-        if not fin_inv_acc:
-            raise ValueError(f"Finished product '{finished.name}' has no inventory asset account.")
-        _add_line(je=je, account=fin_inv_acc, debit=total_component_cost)
-
-        build.journal_entry = je
-        build.status = "COMPLETED"
-        build.completed_at = timezone.now()
-        build.save(update_fields=["journal_entry", "status", "completed_at"])
+    from inventory.assembly_engine import complete_assembly
+    return complete_assembly(build, completed_by=completed_by)
 
 
 # -----------------------------

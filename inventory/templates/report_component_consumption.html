@@ -1,0 +1,62 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Component Consumption Report</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    :root{--brand:#39B54B;--border:#e6e6e6;--muted:#6b7280;--bg:#f6f7fb;--card:#ffffff;}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px;}
+    .wrap{width:83%;margin-top:5%;margin-left:18.3%;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border)}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .body-content{padding:18px;}
+    .filter-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;align-items:flex-end;}
+    .filter-bar label{font-size:12px;font-weight:700;color:var(--muted);}
+    .table-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+    table{margin:0;width:100%;}
+    thead th{background:#f8fafc;font-size:12px;font-weight:800;color:#111827;border-bottom:1px solid var(--border);padding:10px 12px!important;white-space:nowrap;}
+    tbody td{padding:10px 12px!important;vertical-align:middle;border-bottom:1px solid #f1f5f9;}
+    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:8px 16px;cursor:pointer;}
+    .form-control{border-radius:8px;border:1px solid var(--border);font-size:13px;}
+    @media(max-width:992px){.wrap{width:95%;margin-left:2%;}}
+  </style>
+</head>
+<body>
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+<div class="wrap">
+  <div class="head"><div class="title">Component Consumption Report</div></div>
+  <div class="body-content">
+    <form method="GET" class="filter-bar">
+      <div><label>From</label><input type="date" name="date_from" value="{{ filters.date_from|default:'' }}" class="form-control"></div>
+      <div><label>To</label><input type="date" name="date_to" value="{{ filters.date_to|default:'' }}" class="form-control"></div>
+      <div><label>&nbsp;</label><button type="submit" class="btn-green d-block">Filter</button></div>
+    </form>
+    <div class="table-wrap">
+      <table class="table table-borderless">
+        <thead>
+          <tr><th>Component</th><th>Total Qty Consumed</th><th>Total Cost</th><th>Used in # Assemblies</th></tr>
+        </thead>
+        <tbody>
+          {% for row in data %}
+          <tr>
+            <td><strong>{{ row.component.name }}</strong></td>
+            <td>{{ row.total_qty_consumed|floatformat:2 }}</td>
+            <td>{{ row.total_cost|floatformat:2 }}</td>
+            <td>{{ row.builds|length }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="text-center text-muted py-4">No data found for selected range.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

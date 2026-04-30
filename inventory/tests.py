@@ -1266,3 +1266,425 @@ class InventoryAccountingGLTests(TestCase):
         )
         self.assertIsNone(mv.gl_entry_id)
         self.assertFalse(mv.is_gl_posted)
+
+
+# ===========================================================================
+# Assembly Engine Tests
+# ===========================================================================
+
+class AssemblyEngineTests(TestCase):
+    """
+    Tests for the assembly module:
+      - BOM creation and loading
+      - Draft vs Completed behaviour
+      - 2-step WIP GL posting
+      - Cost accuracy (FIFO)
+      - Assembly cancellation
+      - Assembly reversal
+      - Multi-location assembly
+      - Component consumption report
+    """
+
+    def setUp(self):
+        from tenancy.models import Company
+        from inventory.models import Product, MainStore, InventoryLocation, InventoryMovement
+        from inventory.fifo import record_purchase_layer
+        from accounts.models import Account
+        from datetime import date
+
+        self.company = Company.objects.create(name="AssemblyTestCo", country="UG")
+
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main",
+            defaults={"is_active": True},
+        )
+        self.location, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+
+        # Create inventory asset account
+        self.inv_account = Account.objects.create(
+            company=self.company,
+            account_name="Inventory Asset",
+            account_number="1300",
+            account_type="CURRENT_ASSET",
+            detail_type="Inventory Asset",
+            is_active=True,
+        )
+
+        # Create WIP account
+        self.wip_account = Account.objects.create(
+            company=self.company,
+            account_name="Work In Progress",
+            account_number="1410",
+            account_type="CURRENT_ASSET",
+            detail_type="Work In Progress (WIP)",
+            is_active=True,
+        )
+
+        # Finished product
+        self.finished = Product.objects.create(
+            company=self.company,
+            name="Assembled Widget",
+            type="Inventory",
+            track_inventory=True,
+            inventory_asset_account=self.inv_account,
+            quantity=Decimal("0.00"),
+        )
+
+        # Component A: 10 units @ 100 each
+        self.comp_a = Product.objects.create(
+            company=self.company,
+            name="Component A",
+            type="Inventory",
+            track_inventory=True,
+            inventory_asset_account=self.inv_account,
+            quantity=Decimal("0.00"),
+        )
+        mv_a = InventoryMovement.objects.create(
+            product=self.comp_a, company=self.company, location=self.location,
+            date=date(2025, 1, 1), qty_in=Decimal("10"), qty_out=Decimal("0"),
+            unit_cost=Decimal("100"), value=Decimal("1000"),
+            source_type="BILL", source_id=1,
+        )
+        record_purchase_layer(self.comp_a, Decimal("100"), Decimal("10"), date(2025, 1, 1), mv_a, self.company)
+        self.comp_a.quantity = Decimal("10")
+        self.comp_a.save(update_fields=["quantity"])
+
+        # Component B: 5 units @ 200 each
+        self.comp_b = Product.objects.create(
+            company=self.company,
+            name="Component B",
+            type="Inventory",
+            track_inventory=True,
+            inventory_asset_account=self.inv_account,
+            quantity=Decimal("0.00"),
+        )
+        mv_b = InventoryMovement.objects.create(
+            product=self.comp_b, company=self.company, location=self.location,
+            date=date(2025, 1, 2), qty_in=Decimal("5"), qty_out=Decimal("0"),
+            unit_cost=Decimal("200"), value=Decimal("1000"),
+            source_type="BILL", source_id=2,
+        )
+        record_purchase_layer(self.comp_b, Decimal("200"), Decimal("5"), date(2025, 1, 2), mv_b, self.company)
+        self.comp_b.quantity = Decimal("5")
+        self.comp_b.save(update_fields=["quantity"])
+
+    # -----------------------------------------------------------------------
+    # 1. BOM creation and loading into build
+    # -----------------------------------------------------------------------
+    def test_bom_creation_and_load_into_build(self):
+        from inventory.models import BillOfMaterials, BOMItem, Build
+        from inventory.assembly_engine import load_bom_into_build
+
+        bom = BillOfMaterials.objects.create(
+            company=self.company, finished_product=self.finished, version=1, is_active=True,
+        )
+        BOMItem.objects.create(bom=bom, component_item=self.comp_a, quantity_required=Decimal("2"))
+        BOMItem.objects.create(bom=bom, component_item=self.comp_b, quantity_required=Decimal("1"))
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        load_bom_into_build(build, bom)
+
+        self.assertEqual(build.lines.count(), 2)
+        self.assertEqual(build.bom, bom)
+
+    # -----------------------------------------------------------------------
+    # 2. Draft build has no stock or GL impact
+    # -----------------------------------------------------------------------
+    def test_draft_build_no_stock_impact(self):
+        from inventory.models import Build, BuildLine, InventoryMovement
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("2"))
+
+        self.comp_a.refresh_from_db()
+        # Draft — no movements yet
+        self.assertEqual(self.comp_a.quantity, Decimal("10"))
+        self.assertFalse(
+            InventoryMovement.objects.filter(source_type="ASSEMBLY", source_id=build.id).exists()
+        )
+
+    # -----------------------------------------------------------------------
+    # 3. Complete assembly — correct cost (FIFO)
+    # -----------------------------------------------------------------------
+    def test_complete_assembly_cost_accuracy(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import complete_assembly
+
+        # Build 2 units of finished, each needing 2×CompA + 1×CompB
+        # Cost = 2 units × (2×100 + 1×200) = 2 × 400 = 800
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("2"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("2"))
+        BuildLine.objects.create(build=build, component=self.comp_b, qty_per_unit=Decimal("1"))
+
+        complete_assembly(build)
+
+        build.refresh_from_db()
+        self.assertEqual(build.status, "COMPLETED")
+        self.assertEqual(build.total_cost, Decimal("800.00"))
+
+        # Finished goods stock should increase by 2
+        self.finished.refresh_from_db()
+        self.assertEqual(self.finished.quantity, Decimal("2.00"))
+
+        # Component A consumed 4, component B consumed 2
+        self.comp_a.refresh_from_db()
+        self.assertEqual(self.comp_a.quantity, Decimal("6.00"))  # 10 - 4
+
+        self.comp_b.refresh_from_db()
+        self.assertEqual(self.comp_b.quantity, Decimal("3.00"))  # 5 - 2
+
+    # -----------------------------------------------------------------------
+    # 4. Complete assembly — 2-step GL (WIP + FG journal entries)
+    # -----------------------------------------------------------------------
+    def test_complete_assembly_two_step_gl(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import complete_assembly
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("2"))
+        BuildLine.objects.create(build=build, component=self.comp_b, qty_per_unit=Decimal("1"))
+        complete_assembly(build)
+
+        build.refresh_from_db()
+        # Both journal entries must exist
+        self.assertIsNotNone(build.wip_journal_entry_id, "Step 1 (WIP) JE missing")
+        self.assertIsNotNone(build.journal_entry_id, "Step 2 (FG) JE missing")
+
+        # Step 1: WIP entry must have DR WIP and CR component accounts
+        wip_je = build.wip_journal_entry
+        wip_debits = sum(line.debit for line in wip_je.lines.all())
+        wip_credits = sum(line.credit for line in wip_je.lines.all())
+        self.assertEqual(wip_debits, wip_credits, "Step 1 JE is not balanced")
+
+        # Step 2: FG entry must have DR FG and CR WIP
+        fg_je = build.journal_entry
+        fg_debits = sum(line.debit for line in fg_je.lines.all())
+        fg_credits = sum(line.credit for line in fg_je.lines.all())
+        self.assertEqual(fg_debits, fg_credits, "Step 2 JE is not balanced")
+
+        # Both entries equal total cost
+        total_cost = build.total_cost
+        self.assertEqual(wip_debits, total_cost)
+        self.assertEqual(fg_debits, total_cost)
+
+    # -----------------------------------------------------------------------
+    # 5. Cancel draft assembly
+    # -----------------------------------------------------------------------
+    def test_cancel_draft_assembly(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import cancel_assembly
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("1"))
+
+        cancel_assembly(build)
+
+        build.refresh_from_db()
+        self.assertEqual(build.status, "CANCELLED")
+
+    def test_cancel_completed_assembly_raises(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import cancel_assembly, complete_assembly
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("1"))
+        complete_assembly(build)
+
+        with self.assertRaises(ValueError):
+            cancel_assembly(build)
+
+    # -----------------------------------------------------------------------
+    # 6. Reverse completed assembly — stock restored, GL reversed
+    # -----------------------------------------------------------------------
+    def test_reverse_assembly_restores_stock(self):
+        from inventory.models import Build, BuildLine, InventoryMovement
+        from inventory.assembly_engine import complete_assembly, reverse_assembly
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("2"))
+        BuildLine.objects.create(build=build, component=self.comp_b, qty_per_unit=Decimal("1"))
+        complete_assembly(build)
+
+        # Capture stock before reversal
+        self.comp_a.refresh_from_db()
+        qty_a_before_reversal = self.comp_a.quantity  # should be 8
+
+        reverse_assembly(build)
+
+        build.refresh_from_db()
+        self.assertEqual(build.status, "CANCELLED")
+        self.assertIsNone(build.journal_entry_id)
+        self.assertIsNone(build.wip_journal_entry_id)
+        self.assertEqual(build.total_cost, Decimal("0.00"))
+
+        # Stock movements for this assembly should be gone
+        self.assertFalse(
+            InventoryMovement.objects.filter(source_type="ASSEMBLY", source_id=build.id).exists()
+        )
+
+        # Component A stock restored to 10
+        self.comp_a.refresh_from_db()
+        self.assertEqual(self.comp_a.quantity, Decimal("10.00"))
+
+        # Finished goods stock back to 0
+        self.finished.refresh_from_db()
+        self.assertEqual(self.finished.quantity, Decimal("0.00"))
+
+    def test_reverse_non_completed_raises(self):
+        from inventory.models import Build
+        from inventory.assembly_engine import reverse_assembly
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        with self.assertRaises(ValueError):
+            reverse_assembly(build)
+
+    # -----------------------------------------------------------------------
+    # 7. Insufficient stock raises error
+    # -----------------------------------------------------------------------
+    def test_insufficient_stock_raises(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import complete_assembly
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        # Need 20 of CompA but only 10 available
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("20"))
+
+        with self.assertRaises(ValueError):
+            complete_assembly(build)
+
+    # -----------------------------------------------------------------------
+    # 8. Assembly number auto-generation
+    # -----------------------------------------------------------------------
+    def test_assembly_number_auto_generated(self):
+        from inventory.models import Build
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        self.assertIsNotNone(build.assembly_number)
+        self.assertTrue(build.assembly_number.startswith("ASM-"))
+
+    # -----------------------------------------------------------------------
+    # 9. FIFO layer consumption correctness
+    # -----------------------------------------------------------------------
+    def test_fifo_layers_consumed_correctly(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import complete_assembly
+        from inventory.fifo import get_available_layers, record_purchase_layer
+        from inventory.models import InventoryMovement
+        from datetime import date
+
+        # Add second batch of CompA at different cost: 5 units @ 150
+        mv_a2 = InventoryMovement.objects.create(
+            product=self.comp_a, company=self.company, location=self.location,
+            date=date(2025, 3, 1), qty_in=Decimal("5"), qty_out=Decimal("0"),
+            unit_cost=Decimal("150"), value=Decimal("750"),
+            source_type="BILL", source_id=3,
+        )
+        record_purchase_layer(self.comp_a, Decimal("150"), Decimal("5"), date(2025, 3, 1), mv_a2, self.company)
+        self.comp_a.quantity = Decimal("15")
+        self.comp_a.save(update_fields=["quantity"])
+
+        # Build consuming 12 of CompA: FIFO → 10@100 + 2@150 = 1300
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("12"))
+        complete_assembly(build)
+
+        build.refresh_from_db()
+        # Cost = 10×100 + 2×150 = 1300
+        self.assertEqual(build.total_cost, Decimal("1300.00"))
+
+    # -----------------------------------------------------------------------
+    # 10. Component consumption report
+    # -----------------------------------------------------------------------
+    def test_component_consumption_report(self):
+        from inventory.models import Build, BuildLine
+        from inventory.assembly_engine import complete_assembly, component_consumption_report
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        BuildLine.objects.create(build=build, component=self.comp_a, qty_per_unit=Decimal("2"))
+        complete_assembly(build)
+
+        report = component_consumption_report(self.company)
+        self.assertGreater(len(report), 0)
+        comp_ids = {row["component"].id for row in report}
+        self.assertIn(self.comp_a.id, comp_ids)
+
+    # -----------------------------------------------------------------------
+    # 11. BOM unique version per product constraint
+    # -----------------------------------------------------------------------
+    def test_bom_duplicate_version_raises(self):
+        from inventory.models import BillOfMaterials
+        from django.core.exceptions import ValidationError
+
+        BillOfMaterials.objects.create(
+            company=self.company, finished_product=self.finished, version=1, is_active=True,
+        )
+        with self.assertRaises(Exception):
+            # Second BOM with same version should fail constraint
+            BillOfMaterials.objects.create(
+                company=self.company, finished_product=self.finished, version=1, is_active=False,
+            )
+
+    # -----------------------------------------------------------------------
+    # 12. Load BOM replaces existing lines
+    # -----------------------------------------------------------------------
+    def test_load_bom_replaces_existing_lines(self):
+        from inventory.models import BillOfMaterials, BOMItem, Build, BuildLine
+        from inventory.assembly_engine import load_bom_into_build
+
+        bom = BillOfMaterials.objects.create(
+            company=self.company, finished_product=self.finished, version=1, is_active=True,
+        )
+        BOMItem.objects.create(bom=bom, component_item=self.comp_a, quantity_required=Decimal("3"))
+
+        build = Build.objects.create(
+            company=self.company, finished_product=self.finished,
+            build_qty=Decimal("1"), location=self.location, status="DRAFT",
+        )
+        # Add existing manual line
+        BuildLine.objects.create(build=build, component=self.comp_b, qty_per_unit=Decimal("2"))
+        self.assertEqual(build.lines.count(), 1)
+
+        # Load BOM — replaces existing
+        load_bom_into_build(build, bom)
+        self.assertEqual(build.lines.count(), 1)
+        self.assertEqual(build.lines.first().component, self.comp_a)
+        self.assertEqual(build.lines.first().qty_per_unit, Decimal("3"))

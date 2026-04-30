@@ -1,0 +1,69 @@
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bills of Materials</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    :root{--brand:#39B54B;--border:#e6e6e6;--muted:#6b7280;--bg:#f6f7fb;--card:#ffffff;}
+    body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px;}
+    .wrap{width:83%;margin-top:5%;margin-left:18.3%;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border)}
+    .head .title{font-weight:800;color:var(--brand);font-size:22px}
+    .body-content{padding:18px;}
+    .table-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+    table{margin:0;width:100%;}
+    thead th{background:#f8fafc;font-size:12px;font-weight:800;color:#111827;border-bottom:1px solid var(--border);padding:10px 12px!important;white-space:nowrap;}
+    tbody td{padding:10px 12px!important;vertical-align:middle;border-bottom:1px solid #f1f5f9;}
+    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .badge-active{background:#d1fae5;color:#065f46;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    .badge-inactive{background:#f3f4f6;color:#374151;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    @media(max-width:992px){.wrap{width:95%;margin-left:2%;}}
+  </style>
+</head>
+<body>
+{% include 'includes/navbar.html' %}
+{% include 'includes/sidebar.html' %}
+<div class="wrap">
+  <div class="head">
+    <div class="title">Bills of Materials (BOM)</div>
+    <a class="btn-green" href="{% url 'inventory:bom-create' %}">+ New BOM</a>
+  </div>
+  <div class="body-content">
+    <div class="table-wrap">
+      <table class="table table-borderless">
+        <thead>
+          <tr>
+            <th>Finished Product</th>
+            <th>Version</th>
+            <th>Components</th>
+            <th>Est. Cost</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for bom in boms %}
+          <tr>
+            <td><strong>{{ bom.finished_product.name }}</strong></td>
+            <td>v{{ bom.version }}</td>
+            <td>{{ bom.items.count }}</td>
+            <td>{{ bom.total_cost|floatformat:2 }}</td>
+            <td>{% if bom.is_active %}<span class="badge-active">Active</span>{% else %}<span class="badge-inactive">Inactive</span>{% endif %}</td>
+            <td><a class="btn-soft" style="padding:6px 10px;font-size:13px;" href="{% url 'inventory:bom-detail' bom.pk %}">View</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No BOMs yet. <a href="{% url 'inventory:bom-create' %}">Create one</a>.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

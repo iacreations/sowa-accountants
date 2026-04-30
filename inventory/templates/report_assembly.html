@@ -2,87 +2,78 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Assembly Builds</title>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assembly Report</title>
   <link rel="icon" type="image/x-icon" href="{% static 'sowaf/images/favicon.ico' %}">
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
   <style>
     :root{--brand:#39B54B;--border:#e6e6e6;--muted:#6b7280;--bg:#f6f7fb;--card:#ffffff;}
-    *{box-sizing:border-box}
     body{background:var(--bg);font-family:"Poppins",system-ui,Arial,sans-serif;margin:0;padding:24px;}
     .wrap{width:83%;margin-top:5%;margin-left:18.3%;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06);overflow:hidden}
     .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border)}
     .head .title{font-weight:800;color:var(--brand);font-size:22px}
     .body-content{padding:18px;}
+    .filter-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;align-items:flex-end;}
+    .filter-bar label{font-size:12px;font-weight:700;color:var(--muted);}
     .table-wrap{border:1px solid var(--border);border-radius:14px;overflow:hidden;}
     table{margin:0;width:100%;}
     thead th{background:#f8fafc;font-size:12px;font-weight:800;color:#111827;border-bottom:1px solid var(--border);padding:10px 12px!important;white-space:nowrap;}
     tbody td{padding:10px 12px!important;vertical-align:middle;border-bottom:1px solid #f1f5f9;}
-    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
-    .btn-green:hover{background:#2f9a3f;border-color:#2f9a3f;color:#fff;}
-    .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:10px 14px;text-decoration:none;}
+    .btn-green{background:var(--brand);border:1px solid var(--brand);color:#fff;font-weight:800;border-radius:12px;padding:8px 16px;text-decoration:none;cursor:pointer;}
+    .btn-soft{background:#f0fdf4;border:1px solid rgba(57,181,75,.25);color:#2f9a3f;font-weight:800;border-radius:12px;padding:8px 14px;text-decoration:none;}
     .badge-draft{background:#f3f4f6;color:#374151;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
-    .badge-pending{background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
     .badge-completed{background:#d1fae5;color:#065f46;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
     .badge-cancelled{background:#fee2e2;color:#991b1b;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
     .badge-in_progress{background:#dbeafe;color:#1e40af;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700;}
+    .form-control,.form-select{border-radius:8px;border:1px solid var(--border);font-size:13px;}
     @media(max-width:992px){.wrap{width:95%;margin-left:2%;}}
   </style>
 </head>
 <body>
 {% include 'includes/navbar.html' %}
 {% include 'includes/sidebar.html' %}
-
 <div class="wrap">
   <div class="head">
-    <div class="title">Assembly Builds</div>
-    <div class="d-flex gap-2">
-      <a class="btn-soft" href="{% url 'inventory:bom-list' %}">BOM List</a>
-      <a class="btn-soft" href="{% url 'inventory:assembly-import-csv' %}">Import CSV</a>
-      <a class="btn-soft" href="{% url 'inventory:assembly-export-csv' %}">Export CSV</a>
-      <a class="btn-green" href="{% url 'inventory:add-build' %}">+ New Assembly</a>
-    </div>
+    <div class="title">Assembly Report</div>
+    <a class="btn-soft" href="{% url 'inventory:build-list' %}">All Assemblies</a>
   </div>
-
   <div class="body-content">
+    <form method="GET" class="filter-bar">
+      <div><label>From</label><input type="date" name="date_from" value="{{ filters.date_from|default:'' }}" class="form-control"></div>
+      <div><label>To</label><input type="date" name="date_to" value="{{ filters.date_to|default:'' }}" class="form-control"></div>
+      <div><label>Status</label>
+        <select name="status" class="form-select">
+          <option value="">All</option>
+          {% for val,label in status_choices %}<option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div><label>&nbsp;</label><button type="submit" class="btn-green d-block">Filter</button></div>
+    </form>
     <div class="table-wrap">
       <table class="table table-borderless">
         <thead>
-          <tr>
-            <th>Assembly #</th>
-            <th>Finished Product</th>
-            <th>Qty</th>
-            <th>Location</th>
-            <th>Date</th>
-            <th>Status</th>
-            <th>Total Cost</th>
-            <th></th>
-          </tr>
+          <tr><th>Assembly #</th><th>Product</th><th>Qty</th><th>Location</th><th>Date</th><th>Status</th><th>Total Cost</th></tr>
         </thead>
         <tbody>
           {% for b in builds %}
           <tr>
-            <td><strong>{{ b.assembly_number|default:b.id }}</strong></td>
+            <td><a href="{% url 'inventory:build-detail' b.pk %}">{{ b.assembly_number|default:b.id }}</a></td>
             <td>{{ b.finished_product.name }}</td>
             <td>{{ b.build_qty }}</td>
             <td>{{ b.location.name|default:"—" }}</td>
             <td>{{ b.build_date }}</td>
             <td>
               {% if b.status == "COMPLETED" %}<span class="badge-completed">Completed</span>
-              {% elif b.status == "DRAFT" %}<span class="badge-draft">Draft</span>
-              {% elif b.status == "PENDING" %}<span class="badge-pending">Pending</span>
+              {% elif b.status == "DRAFT" or b.status == "PENDING" %}<span class="badge-draft">{{ b.get_status_display }}</span>
               {% elif b.status == "IN_PROGRESS" %}<span class="badge-in_progress">In Progress</span>
               {% elif b.status == "CANCELLED" %}<span class="badge-cancelled">Cancelled</span>
-              {% else %}<span class="badge-draft">{{ b.status }}</span>
-              {% endif %}
+              {% else %}<span class="badge-draft">{{ b.status }}</span>{% endif %}
             </td>
             <td>{{ b.total_cost|floatformat:2 }}</td>
-            <td><a class="btn-soft" style="padding:6px 10px;font-size:13px;" href="{% url 'inventory:build-detail' b.pk %}">View</a></td>
           </tr>
           {% empty %}
-          <tr><td colspan="8" class="text-center text-muted py-4">No assemblies yet.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">No assemblies found.</td></tr>
           {% endfor %}
         </tbody>
       </table>

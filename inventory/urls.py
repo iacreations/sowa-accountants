@@ -22,11 +22,23 @@ urlpatterns = [
     path("locations/create/", views.location_create_json, name="location-create-json"),
     path("locations/add-ajax/", views.add_location_ajax, name="add_location_ajax"),
 
+    # Bill of Materials (BOM)
+    path("boms/", views.bom_list, name="bom-list"),
+    path("boms/new/", views.bom_create, name="bom-create"),
+    path("boms/<int:pk>/", views.bom_detail, name="bom-detail"),
+    path("boms/<int:pk>/delete/", views.bom_delete, name="bom-delete"),
+
     # Assembly builds
     path("builds/", views.build_list, name="build-list"),
     path("builds/new/", views.add_build, name="add-build"),
     path("builds/<int:pk>/", views.build_detail, name="build-detail"),
     path("builds/<int:pk>/complete/", views.complete_build_view, name="complete-build"),
+    path("builds/<int:pk>/cancel/", views.cancel_build_view, name="cancel-build"),
+    path("builds/<int:pk>/reverse/", views.reverse_build_view, name="reverse-build"),
+
+    # Assembly import / export
+    path("builds/export/csv/", views.assembly_export_csv, name="assembly-export-csv"),
+    path("builds/import/csv/", views.assembly_import_csv, name="assembly-import-csv"),
 
     # Reports
     path("reports/movements/", views.report_movement_ledger, name="report-movement-ledger"),
@@ -34,6 +46,9 @@ urlpatterns = [
     path("reports/aging/", views.report_stock_aging, name="report-stock-aging"),
     path("reports/reorder/", views.report_reorder, name="report-reorder"),
     path("reports/expiry/", views.report_expiry, name="report-expiry"),
+    path("reports/assembly/", views.report_assembly, name="report-assembly"),
+    path("reports/component-consumption/", views.report_component_consumption, name="report-component-consumption"),
+    path("reports/wip/", views.report_wip, name="report-wip"),
 
     # Stock Adjustments
     path("adjustments/", views.stock_adjustment_list, name="stock-adjustment-list"),
