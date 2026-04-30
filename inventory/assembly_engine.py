@@ -208,7 +208,6 @@ def complete_assembly(build, completed_by=None):
 
     wip_account = get_or_create_wip_account(company)
 
-    TWO = _Q2
     build_qty = _q2(build.build_qty)
     total_component_cost = ZERO
 
@@ -686,7 +685,7 @@ def import_assemblies_csv(csv_content: str, company, created_by=None) -> dict:
     for i, row in enumerate(reader, start=2):  # row 1 = header
         missing = IMPORT_REQUIRED_FIELDS - set(row.keys())
         if missing:
-            errors.append(f"Row {i}: Missing required columns: {missing}")
+            errors.append(f"Row {i}: Missing required columns: {', '.join(sorted(missing))}")
             continue
 
         try:
