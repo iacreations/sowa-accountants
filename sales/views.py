@@ -1,7 +1,4 @@
-import logging
-
-logger = logging.getLogger(__name__)
-
+from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse, Http404, JsonResponse
 import json
 from django.template.loader import render_to_string
@@ -22,6 +19,7 @@ import openpyxl
 import csv
 import io
 import os
+import logging
 from django.core.files import File
 from django.conf import settings
 from django.contrib import messages
@@ -59,6 +57,10 @@ from accounts.utils import (
     _get_cogs_account,
     _get_vat_payable_account,
 )
+
+logger = logging.getLogger(__name__)
+
+
 def _as_date(d):
     if isinstance(d, datetime):
         return d.date()
@@ -1124,7 +1126,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         except ValueError as exc:
             logger.warning(
                 "Sales receipt #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
-                "COGS posting skipped for this line. Detail: %s",
+                "Stock movement and COGS/inventory GL posting skipped for this line item. Detail: %s",
                 receipt.id, p.name, p.id, qty, exc,
             )
             continue
@@ -1152,12 +1154,23 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         affected_products.add(p)
 
     # Rebuild FIFO layers and recompute cached quantity from movements for all
-    # affected products (prevents stale layers from accumulating across receipts).
-    for p in affected_products:
-        movement_totals = p.movements.aggregate(total_in=Sum("qty_in"), total_out=Sum("qty_out"))
-        p.quantity = _inv_dec(movement_totals["total_in"]) - _inv_dec(movement_totals["total_out"])
-        p.save(update_fields=["quantity"])
-        rebuild_layers_from_movements(p, company=company)
+    # affected products.  Use a single aggregate query across all products to
+    # minimise database round trips.
+    if affected_products:
+        product_ids = [p.id for p in affected_products]
+        totals_qs = (
+            InventoryMovement.objects
+            .filter(product_id__in=product_ids)
+            .values("product_id")
+            .annotate(total_in=Sum("qty_in"), total_out=Sum("qty_out"))
+        )
+        totals_by_product = {row["product_id"]: row for row in totals_qs}
+
+        for p in affected_products:
+            row = totals_by_product.get(p.id, {})
+            p.quantity = _inv_dec(row.get("total_in")) - _inv_dec(row.get("total_out"))
+            p.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(p, company=company)
 
     # Dr COGS
     for acc, amt in cogs_by_acc.items():
