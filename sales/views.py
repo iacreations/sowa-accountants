@@ -19,6 +19,7 @@ import openpyxl
 import csv
 import io
 import os
+import logging
 from django.core.files import File
 from django.conf import settings
 from django.contrib import messages
@@ -48,6 +49,7 @@ from accounts.utils import deposit_accounts_qs
 
 from .recurring_service import generate_recurring_invoices_for_date
 from inventory.services import rebuild_movements_for_sales_receipt, rebuild_inventory_movements
+from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
 
 from accounts.utils import (
     VAT_RATE,
@@ -55,6 +57,10 @@ from accounts.utils import (
     _get_cogs_account,
     _get_vat_payable_account,
 )
+
+logger = logging.getLogger(__name__)
+
+
 def _as_date(d):
     if isinstance(d, datetime):
         return d.date()
@@ -1092,6 +1098,8 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
 
     sr_post_date = getattr(receipt, "receipt_date", None) or timezone.localdate()
 
+    products_needing_fifo_rebuild = set()
+
     for line in receipt.lines.select_related("product").all():
         p = getattr(line, "product", None)
         if not p or not getattr(p, 'track_inventory', False):
@@ -1100,9 +1108,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         qty = Decimal(str(getattr(line, "qty", None) or "0"))
         if qty <= 0:
             continue
-
-        unit_cost = Decimal(str(getattr(p, "avg_cost", None) or "0"))
-        val = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         cogs_acc = _fallback_cogs_account(p)
         inv_acc = _fallback_inventory_asset_account(p)
@@ -1115,26 +1120,59 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         if getattr(inv_acc, "company_id", None) != company_id:
             raise ValueError("Inventory asset account belongs to another company.")
 
-        # Create InventoryMovement (stock out)
-        InventoryMovement.objects.create(
-            product=p,
-            company_id=company_id,
-            date=sr_post_date,
-            qty_in=Decimal("0.00"),
-            qty_out=qty,
-            unit_cost=unit_cost,
-            value=val,
-            source_type="SALES_RECEIPT",
-            source_id=receipt.id,
+        # Use FIFO simulation to get per-layer unit costs (read-only)
+        try:
+            fifo_rows = simulate_fifo_consumption(p, qty)
+        except ValueError as exc:
+            logger.warning(
+                "Sales receipt #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
+                "Stock movement and COGS/inventory GL posting skipped for this line item. "
+                "This may result in incomplete financial records — verify inventory levels and "
+                "consider posting a stock adjustment to correct the balance. Detail: %s",
+                receipt.id, p.name, p.id, qty, exc,
+            )
+            continue
+
+        # Create one InventoryMovement per FIFO layer consumed
+        for layer_cost, layer_qty in fifo_rows:
+            layer_value = (layer_qty * layer_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            InventoryMovement.objects.create(
+                product=p,
+                company_id=company_id,
+                date=sr_post_date,
+                qty_in=Decimal("0.00"),
+                qty_out=layer_qty,
+                unit_cost=layer_cost,
+                value=layer_value,
+                source_type="SALES_RECEIPT",
+                source_id=receipt.id,
+                gl_entry=entry,
+                is_gl_posted=True,
+            )
+            if layer_value > 0:
+                cogs_by_acc[cogs_acc] += layer_value
+                inv_by_acc[inv_acc] += layer_value
+
+        products_needing_fifo_rebuild.add(p)
+
+    # Rebuild FIFO layers and recompute cached quantity from movements for all
+    # affected products.  Use a single aggregate query across all products to
+    # minimise database round trips.
+    if products_needing_fifo_rebuild:
+        product_ids = {p.id for p in products_needing_fifo_rebuild}
+        totals_qs = (
+            InventoryMovement.objects
+            .filter(product_id__in=product_ids)
+            .values("product_id")
+            .annotate(total_in=Sum("qty_in"), total_out=Sum("qty_out"))
         )
+        totals_by_product = {row["product_id"]: row for row in totals_qs}
 
-        # Update cached quantity
-        p.quantity = _inv_dec(p.quantity) - qty
-        p.save(update_fields=["quantity"])
-
-        if val > 0:
-            cogs_by_acc[cogs_acc] += val
-            inv_by_acc[inv_acc] += val
+        for p in products_needing_fifo_rebuild:
+            row = totals_by_product.get(p.id, {})
+            p.quantity = _inv_dec(row.get("total_in")) - _inv_dec(row.get("total_out"))
+            p.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(p, company=company)
 
     # Dr COGS
     for acc, amt in cogs_by_acc.items():
