@@ -271,7 +271,15 @@ def rebuild_layers_from_movements(product, company=None, from_date=None):
         unit_cost = _q2(mv.unit_cost)
         source_type = mv.source_type or ""
 
-        if qty_in > ZERO and source_type in PURCHASE_SOURCE_TYPES:
+        # TRANSFER IN movements (qty_in > 0, source_type="TRANSFER") must also
+        # create FIFO layers so that inventory value is preserved when stock moves
+        # between locations.  Without this, transfer-OUT consumes layers and the
+        # matching transfer-IN creates no layer, collapsing total company-wide
+        # inventory value.
+        is_purchase_in = qty_in > ZERO and source_type in PURCHASE_SOURCE_TYPES
+        is_transfer_in = qty_in > ZERO and source_type == "TRANSFER" and unit_cost > ZERO
+
+        if is_purchase_in or is_transfer_in:
             if unit_cost <= ZERO:
                 raise ValueError(
                     f"Cannot rebuild FIFO layer for {product.name}: "

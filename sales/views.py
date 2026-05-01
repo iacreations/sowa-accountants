@@ -486,253 +486,33 @@ def _post_customer_refund_to_ledger(company, refund: CustomerRefund):
 # posting invoice to ledger
 def _post_invoice_to_ledger(company, invoice: Newinvoice):
     """
-    INVOICE posting (tenant-safe):
+    ⚠️  LEGACY WRAPPER — Invoice posting has been consolidated.
+    ════════════════════════════════════════════════════════════════════════
+    This function now delegates to
+        inventory.accounting.post_invoice_inventory_and_gl()
+    which is the SINGLE SOURCE OF TRUTH for all invoice GL posting
+    (A/R, Revenue, VAT, COGS, and Inventory movements in one journal entry).
 
-      DR Customer A/R Subaccount
-      CR Revenue (by product.income_account)
-      CR VAT Payable (if VAT exists)
+    The previous A/R + Revenue + VAT + COGS blocks that lived here have
+    been removed to prevent dual posting and to ensure COGS is always
+    calculated using FIFO costing (not the deprecated avg_cost field).
+
+    This wrapper is retained only for backward compatibility with view code
+    that still calls _post_invoice_to_ledger(company, invoice).
+    ════════════════════════════════════════════════════════════════════════
     """
     if not company:
         raise ValueError("company is required")
     if not invoice:
         return
 
+    # Safety: don't post wrong-company invoice
     company_id = getattr(company, "id", company)
-
-    # safety: don’t post wrong-company invoice
     if getattr(invoice, "company_id", None) and invoice.company_id != company_id:
         raise ValueError("Invoice company mismatch.")
 
-    total_due = Decimal(str(getattr(invoice, "total_due", None) or "0"))
-    if total_due <= 0:
-        JournalEntry.objects.filter(company_id=company_id, source_type="invoice", source_id=invoice.id).delete()
-        return
-
-    # delete & recreate style
-    JournalEntry.objects.filter(company_id=company_id, source_type="invoice", source_id=invoice.id).delete()
-
-    revenue_by_account = defaultdict(lambda: Decimal("0.00"))
-    vat_total = Decimal("0.00")
-
-    default_income_acc = (
-        _find_control_account(company, name_contains="Sales")
-        or _find_control_account(company, name_contains="Revenue")
-        or _get_sales_income_account(company)
-    )
-
-    items_qs = invoice.items.select_related("product").all()
-    for line in items_qs:
-        # line.amount = (qty*price - discount) + vat  (computed in model save)
-        # Revenue = amount - vat  (strip out VAT since it's credited separately)
-        line_amount = Decimal(str(getattr(line, "amount", None) or "0"))
-        line_vat = Decimal(str(getattr(line, "vat", None) or "0"))
-        net_amount = line_amount - line_vat
-        if net_amount < 0:
-            net_amount = Decimal("0.00")
-
-        prod = getattr(line, "product", None)
-        income_acc = getattr(prod, "income_account", None) if prod else None
-        if not income_acc:
-            income_acc = default_income_acc
-
-        if prod and hasattr(prod, "company_id") and prod.company_id and prod.company_id != company_id:
-            raise ValueError("Invoice contains a product from a different company.")
-
-        if income_acc and getattr(income_acc, "company_id", None) != company_id:
-            raise ValueError("Income account belongs to a different company.")
-
-        if income_acc and net_amount > 0:
-            revenue_by_account[income_acc] += net_amount
-
-        vat_total += Decimal(str(getattr(line, "vat", None) or "0"))
-
-    shipping_fee = Decimal(str(getattr(invoice, "shipping_fee", None) or "0"))
-    if shipping_fee > 0 and default_income_acc:
-        revenue_by_account[default_income_acc] += shipping_fee
-
-    if not getattr(invoice, "customer_id", None):
-        raise ValueError("Invoice must have a customer.")
-
-    customer_acc = _get_or_create_customer_ar_subaccount(company, invoice.customer)
-
-    # Prefer your util if it exists, fallback to search/create
-    vat_account = None
-    try:
-        vat_account = _get_vat_payable_account(company)
-    except Exception:
-        vat_account = _find_control_account(company, detail_type="Taxes payable") or _find_control_account(company, name_contains="VAT")
-
-    entry_date = invoice.date_created.date() if getattr(invoice, "date_created", None) else timezone.localdate()
-    cust_name = getattr(invoice.customer, "customer_name", None) or getattr(invoice.customer, "company_name", None) or ""
-    desc = f"Invoice {invoice.id:04d} – {cust_name}".strip(" –")
-
-    entry = JournalEntry.objects.create(
-        company_id=company_id,
-        date=entry_date,
-        description=desc,
-        source_type="invoice",
-        source_id=invoice.id,
-    )
-
-    # DR Customer A/R (with customer link)
-    JournalLine.objects.create(
-        entry=entry,
-        account=customer_acc,
-        debit=total_due,
-        credit=Decimal("0.00"),
-        customer=invoice.customer,
-        supplier=None,
-    )
-
-    # CR Revenue
-    for acc, amt in revenue_by_account.items():
-        if acc and amt > 0:
-            JournalLine.objects.create(
-                entry=entry,
-                account=acc,
-                debit=Decimal("0.00"),
-                credit=amt,
-                customer=None,
-                supplier=None,
-            )
-
-    # CR VAT
-    if vat_total > 0 and vat_account:
-        if getattr(vat_account, "company_id", None) != company_id:
-            raise ValueError("VAT payable account belongs to a different company.")
-
-        JournalLine.objects.create(
-            entry=entry,
-            account=vat_account,
-            debit=Decimal("0.00"),
-            credit=vat_total,
-            customer=None,
-            supplier=None,
-        )
-
-    # =========================================================
-    # Inventory COGS posting  (DR COGS, CR Inventory Asset)
-    # + InventoryMovement stock-out (FIFO) + product.quantity update
-    # =========================================================
-    from inventory.accounting import (
-        _fallback_cogs_account, _fallback_inventory_asset_account, _dec as _inv_dec,
-    )
-
-    # Clear previous movements for this invoice
-    InventoryMovement.objects.filter(
-        company_id=company_id, source_type="INVOICE", source_id=invoice.id,
-    ).delete()
-
-    inv_post_date = invoice.date_created.date() if getattr(invoice, "date_created", None) else timezone.localdate()
-
-    cogs_by_acc = defaultdict(lambda: Decimal("0.00"))
-    inv_by_acc = defaultdict(lambda: Decimal("0.00"))
-
-    products_needing_fifo_rebuild = set()
-
-    for line in items_qs:
-        prod = getattr(line, "product", None)
-        if not prod or not getattr(prod, 'track_inventory', False):
-            continue
-
-        qty = Decimal(str(getattr(line, "qty", None) or "0"))
-        if qty <= 0:
-            continue
-
-        cogs_acc = _fallback_cogs_account(prod)
-        inv_acc = _fallback_inventory_asset_account(prod)
-
-        if not cogs_acc or not inv_acc:
-            continue  # skip if accounts not configured
-
-        if getattr(cogs_acc, "company_id", None) != company_id:
-            raise ValueError("COGS account belongs to a different company.")
-        if getattr(inv_acc, "company_id", None) != company_id:
-            raise ValueError("Inventory asset account belongs to a different company.")
-
-        # Use FIFO simulation to get per-layer unit costs (read-only)
-        try:
-            fifo_rows = simulate_fifo_consumption(prod, qty)
-        except ValueError as exc:
-            logger.warning(
-                "Invoice #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
-                "Stock movement and COGS/inventory GL posting skipped for this line item. "
-                "This may result in incomplete financial records — verify inventory levels and "
-                "consider voiding this invoice, posting a stock adjustment to correct the balance, "
-                "then re-saving the invoice. Detail: %s",
-                invoice.id, prod.name, prod.id, qty, exc,
-            )
-            continue
-
-        # Create one InventoryMovement per FIFO layer consumed
-        for layer_cost, layer_qty in fifo_rows:
-            layer_value = (layer_qty * layer_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            InventoryMovement.objects.create(
-                product=prod,
-                company_id=company_id,
-                date=inv_post_date,
-                qty_in=Decimal("0.00"),
-                qty_out=layer_qty,
-                unit_cost=layer_cost,
-                value=layer_value,
-                source_type="INVOICE",
-                source_id=invoice.id,
-                gl_entry=entry,
-                is_gl_posted=True,
-            )
-            if layer_value > 0:
-                cogs_by_acc[cogs_acc] += layer_value
-                inv_by_acc[inv_acc] += layer_value
-
-        products_needing_fifo_rebuild.add(prod)
-
-    # Rebuild FIFO layers and recompute cached quantity from movements for all
-    # affected products.  Use a single aggregate query to minimise DB round trips.
-    if products_needing_fifo_rebuild:
-        product_ids = {p.id for p in products_needing_fifo_rebuild}
-        totals_qs = (
-            InventoryMovement.objects
-            .filter(product_id__in=product_ids)
-            .values("product_id")
-            .annotate(total_in=Sum("qty_in"), total_out=Sum("qty_out"))
-        )
-        totals_by_product = {row["product_id"]: row for row in totals_qs}
-
-        for p in products_needing_fifo_rebuild:
-            row = totals_by_product.get(p.id, {})
-            p.quantity = _inv_dec(row.get("total_in")) - _inv_dec(row.get("total_out"))
-            p.save(update_fields=["quantity"])
-            rebuild_layers_from_movements(p, company=company)
-
-    # Dr COGS
-    for acc, amt in cogs_by_acc.items():
-        if acc and amt > 0:
-            JournalLine.objects.create(
-                entry=entry,
-                account=acc,
-                debit=amt,
-                credit=Decimal("0.00"),
-                customer=None,
-                supplier=None,
-            )
-
-    # Cr Inventory Asset
-    for acc, amt in inv_by_acc.items():
-        if acc and amt > 0:
-            JournalLine.objects.create(
-                entry=entry,
-                account=acc,
-                debit=Decimal("0.00"),
-                credit=amt,
-                customer=None,
-                supplier=None,
-            )
-
-    # Prevent post_save signal from re-running rebuild_movements_for_invoice
-    # and wiping these GL-linked movements if the invoice is saved again.
-    invoice._skip_inventory_signal = True
-    _assert_balanced_journal_entry(entry, "invoice")
-
+    from inventory.accounting import post_invoice_inventory_and_gl
+    post_invoice_inventory_and_gl(invoice)
 # posting payments to ledger 
 def _post_payment_to_ledger(company, payment: Payment):
     """
