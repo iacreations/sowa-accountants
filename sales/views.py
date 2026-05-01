@@ -612,7 +612,7 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
 
     # =========================================================
     # Inventory COGS posting  (DR COGS, CR Inventory Asset)
-    # + InventoryMovement stock-out + product.quantity update
+    # + InventoryMovement stock-out (FIFO) + product.quantity update
     # =========================================================
     from inventory.accounting import (
         _fallback_cogs_account, _fallback_inventory_asset_account, _dec as _inv_dec,
@@ -625,6 +625,11 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
 
     inv_post_date = invoice.date_created.date() if getattr(invoice, "date_created", None) else timezone.localdate()
 
+    cogs_by_acc = defaultdict(lambda: Decimal("0.00"))
+    inv_by_acc = defaultdict(lambda: Decimal("0.00"))
+
+    products_needing_fifo_rebuild = set()
+
     for line in items_qs:
         prod = getattr(line, "product", None)
         if not prod or not getattr(prod, 'track_inventory', False):
@@ -633,9 +638,6 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
         qty = Decimal(str(getattr(line, "qty", None) or "0"))
         if qty <= 0:
             continue
-
-        unit_cost = Decimal(str(getattr(prod, "avg_cost", None) or "0"))
-        cogs_value = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         cogs_acc = _fallback_cogs_account(prod)
         inv_acc = _fallback_inventory_asset_account(prod)
@@ -648,43 +650,87 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
         if getattr(inv_acc, "company_id", None) != company_id:
             raise ValueError("Inventory asset account belongs to a different company.")
 
-        # InventoryMovement (stock out)
-        InventoryMovement.objects.create(
-            product=prod,
-            company_id=company_id,
-            date=inv_post_date,
-            qty_in=Decimal("0.00"),
-            qty_out=qty,
-            unit_cost=unit_cost,
-            value=cogs_value,
-            source_type="INVOICE",
-            source_id=invoice.id,
+        # Use FIFO simulation to get per-layer unit costs (read-only)
+        try:
+            fifo_rows = simulate_fifo_consumption(prod, qty)
+        except ValueError as exc:
+            logger.warning(
+                "Invoice #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
+                "Stock movement and COGS/inventory GL posting skipped for this line item. "
+                "This may result in incomplete financial records — verify inventory levels and "
+                "consider voiding this invoice, posting a stock adjustment to correct the balance, "
+                "then re-saving the invoice. Detail: %s",
+                invoice.id, prod.name, prod.id, qty, exc,
+            )
+            continue
+
+        # Create one InventoryMovement per FIFO layer consumed
+        for layer_cost, layer_qty in fifo_rows:
+            layer_value = (layer_qty * layer_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            InventoryMovement.objects.create(
+                product=prod,
+                company_id=company_id,
+                date=inv_post_date,
+                qty_in=Decimal("0.00"),
+                qty_out=layer_qty,
+                unit_cost=layer_cost,
+                value=layer_value,
+                source_type="INVOICE",
+                source_id=invoice.id,
+                gl_entry=entry,
+                is_gl_posted=True,
+            )
+            if layer_value > 0:
+                cogs_by_acc[cogs_acc] += layer_value
+                inv_by_acc[inv_acc] += layer_value
+
+        products_needing_fifo_rebuild.add(prod)
+
+    # Rebuild FIFO layers and recompute cached quantity from movements for all
+    # affected products.  Use a single aggregate query to minimise DB round trips.
+    if products_needing_fifo_rebuild:
+        product_ids = {p.id for p in products_needing_fifo_rebuild}
+        totals_qs = (
+            InventoryMovement.objects
+            .filter(product_id__in=product_ids)
+            .values("product_id")
+            .annotate(total_in=Sum("qty_in"), total_out=Sum("qty_out"))
         )
+        totals_by_product = {row["product_id"]: row for row in totals_qs}
 
-        # Update cached quantity on product
-        prod.quantity = _inv_dec(prod.quantity) - qty
-        prod.save(update_fields=["quantity"])
+        for p in products_needing_fifo_rebuild:
+            row = totals_by_product.get(p.id, {})
+            p.quantity = _inv_dec(row.get("total_in")) - _inv_dec(row.get("total_out"))
+            p.save(update_fields=["quantity"])
+            rebuild_layers_from_movements(p, company=company)
 
-        if cogs_value > 0:
-            # DR COGS
+    # Dr COGS
+    for acc, amt in cogs_by_acc.items():
+        if acc and amt > 0:
             JournalLine.objects.create(
                 entry=entry,
-                account=cogs_acc,
-                debit=cogs_value,
+                account=acc,
+                debit=amt,
                 credit=Decimal("0.00"),
                 customer=None,
                 supplier=None,
             )
-            # CR Inventory Asset
+
+    # Cr Inventory Asset
+    for acc, amt in inv_by_acc.items():
+        if acc and amt > 0:
             JournalLine.objects.create(
                 entry=entry,
-                account=inv_acc,
+                account=acc,
                 debit=Decimal("0.00"),
-                credit=cogs_value,
+                credit=amt,
                 customer=None,
                 supplier=None,
             )
 
+    # Prevent post_save signal from re-running rebuild_movements_for_invoice
+    # and wiping these GL-linked movements if the invoice is saved again.
+    invoice._skip_inventory_signal = True
     _assert_balanced_journal_entry(entry, "invoice")
 
 # posting payments to ledger 
@@ -1198,6 +1244,9 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
                 supplier=None,
             )
 
+    # Prevent post_save signal from re-running rebuild_movements_for_sales_receipt
+    # and wiping these GL-linked movements if the receipt is saved again.
+    receipt._skip_inventory_signal = True
     _assert_balanced_journal_entry(entry, "sales_receipt")
 
 
@@ -4594,21 +4643,17 @@ def recurring_run_today(request):
 
 
 def sync_sales_receipt_inventory(sr):
-    rows = []
-    for line in sr.lines.select_related("product"):
-        if not line.product:
-            continue
-        p = line.product
-        rows.append({
-            "product": p,
-            "qty_in": 0,
-            "qty_out": line.qty,
-            "unit_cost": p.avg_cost,
-        })
+    """
+    DEPRECATED — do not wire up or call this function.
 
-    rebuild_inventory_movements(
-        "SALES_RECEIPT",
-        sr.id,
-        date=sr.receipt_date,
-        rows=rows
+    This helper used product.avg_cost (a stale legacy field) as the unit cost for
+    stock-out movements, which produces incorrect COGS values.  The production
+    sales-receipt GL posting path (_post_sales_receipt_to_ledger) already handles
+    both inventory movements and COGS using proper FIFO layers.  Calling this
+    function would overwrite those FIFO-correct movements with avg_cost ones,
+    breaking accounting integrity.
+    """
+    raise RuntimeError(
+        "sync_sales_receipt_inventory is deprecated and must not be called. "
+        "Use _post_sales_receipt_to_ledger instead."
     )
