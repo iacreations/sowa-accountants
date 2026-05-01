@@ -61,6 +61,12 @@ class Command(BaseCommand):
             default=None,
             help="Reconcile as of this date (YYYY-MM-DD). Defaults to today.",
         )
+        parser.add_argument(
+            "--daily-report",
+            action="store_true",
+            default=False,
+            help="Emit a brief one-line summary suitable for daily automated monitoring.",
+        )
 
     # ------------------------------------------------------------------
     def handle(self, *args, **options):
@@ -264,6 +270,14 @@ class Command(BaseCommand):
                     "  4. python manage.py recalculate_inventory_balances --dry-run\n"
                     "  5. Re-run: python manage.py reconcile_inventory_gl\n"
                 )
+            )
+
+        if options.get("daily_report"):
+            status_token = "OK" if all_four_match else "MISMATCH"
+            self.stdout.write(
+                f"[DAILY] {as_of} | company={company_id or 'ALL'} | "
+                f"products={total_products} | matched={matched} | mismatched={mismatched} | "
+                f"fifo={grand_fifo:.2f} | gl={grand_gl:.2f} | status={status_token}"
             )
 
     # ------------------------------------------------------------------
