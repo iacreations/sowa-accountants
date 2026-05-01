@@ -38,6 +38,17 @@ class Pclass(TenantModel):
 
 
 class Product(TenantModel):
+    """
+    Represents a product or service sold/purchased by the company.
+
+    Inventory Valuation: FIFO (First In, First Out) is the only active method.
+    The valuation_method field is kept for future expansion but currently
+    restricted to FIFO only.
+
+    avg_cost: DEPRECATED – kept for historical reference only.
+    Do NOT use avg_cost in new COGS posting logic. Use FIFO layers instead.
+    """
+
     PRODUCT_TYPES = [
         ("Inventory", "Inventory"),
         ("Non-Inventory", "Non-Inventory"),
@@ -45,9 +56,10 @@ class Product(TenantModel):
         ("Bundle", "Bundle"),
     ]
 
+    # FIFO is the only supported inventory valuation method.
+    # Weighted Average is not supported and has been removed.
     VALUATION_METHODS = [
         ("FIFO", "FIFO (First In, First Out)"),
-        ("WEIGHTED_AVERAGE", "Weighted Average"),
     ]
 
     type = models.CharField(max_length=20, choices=PRODUCT_TYPES, blank=True, null=True)
@@ -68,6 +80,8 @@ class Product(TenantModel):
 
     # cached values (truth is ledger)
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    # DEPRECATED: avg_cost is kept for historical reference only. Do NOT write to this
+    # field in new posting logic. All COGS calculations must use FIFO layers instead.
     avg_cost = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
     purchase_date = models.DateField(null=True, blank=True)
@@ -194,6 +208,12 @@ class Product(TenantModel):
 
         if self.cogs_account_id and getattr(self.cogs_account, "company_id", None) not in (None, self.company_id):
             errors["cogs_account"] = "COGS account must belong to the same company."
+
+        # Enforce FIFO as the only supported inventory valuation method.
+        if self.valuation_method != "FIFO":
+            errors["valuation_method"] = (
+                "FIFO is currently the only supported inventory valuation method."
+            )
 
         if errors:
             raise ValidationError(errors)

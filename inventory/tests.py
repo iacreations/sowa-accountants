@@ -2302,3 +2302,117 @@ class InventoryStabilizationTests(TestCase):
         ).count()
         self.assertEqual(legacy_count, 0,
                          "No legacy lowercase 'invoice' journal entries should remain")
+
+
+# ---------------------------------------------------------------------------
+# FIFO Enforcement Tests
+# ---------------------------------------------------------------------------
+
+class FIFOEnforcementTests(TestCase):
+    """
+    Verify that Product.valuation_method is restricted to FIFO only and that
+    any attempt to use Weighted Average is rejected by model validation.
+    """
+
+    def _make_company(self, name="TestCo"):
+        from tenancy.models import Company
+        return Company.objects.create(name=name, country="UG")
+
+    # ------------------------------------------------------------------
+    # Test 1: FIFO is accepted
+    # ------------------------------------------------------------------
+    def test_product_fifo_valuation_is_accepted(self):
+        """Product with valuation_method='FIFO' passes full_clean without error."""
+        company = self._make_company("FIFOCo")
+        from inventory.models import Product
+        product = Product(
+            company=company,
+            name="FIFO Product",
+            type="Inventory",
+            valuation_method="FIFO",
+        )
+        # Should not raise
+        product.full_clean()
+
+    # ------------------------------------------------------------------
+    # Test 2: WEIGHTED_AVERAGE is rejected
+    # ------------------------------------------------------------------
+    def test_product_weighted_average_rejected(self):
+        """Product.valuation_method='WEIGHTED_AVERAGE' must raise ValidationError."""
+        from django.core.exceptions import ValidationError
+        from inventory.models import Product
+        company = self._make_company("WACo")
+        product = Product(
+            company=company,
+            name="WA Product",
+            type="Inventory",
+            valuation_method="WEIGHTED_AVERAGE",
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            product.full_clean()
+        self.assertIn("valuation_method", ctx.exception.message_dict)
+        # Either Django's choices validation message or our custom message must appear
+        error_messages = " ".join(ctx.exception.message_dict["valuation_method"])
+        self.assertTrue(
+            "not a valid choice" in error_messages
+            or "FIFO is currently the only supported inventory valuation method." in error_messages,
+            f"Expected validation error about invalid choice or FIFO enforcement, got: {error_messages}",
+        )
+
+    # ------------------------------------------------------------------
+    # Test 3: Default valuation_method is FIFO
+    # ------------------------------------------------------------------
+    def test_product_default_valuation_method_is_fifo(self):
+        """Product.valuation_method defaults to 'FIFO'."""
+        from inventory.models import Product
+        company = self._make_company("DefaultCo")
+        product = Product.objects.create(
+            company=company,
+            name="Default VM Product",
+            type="Inventory",
+        )
+        self.assertEqual(product.valuation_method, "FIFO")
+
+    # ------------------------------------------------------------------
+    # Test 4: VALUATION_METHODS choices contain only FIFO
+    # ------------------------------------------------------------------
+    def test_valuation_methods_choices_fifo_only(self):
+        """Product.VALUATION_METHODS must contain exactly one entry: FIFO."""
+        from inventory.models import Product
+        self.assertEqual(len(Product.VALUATION_METHODS), 1)
+        self.assertEqual(Product.VALUATION_METHODS[0][0], "FIFO")
+
+    # ------------------------------------------------------------------
+    # Test 5: Migration logic converts WEIGHTED_AVERAGE to FIFO
+    # ------------------------------------------------------------------
+    def test_migration_converts_weighted_average_to_fifo(self):
+        """
+        Simulate the data migration: products with valuation_method='WEIGHTED_AVERAGE'
+        in the DB are updated to 'FIFO' by a bulk ORM update (same logic as the migration).
+        """
+        from inventory.models import Product
+        company = self._make_company("MigCo")
+        # Create product as FIFO (model validation enforces FIFO)
+        product = Product.objects.create(
+            company=company,
+            name="Legacy WA Product",
+            type="Inventory",
+            valuation_method="FIFO",
+        )
+        # Bypass model validation to force WEIGHTED_AVERAGE directly in the DB
+        Product.objects.filter(pk=product.pk).update(valuation_method="WEIGHTED_AVERAGE")
+        product.refresh_from_db()
+        self.assertEqual(product.valuation_method, "WEIGHTED_AVERAGE")
+
+        # Run the same logic used by migration 0024
+        updated = Product.objects.filter(valuation_method="WEIGHTED_AVERAGE").update(
+            valuation_method="FIFO"
+        )
+        self.assertGreaterEqual(updated, 1, "At least one product should be updated")
+
+        product.refresh_from_db()
+        self.assertEqual(
+            product.valuation_method,
+            "FIFO",
+            "Migration must convert WEIGHTED_AVERAGE to FIFO",
+        )

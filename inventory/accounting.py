@@ -1,4 +1,14 @@
 # inventory/accounting.py
+"""
+GL posting for inventory transactions.
+
+COGS is ALWAYS calculated using FIFO costing. avg_cost is deprecated
+and is not used in any posting logic.
+
+All inventory-tracked sales post:
+  DR COGS  (FIFO cost from oldest layers)
+  CR Inventory Asset  (FIFO cost)
+"""
 from collections import defaultdict
 from django.db import models
 from decimal import Decimal, ROUND_HALF_UP
@@ -59,8 +69,8 @@ def _add_line(*, je: JournalEntry, account: Account, debit=DEC0, credit=DEC0, su
 
 def _recalc_product_qty_avg(product: Product):
     """
-    Kept for compatibility (not used). If you later want to rebuild everything from ledger,
-    you can implement it fully. For now we update qty/avg_cost live on stock-in.
+    Kept for compatibility (not used). FIFO layers are the source of truth
+    for inventory valuation. avg_cost is deprecated and not updated here.
     """
     InventoryMovement.objects.filter(product=product).aggregate(
         in_qty_sum=models.Sum("qty_in"),
@@ -332,7 +342,7 @@ def post_bill_to_gl(bill):
     BILL posting (unified – handles ALL line types):
 
       Category lines:          DR category account
-      Inventory item lines:    DR Inventory Asset + stock-in movement + weighted avg update
+      Inventory item lines:    DR Inventory Asset + FIFO stock-in movement
       Non-inventory item lines: DR Expense/COGS account
       Credit:                  CR Supplier A/P Subaccount
 
@@ -396,7 +406,7 @@ def post_bill_to_gl(bill):
                 continue
 
             if product and getattr(product, 'track_inventory', False):
-                # Inventory: DR Inventory Asset, stock-in movement, weighted avg
+                # Inventory: DR Inventory Asset; FIFO stock-in movement recorded
                 qty = _dec(ln.qty)
                 unit_cost = _dec(ln.rate)
                 value = (qty * unit_cost if qty > 0 else amt).quantize(_Q2, rounding=ROUND_HALF_UP)
@@ -461,7 +471,7 @@ def post_expense_to_gl(expense):
     EXPENSE posting (unified – handles ALL line types):
 
       Category lines:          DR category account
-      Inventory item lines:    DR Inventory Asset + stock-in movement + weighted avg update
+      Inventory item lines:    DR Inventory Asset + FIFO stock-in movement
       Non-inventory item lines: DR Expense/COGS account
       Credit:                  CR expense.payment_account (cash/bank)
 

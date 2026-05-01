@@ -2,8 +2,11 @@
 """
 FIFO (First In, First Out) costing engine.
 
-Purchases create InventoryLayer records.
-Sales consume layers starting from the oldest available purchase layer.
+This is the ONLY active inventory valuation method in YoAccountant.
+Weighted Average costing is NOT supported.
+
+Purchases create InventoryLayer records. Sales consume layers starting
+from the oldest available purchase layer.
 """
 
 from __future__ import annotations
