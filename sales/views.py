@@ -657,7 +657,9 @@ def _post_invoice_to_ledger(company, invoice: Newinvoice):
             logger.warning(
                 "Invoice #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
                 "Stock movement and COGS/inventory GL posting skipped for this line item. "
-                "Verify inventory levels and consider posting a stock adjustment. Detail: %s",
+                "This may result in incomplete financial records — verify inventory levels and "
+                "consider voiding this invoice, posting a stock adjustment to correct the balance, "
+                "then re-saving the invoice. Detail: %s",
                 invoice.id, prod.name, prod.id, qty, exc,
             )
             continue
