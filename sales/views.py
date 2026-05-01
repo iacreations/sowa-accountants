@@ -1,4 +1,7 @@
-from django.shortcuts import render, redirect, get_object_or_404
+import logging
+
+logger = logging.getLogger(__name__)
+
 from django.http import HttpResponse, Http404, JsonResponse
 import json
 from django.template.loader import render_to_string
@@ -48,6 +51,7 @@ from accounts.utils import deposit_accounts_qs
 
 from .recurring_service import generate_recurring_invoices_for_date
 from inventory.services import rebuild_movements_for_sales_receipt, rebuild_inventory_movements
+from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
 
 from accounts.utils import (
     VAT_RATE,
@@ -1092,9 +1096,6 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
 
     sr_post_date = getattr(receipt, "receipt_date", None) or timezone.localdate()
 
-    from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
-    from django.db.models import Sum as _SrSum
-
     affected_products = set()
 
     for line in receipt.lines.select_related("product").all():
@@ -1120,8 +1121,12 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         # Use FIFO simulation to get per-layer unit costs (read-only)
         try:
             fifo_rows = simulate_fifo_consumption(p, qty)
-        except ValueError:
-            # Not enough FIFO stock for this product; skip COGS posting for this line
+        except ValueError as exc:
+            logger.warning(
+                "Sales receipt #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
+                "COGS posting skipped for this line. Detail: %s",
+                receipt.id, p.name, p.id, qty, exc,
+            )
             continue
 
         # Create one InventoryMovement per FIFO layer consumed
@@ -1149,8 +1154,8 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
     # Rebuild FIFO layers and recompute cached quantity from movements for all
     # affected products (prevents stale layers from accumulating across receipts).
     for p in affected_products:
-        agg = p.movements.aggregate(tin=_SrSum("qty_in"), tout=_SrSum("qty_out"))
-        p.quantity = _inv_dec(agg["tin"]) - _inv_dec(agg["tout"])
+        movement_totals = p.movements.aggregate(total_in=Sum("qty_in"), total_out=Sum("qty_out"))
+        p.quantity = _inv_dec(movement_totals["total_in"]) - _inv_dec(movement_totals["total_out"])
         p.save(update_fields=["quantity"])
         rebuild_layers_from_movements(p, company=company)
 
