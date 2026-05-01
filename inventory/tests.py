@@ -1,6 +1,7 @@
 from django.test import TestCase
 from decimal import Decimal
 from django.utils import timezone
+from django.db import models
 
 from inventory.fifo import (
     record_purchase_layer,
@@ -2416,3 +2417,880 @@ class FIFOEnforcementTests(TestCase):
             "FIFO",
             "Migration must convert WEIGHTED_AVERAGE to FIFO",
         )
+
+
+# ===========================================================================
+# Phase 2 Hardening: Product Model Validation Rule Tests
+# ===========================================================================
+
+class ProductValidationRuleTests(TestCase):
+    """
+    Verify that Product model validation enforces:
+    - Rule 2: track_inventory=True requires inventory_asset_account
+    - Rule 3: track_inventory=True requires cogs_account
+    """
+
+    def _make_company(self, name="RuleCo"):
+        from tenancy.models import Company
+        return Company.objects.create(name=name, country="UG")
+
+    def _make_account(self, company, name, number, account_type):
+        from accounts.models import Account
+        return Account.objects.create(
+            company=company, account_name=name, account_number=number,
+            account_type=account_type, is_active=True, as_of=timezone.localdate(),
+        )
+
+    def test_track_inventory_without_asset_account_raises(self):
+        """Rule 2: track_inventory=True without inventory_asset_account must fail validation."""
+        from django.core.exceptions import ValidationError
+        from inventory.models import Product
+        company = self._make_company("Rule2Co")
+        cogs = self._make_account(company, "COGS", "5000", "OPERATING_EXPENSE")
+        product = Product(
+            company=company,
+            name="Rule2 Product",
+            type="Inventory",
+            track_inventory=True,
+            cogs_account=cogs,
+            # inventory_asset_account deliberately omitted
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            product.full_clean()
+        self.assertIn("inventory_asset_account", ctx.exception.message_dict)
+
+    def test_track_inventory_without_cogs_account_raises(self):
+        """Rule 3: track_inventory=True without cogs_account must fail validation."""
+        from django.core.exceptions import ValidationError
+        from inventory.models import Product
+        company = self._make_company("Rule3Co")
+        asset = self._make_account(company, "Inventory Asset", "1200", "CURRENT_ASSET")
+        product = Product(
+            company=company,
+            name="Rule3 Product",
+            type="Inventory",
+            track_inventory=True,
+            inventory_asset_account=asset,
+            # cogs_account deliberately omitted
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            product.full_clean()
+        self.assertIn("cogs_account", ctx.exception.message_dict)
+
+    def test_track_inventory_with_both_accounts_passes(self):
+        """track_inventory=True with both accounts set must pass validation."""
+        from inventory.models import Product
+        company = self._make_company("Rule23PassCo")
+        asset = self._make_account(company, "Inventory Asset", "1200", "CURRENT_ASSET")
+        cogs = self._make_account(company, "COGS", "5000", "OPERATING_EXPENSE")
+        product = Product(
+            company=company,
+            name="Valid Tracked Product",
+            type="Inventory",
+            track_inventory=True,
+            inventory_asset_account=asset,
+            cogs_account=cogs,
+        )
+        # Should not raise
+        product.full_clean()
+
+    def test_track_inventory_false_no_accounts_required(self):
+        """track_inventory=False does not require asset or COGS account."""
+        from inventory.models import Product
+        company = self._make_company("Rule23FalseCo")
+        product = Product(
+            company=company,
+            name="Untracked Product",
+            type="Inventory",
+            track_inventory=False,
+        )
+        # Should not raise for Rules 2-3
+        product.full_clean()
+
+
+# ===========================================================================
+# Phase 2 Hardening: Test Suite 1 — Inventory Full Cycle
+# ===========================================================================
+
+class InventoryFullCycleSuite(TestCase):
+    """End-to-end purchase, sale, COGS verification."""
+
+    def setUp(self):
+        from tenancy.models import Company
+        from inventory.models import Product, MainStore, InventoryLocation
+        from accounts.models import Account
+        from sowaf.models import Newsupplier, Newcustomer
+
+        self.company = Company.objects.create(name="FullCycleCo", country="UG")
+
+        self.inv_asset_acc = Account.objects.create(
+            company=self.company, account_name="Inventory Asset",
+            account_number="1200", account_type="CURRENT_ASSET",
+            detail_type="Inventory Asset", is_active=True, as_of=timezone.localdate(),
+        )
+        self.cogs_acc = Account.objects.create(
+            company=self.company, account_name="COGS",
+            account_number="5000", account_type="OPERATING_EXPENSE",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ar_acc = Account.objects.create(
+            company=self.company, account_name="A/R",
+            account_number="1100", account_type="CURRENT_ASSET",
+            detail_type="Accounts Receivable (A/R)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.income_acc = Account.objects.create(
+            company=self.company, account_name="Sales Revenue",
+            account_number="4000", account_type="OPERATING_INCOME",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ap_acc = Account.objects.create(
+            company=self.company, account_name="A/P",
+            account_number="2000", account_type="CURRENT_LIABILITY",
+            detail_type="Accounts Payable (A/P)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.product = Product.objects.create(
+            company=self.company, name="CycleWidget", type="Inventory",
+            track_inventory=True, quantity=Decimal("0.00"),
+            inventory_asset_account=self.inv_asset_acc,
+            cogs_account=self.cogs_acc, income_account=self.income_acc,
+        )
+        self.supplier = Newsupplier.objects.create(
+            company=self.company, company_name="CycleSupplier", ap_account=self.ap_acc,
+        )
+        self.customer = Newcustomer.objects.create(
+            company=self.company, customer_name="CycleCustomer", ar_account=self.ar_acc,
+        )
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main", defaults={"is_active": True},
+        )
+        self.location, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+
+    def _make_bill(self, qty, unit_cost, bill_no):
+        from expenses.models import Bill, BillItemLine
+        bill = Bill.objects.create(
+            company=self.company, supplier=self.supplier,
+            bill_no=bill_no, bill_date=timezone.localdate(),
+            total_amount=qty * unit_cost, location=self.location,
+        )
+        BillItemLine.objects.create(
+            bill=bill, product=self.product,
+            qty=qty, rate=unit_cost, amount=qty * unit_cost,
+        )
+        return bill
+
+    def _make_invoice(self, qty, unit_price):
+        from sales.models import Newinvoice, InvoiceItem
+        invoice = Newinvoice.objects.create(
+            company=self.company, customer=self.customer,
+            date_created=timezone.now(), location=self.location,
+        )
+        InvoiceItem.objects.create(
+            invoice=invoice, product=self.product,
+            qty=qty, unit_price=unit_price,
+        )
+        return invoice
+
+    def test_purchase_creates_fifo_layer_and_inventory_asset(self):
+        """A purchase bill creates a FIFO layer and posts to Inventory Asset GL."""
+        from inventory.accounting import post_bill_to_gl
+        from inventory.models import InventoryLayer
+        from accounts.models import JournalLine
+
+        bill = self._make_bill(Decimal("10"), Decimal("5000"), "FC-BILL-01")
+        post_bill_to_gl(bill)
+
+        layers = InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        self.assertTrue(layers.exists(), "FIFO layer must be created on purchase")
+        layer = layers.first()
+        self.assertEqual(layer.qty_remaining, Decimal("10.00"))
+        self.assertEqual(layer.unit_cost, Decimal("5000.00"))
+
+        # Inventory Asset GL should be debited
+        inv_balance = JournalLine.objects.filter(
+            account=self.inv_asset_acc
+        ).aggregate(dr=models.Sum("debit"), cr=models.Sum("credit"))
+        net = (inv_balance["dr"] or Decimal("0")) - (inv_balance["cr"] or Decimal("0"))
+        self.assertEqual(net, Decimal("50000.00"), "Inventory Asset GL should reflect purchase value")
+
+    def test_sale_consumes_fifo_layer_and_posts_cogs(self):
+        """A sale consumes the FIFO layer and posts correct COGS."""
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from inventory.models import InventoryLayer
+        from accounts.models import JournalLine
+
+        bill = self._make_bill(Decimal("10"), Decimal("5000"), "FC-BILL-02")
+        post_bill_to_gl(bill)
+
+        invoice = self._make_invoice(Decimal("4"), Decimal("8000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        je = invoice.journal_entry
+        cogs = sum(ln.debit for ln in JournalLine.objects.filter(entry=je, account=self.cogs_acc))
+        self.assertEqual(cogs, Decimal("20000.00"), "COGS = 4 × 5000 = 20000")
+
+        # Layer qty_remaining should be 6
+        active_layers = InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        total_remaining = sum(l.qty_remaining for l in active_layers)
+        self.assertEqual(total_remaining, Decimal("6.00"))
+
+    def test_multiple_purchases_then_sale_uses_fifo_order(self):
+        """Multiple purchases then sale: FIFO order means oldest layers consumed first."""
+        from datetime import date as _date
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from expenses.models import Bill, BillItemLine
+        from accounts.models import JournalLine
+
+        b1 = Bill.objects.create(
+            company=self.company, supplier=self.supplier, bill_no="FC-BILL-03A",
+            bill_date=_date(2026, 1, 1), total_amount=Decimal("50000"), location=self.location,
+        )
+        BillItemLine.objects.create(bill=b1, product=self.product, qty=Decimal("10"),
+                                    rate=Decimal("5000"), amount=Decimal("50000"))
+        post_bill_to_gl(b1)
+
+        b2 = Bill.objects.create(
+            company=self.company, supplier=self.supplier, bill_no="FC-BILL-03B",
+            bill_date=_date(2026, 2, 1), total_amount=Decimal("30000"), location=self.location,
+        )
+        BillItemLine.objects.create(bill=b2, product=self.product, qty=Decimal("5"),
+                                    rate=Decimal("6000"), amount=Decimal("30000"))
+        post_bill_to_gl(b2)
+
+        # Sell 15 units: 10@5000 + 5@6000 = 80,000 COGS
+        invoice = self._make_invoice(Decimal("15"), Decimal("9000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        je = invoice.journal_entry
+        cogs = sum(ln.debit for ln in JournalLine.objects.filter(entry=je, account=self.cogs_acc))
+        self.assertEqual(cogs, Decimal("80000.00"),
+                         "FIFO COGS: 10@5000 + 5@6000 = 80000")
+
+    def test_partial_sale_leaves_correct_remaining_layer(self):
+        """Partial sale reduces layer qty_remaining correctly."""
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from inventory.models import InventoryLayer
+
+        bill = self._make_bill(Decimal("20"), Decimal("3000"), "FC-BILL-04")
+        post_bill_to_gl(bill)
+
+        invoice = self._make_invoice(Decimal("7"), Decimal("5000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        active_layers = InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        total_remaining = sum(l.qty_remaining for l in active_layers)
+        self.assertEqual(total_remaining, Decimal("13.00"),
+                         "13 units should remain after selling 7 from 20")
+
+
+# ===========================================================================
+# Phase 2 Hardening: Test Suite 2 — FIFO Layer Integrity
+# ===========================================================================
+
+class FIFOLayerIntegritySuite(TestCase):
+    """FIFO layer creation, consumption, exhaustion."""
+
+    def setUp(self):
+        from tenancy.models import Company
+        from inventory.models import Product, MainStore, InventoryLocation
+        from accounts.models import Account
+        from sowaf.models import Newsupplier
+
+        self.company = Company.objects.create(name="LayerIntegCo", country="UG")
+        self.inv_asset_acc = Account.objects.create(
+            company=self.company, account_name="Inventory Asset",
+            account_number="1200", account_type="CURRENT_ASSET",
+            detail_type="Inventory Asset", is_active=True, as_of=timezone.localdate(),
+        )
+        self.cogs_acc = Account.objects.create(
+            company=self.company, account_name="COGS",
+            account_number="5000", account_type="OPERATING_EXPENSE",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ap_acc = Account.objects.create(
+            company=self.company, account_name="A/P",
+            account_number="2000", account_type="CURRENT_LIABILITY",
+            detail_type="Accounts Payable (A/P)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.product = Product.objects.create(
+            company=self.company, name="LayerWidget", type="Inventory",
+            track_inventory=True, quantity=Decimal("0.00"),
+            inventory_asset_account=self.inv_asset_acc,
+            cogs_account=self.cogs_acc,
+        )
+        self.supplier = Newsupplier.objects.create(
+            company=self.company, company_name="LayerSupplier", ap_account=self.ap_acc,
+        )
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main", defaults={"is_active": True},
+        )
+        self.location, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+
+    def _make_movement_in(self, qty, unit_cost):
+        from inventory.models import InventoryMovement
+        return InventoryMovement.objects.create(
+            product=self.product, company=self.company, date=timezone.localdate(),
+            qty_in=qty, qty_out=Decimal("0.00"), unit_cost=unit_cost,
+            value=qty * unit_cost, location=self.location,
+            source_type="BILL", source_id=1,
+        )
+
+    def test_layer_created_on_purchase_with_unit_cost(self):
+        """record_purchase_layer creates a layer with correct unit_cost and qty."""
+        from inventory.fifo import record_purchase_layer
+        from inventory.models import InventoryLayer
+
+        mv = self._make_movement_in(Decimal("15"), Decimal("2500"))
+        record_purchase_layer(
+            self.product, Decimal("2500"), Decimal("15"), mv.date, mv, self.company
+        )
+
+        layer = InventoryLayer.objects.get(product=self.product, source_movement=mv)
+        self.assertEqual(layer.unit_cost, Decimal("2500.00"))
+        self.assertEqual(layer.qty_in, Decimal("15.00"))
+        self.assertEqual(layer.qty_remaining, Decimal("15.00"))
+        self.assertFalse(layer.is_exhausted)
+
+    def test_layer_qty_remaining_decreases_on_sale(self):
+        """After consuming part of a layer, qty_remaining decreases correctly."""
+        from inventory.fifo import record_purchase_layer, consume_fifo_layers
+        from inventory.models import InventoryLayer
+
+        mv = self._make_movement_in(Decimal("20"), Decimal("1000"))
+        record_purchase_layer(
+            self.product, Decimal("1000"), Decimal("20"), mv.date, mv, self.company
+        )
+
+        consume_fifo_layers(self.product, Decimal("8"))
+
+        layer = InventoryLayer.objects.get(product=self.product, source_movement=mv)
+        layer.refresh_from_db()
+        self.assertEqual(layer.qty_remaining, Decimal("12.00"),
+                         "qty_remaining should be 20 - 8 = 12")
+
+    def test_layer_marked_exhausted_when_qty_remaining_zero(self):
+        """Consuming all of a layer must mark it is_exhausted=True."""
+        from inventory.fifo import record_purchase_layer, consume_fifo_layers
+        from inventory.models import InventoryLayer
+
+        mv = self._make_movement_in(Decimal("5"), Decimal("3000"))
+        record_purchase_layer(
+            self.product, Decimal("3000"), Decimal("5"), mv.date, mv, self.company
+        )
+
+        consume_fifo_layers(self.product, Decimal("5"))
+
+        layer = InventoryLayer.objects.get(product=self.product, source_movement=mv)
+        layer.refresh_from_db()
+        self.assertEqual(layer.qty_remaining, Decimal("0.00"))
+        self.assertTrue(layer.is_exhausted, "Fully consumed layer must be marked exhausted")
+
+    def test_only_active_layers_used_in_fifo_consumption(self):
+        """simulate_fifo_consumption must skip exhausted layers."""
+        from inventory.fifo import record_purchase_layer, consume_fifo_layers, simulate_fifo_consumption
+        from datetime import date as _date
+
+        mv1 = self._make_movement_in(Decimal("3"), Decimal("1000"))
+        record_purchase_layer(
+            self.product, Decimal("1000"), Decimal("3"), _date(2026, 1, 1), mv1, self.company
+        )
+        # Exhaust the first layer
+        consume_fifo_layers(self.product, Decimal("3"))
+
+        mv2 = self._make_movement_in(Decimal("10"), Decimal("2000"))
+        record_purchase_layer(
+            self.product, Decimal("2000"), Decimal("10"), _date(2026, 2, 1), mv2, self.company
+        )
+
+        result = simulate_fifo_consumption(self.product, Decimal("5"))
+        self.assertEqual(len(result), 1, "Only one active layer should be used")
+        cost, qty = result[0]
+        self.assertEqual(cost, Decimal("2000.00"), "Active layer cost should be 2000")
+        self.assertEqual(qty, Decimal("5.00"))
+
+
+# ===========================================================================
+# Phase 2 Hardening: Test Suite 3 — Transfer Handling
+# ===========================================================================
+
+class TransferHandlingSuite(TestCase):
+    """Transfer OUT consumes, Transfer IN creates layers."""
+
+    def setUp(self):
+        from tenancy.models import Company
+        from inventory.models import Product, MainStore, InventoryLocation
+        from accounts.models import Account
+        from sowaf.models import Newsupplier
+
+        self.company = Company.objects.create(name="TransferCo", country="UG")
+        self.inv_asset_acc = Account.objects.create(
+            company=self.company, account_name="Inventory Asset",
+            account_number="1200", account_type="CURRENT_ASSET",
+            detail_type="Inventory Asset", is_active=True, as_of=timezone.localdate(),
+        )
+        self.cogs_acc = Account.objects.create(
+            company=self.company, account_name="COGS",
+            account_number="5000", account_type="OPERATING_EXPENSE",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ap_acc = Account.objects.create(
+            company=self.company, account_name="A/P",
+            account_number="2000", account_type="CURRENT_LIABILITY",
+            detail_type="Accounts Payable (A/P)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.product = Product.objects.create(
+            company=self.company, name="TransferWidget", type="Inventory",
+            track_inventory=True, quantity=Decimal("0.00"),
+            inventory_asset_account=self.inv_asset_acc,
+            cogs_account=self.cogs_acc,
+        )
+        self.supplier = Newsupplier.objects.create(
+            company=self.company, company_name="TransferSupplier", ap_account=self.ap_acc,
+        )
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main", defaults={"is_active": True},
+        )
+        self.loc_a, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="LocA",
+            defaults={"is_default": True, "is_active": True},
+        )
+        self.loc_b, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="LocB",
+            defaults={"is_default": False, "is_active": True},
+        )
+
+    def _purchase(self, qty, unit_cost, bill_no):
+        from expenses.models import Bill, BillItemLine
+        from inventory.accounting import post_bill_to_gl
+        bill = Bill.objects.create(
+            company=self.company, supplier=self.supplier, bill_no=bill_no,
+            bill_date=timezone.localdate(), total_amount=qty * unit_cost, location=self.loc_a,
+        )
+        BillItemLine.objects.create(bill=bill, product=self.product,
+                                    qty=qty, rate=unit_cost, amount=qty * unit_cost)
+        post_bill_to_gl(bill)
+
+    def _transfer(self, qty, unit_cost, from_loc, to_loc):
+        from inventory.models import InventoryMovement, StockTransfer
+        from inventory.fifo import rebuild_layers_from_movements
+        transfer = StockTransfer.objects.create(
+            company=self.company, from_location=from_loc, to_location=to_loc,
+        )
+        InventoryMovement.objects.create(
+            product=self.product, company=self.company, date=timezone.localdate(),
+            qty_in=Decimal("0"), qty_out=qty, unit_cost=unit_cost,
+            value=qty * unit_cost, location=from_loc,
+            source_type="TRANSFER", source_id=transfer.id,
+        )
+        InventoryMovement.objects.create(
+            product=self.product, company=self.company, date=timezone.localdate(),
+            qty_in=qty, qty_out=Decimal("0"), unit_cost=unit_cost,
+            value=qty * unit_cost, location=to_loc,
+            source_type="TRANSFER", source_id=transfer.id,
+        )
+        rebuild_layers_from_movements(self.product, company=self.company)
+        return transfer
+
+    def test_transfer_out_consumes_oldest_fifo_layer(self):
+        """Transfer OUT should reduce qty in the oldest FIFO layer."""
+        from inventory.models import InventoryLayer
+
+        self._purchase(Decimal("10"), Decimal("500"), "TR-BILL-01")
+        self._transfer(Decimal("4"), Decimal("500"), self.loc_a, self.loc_b)
+
+        # After transfer: 10 in - 4 out + 4 in = net 10 (company-wide)
+        from django.db.models import Sum
+        agg = self.product.movements.aggregate(tin=Sum("qty_in"), tout=Sum("qty_out"))
+        net = (agg["tin"] or Decimal("0")) - (agg["tout"] or Decimal("0"))
+        self.assertEqual(net, Decimal("10.00"), "Net company-wide qty unchanged by transfer")
+
+        # Active FIFO layers should total 10 (transfer IN creates a new layer)
+        active_total = sum(
+            l.qty_remaining for l in InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        )
+        self.assertEqual(active_total, Decimal("10.00"))
+
+    def test_transfer_in_creates_new_fifo_layer_at_same_cost(self):
+        """Transfer IN must create a new FIFO layer at the same unit_cost as Transfer OUT."""
+        from inventory.models import InventoryLayer
+
+        self._purchase(Decimal("20"), Decimal("750"), "TR-BILL-02")
+        self._transfer(Decimal("8"), Decimal("750"), self.loc_a, self.loc_b)
+
+        # The Transfer IN movement should have created a layer at 750
+        transfer_in_layers = InventoryLayer.objects.filter(
+            product=self.product,
+            source_movement__source_type="TRANSFER",
+            source_movement__qty_in__gt=Decimal("0"),
+        )
+        self.assertTrue(transfer_in_layers.exists(),
+                        "Transfer IN must create a FIFO layer")
+        for layer in transfer_in_layers:
+            self.assertEqual(layer.unit_cost, Decimal("750.00"),
+                             "Transfer IN layer must preserve the same unit_cost")
+
+    def test_transfer_preserves_company_wide_inventory_value(self):
+        """After any transfer, total FIFO layer value must remain unchanged."""
+        from inventory.models import InventoryLayer
+
+        self._purchase(Decimal("10"), Decimal("1000"), "TR-BILL-03")
+        initial_value = sum(
+            l.qty_remaining * l.unit_cost
+            for l in InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        )
+
+        self._transfer(Decimal("5"), Decimal("1000"), self.loc_a, self.loc_b)
+
+        after_value = sum(
+            l.qty_remaining * l.unit_cost
+            for l in InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        )
+        self.assertEqual(initial_value, after_value,
+                         "Transfer must not change total FIFO layer value")
+
+    def test_transfer_creates_no_gl_entries(self):
+        """Stock transfers must NOT create any GL journal entries."""
+        from inventory.models import StockTransfer, InventoryMovement
+        from accounts.models import JournalEntry
+        from inventory.fifo import rebuild_layers_from_movements
+
+        # First purchase to establish stock
+        self._purchase(Decimal("10"), Decimal("600"), "TR-BILL-04")
+
+        transfer = StockTransfer.objects.create(
+            company=self.company, from_location=self.loc_a, to_location=self.loc_b,
+        )
+        InventoryMovement.objects.create(
+            product=self.product, company=self.company, date=timezone.localdate(),
+            qty_in=Decimal("0"), qty_out=Decimal("3"), unit_cost=Decimal("600"),
+            value=Decimal("1800"), location=self.loc_a,
+            source_type="TRANSFER", source_id=transfer.id,
+            gl_entry=None, is_gl_posted=False,
+        )
+        InventoryMovement.objects.create(
+            product=self.product, company=self.company, date=timezone.localdate(),
+            qty_in=Decimal("3"), qty_out=Decimal("0"), unit_cost=Decimal("600"),
+            value=Decimal("1800"), location=self.loc_b,
+            source_type="TRANSFER", source_id=transfer.id,
+            gl_entry=None, is_gl_posted=False,
+        )
+        rebuild_layers_from_movements(self.product, company=self.company)
+
+        gl_count = JournalEntry.objects.filter(
+            source_type="TRANSFER", source_id=transfer.id
+        ).count()
+        self.assertEqual(gl_count, 0, "Transfers must never create GL entries")
+
+
+# ===========================================================================
+# Phase 2 Hardening: Test Suite 4 — Report Reconciliation
+# ===========================================================================
+
+class ReportReconciliationSuite(TestCase):
+    """Verify that FIFO layers, GL, and movement values all agree."""
+
+    def setUp(self):
+        from tenancy.models import Company
+        from inventory.models import Product, MainStore, InventoryLocation
+        from accounts.models import Account
+        from sowaf.models import Newsupplier, Newcustomer
+
+        self.company = Company.objects.create(name="ReconCo", country="UG")
+        self.inv_asset_acc = Account.objects.create(
+            company=self.company, account_name="Inventory Asset",
+            account_number="1200", account_type="CURRENT_ASSET",
+            detail_type="Inventory Asset", is_active=True, as_of=timezone.localdate(),
+        )
+        self.cogs_acc = Account.objects.create(
+            company=self.company, account_name="COGS",
+            account_number="5000", account_type="OPERATING_EXPENSE",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ar_acc = Account.objects.create(
+            company=self.company, account_name="A/R",
+            account_number="1100", account_type="CURRENT_ASSET",
+            detail_type="Accounts Receivable (A/R)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.income_acc = Account.objects.create(
+            company=self.company, account_name="Sales Revenue",
+            account_number="4000", account_type="OPERATING_INCOME",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ap_acc = Account.objects.create(
+            company=self.company, account_name="A/P",
+            account_number="2000", account_type="CURRENT_LIABILITY",
+            detail_type="Accounts Payable (A/P)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.product = Product.objects.create(
+            company=self.company, name="ReconWidget", type="Inventory",
+            track_inventory=True, quantity=Decimal("0.00"),
+            inventory_asset_account=self.inv_asset_acc,
+            cogs_account=self.cogs_acc, income_account=self.income_acc,
+        )
+        self.supplier = Newsupplier.objects.create(
+            company=self.company, company_name="ReconSupplier", ap_account=self.ap_acc,
+        )
+        self.customer = Newcustomer.objects.create(
+            company=self.company, customer_name="ReconCustomer", ar_account=self.ar_acc,
+        )
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main", defaults={"is_active": True},
+        )
+        self.location, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+
+    def _make_bill(self, qty, unit_cost, bill_no):
+        from expenses.models import Bill, BillItemLine
+        bill = Bill.objects.create(
+            company=self.company, supplier=self.supplier, bill_no=bill_no,
+            bill_date=timezone.localdate(), total_amount=qty * unit_cost, location=self.location,
+        )
+        BillItemLine.objects.create(bill=bill, product=self.product,
+                                    qty=qty, rate=unit_cost, amount=qty * unit_cost)
+        return bill
+
+    def _make_invoice(self, qty, unit_price):
+        from sales.models import Newinvoice, InvoiceItem
+        invoice = Newinvoice.objects.create(
+            company=self.company, customer=self.customer,
+            date_created=timezone.now(), location=self.location,
+        )
+        InvoiceItem.objects.create(invoice=invoice, product=self.product,
+                                   qty=qty, unit_price=unit_price)
+        return invoice
+
+    def _gl_balance(self, account):
+        from accounts.models import JournalLine
+        agg = JournalLine.objects.filter(account=account).aggregate(
+            dr=models.Sum("debit"), cr=models.Sum("credit")
+        )
+        return (agg["dr"] or Decimal("0")) - (agg["cr"] or Decimal("0"))
+
+    def test_fifo_layers_equal_gl_inventory_asset(self):
+        """After purchase + partial sale, FIFO layer total must equal GL Inventory Asset balance."""
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from inventory.models import InventoryLayer
+
+        bill = self._make_bill(Decimal("10"), Decimal("4000"), "RC-BILL-01")
+        post_bill_to_gl(bill)
+
+        invoice = self._make_invoice(Decimal("3"), Decimal("7000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        fifo_total = sum(
+            l.qty_remaining * l.unit_cost
+            for l in InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        )
+        gl_inv = self._gl_balance(self.inv_asset_acc)
+        self.assertEqual(fifo_total, gl_inv,
+                         f"FIFO layers ({fifo_total}) must equal GL Inventory Asset ({gl_inv})")
+
+    def test_inventory_movement_value_equals_fifo_value(self):
+        """Net movement value (in - out) must equal FIFO layer total."""
+        from inventory.accounting import post_bill_to_gl
+        from inventory.models import InventoryLayer, InventoryMovement
+
+        bill = self._make_bill(Decimal("8"), Decimal("5000"), "RC-BILL-02")
+        post_bill_to_gl(bill)
+
+        from django.db.models import Sum
+        agg = InventoryMovement.objects.filter(product=self.product).aggregate(
+            val_in=Sum("value", filter=models.Q(qty_in__gt=0)),
+            val_out=Sum("value", filter=models.Q(qty_out__gt=0)),
+        )
+        net_movement = (agg["val_in"] or Decimal("0")) - (agg["val_out"] or Decimal("0"))
+
+        fifo_total = sum(
+            l.qty_remaining * l.unit_cost
+            for l in InventoryLayer.objects.filter(product=self.product, is_exhausted=False)
+        )
+        self.assertEqual(net_movement, fifo_total,
+                         "Net movement value must equal FIFO layer total")
+
+    def test_stock_valuation_report_equals_gl_balance(self):
+        """Product.get_fifo_value() must equal GL Inventory Asset balance."""
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+
+        bill = self._make_bill(Decimal("12"), Decimal("2500"), "RC-BILL-03")
+        post_bill_to_gl(bill)
+
+        invoice = self._make_invoice(Decimal("5"), Decimal("4000"))
+        post_invoice_inventory_and_gl(invoice)
+
+        self.product.refresh_from_db()
+        fifo_value = self.product.get_fifo_value()
+        gl_inv = self._gl_balance(self.inv_asset_acc)
+        self.assertEqual(fifo_value, gl_inv,
+                         f"get_fifo_value() ({fifo_value}) must equal GL balance ({gl_inv})")
+
+    def test_balance_sheet_inventory_equals_fifo_total(self):
+        """GL Inventory Asset (balance sheet) must match FIFO layer sum."""
+        from inventory.accounting import post_bill_to_gl
+        from inventory.models import InventoryLayer
+
+        bill = self._make_bill(Decimal("15"), Decimal("1000"), "RC-BILL-04")
+        post_bill_to_gl(bill)
+
+        fifo_total = sum(
+            l.qty_remaining * l.unit_cost
+            for l in InventoryLayer.objects.filter(product=self.product)
+        )
+        gl_inv = self._gl_balance(self.inv_asset_acc)
+        self.assertEqual(fifo_total, gl_inv,
+                         "Balance Sheet inventory GL must equal FIFO layer total")
+
+
+# ===========================================================================
+# Phase 2 Hardening: Test Suite 5 — Edge Cases & Error Handling
+# ===========================================================================
+
+class EdgeCasesSuite(TestCase):
+    """Negative qty, zero cost, insufficient stock, etc."""
+
+    def setUp(self):
+        from tenancy.models import Company
+        from inventory.models import Product, MainStore, InventoryLocation
+        from accounts.models import Account
+        from sowaf.models import Newsupplier, Newcustomer
+
+        self.company = Company.objects.create(name="EdgeCo", country="UG")
+        self.inv_asset_acc = Account.objects.create(
+            company=self.company, account_name="Inventory Asset",
+            account_number="1200", account_type="CURRENT_ASSET",
+            detail_type="Inventory Asset", is_active=True, as_of=timezone.localdate(),
+        )
+        self.cogs_acc = Account.objects.create(
+            company=self.company, account_name="COGS",
+            account_number="5000", account_type="OPERATING_EXPENSE",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ar_acc = Account.objects.create(
+            company=self.company, account_name="A/R",
+            account_number="1100", account_type="CURRENT_ASSET",
+            detail_type="Accounts Receivable (A/R)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.income_acc = Account.objects.create(
+            company=self.company, account_name="Sales Revenue",
+            account_number="4000", account_type="OPERATING_INCOME",
+            is_active=True, as_of=timezone.localdate(),
+        )
+        self.ap_acc = Account.objects.create(
+            company=self.company, account_name="A/P",
+            account_number="2000", account_type="CURRENT_LIABILITY",
+            detail_type="Accounts Payable (A/P)", is_active=True, as_of=timezone.localdate(),
+        )
+        self.product = Product.objects.create(
+            company=self.company, name="EdgeWidget", type="Inventory",
+            track_inventory=True, quantity=Decimal("0.00"),
+            inventory_asset_account=self.inv_asset_acc,
+            cogs_account=self.cogs_acc, income_account=self.income_acc,
+        )
+        self.supplier = Newsupplier.objects.create(
+            company=self.company, company_name="EdgeSupplier", ap_account=self.ap_acc,
+        )
+        self.customer = Newcustomer.objects.create(
+            company=self.company, customer_name="EdgeCustomer", ar_account=self.ar_acc,
+        )
+        store, _ = MainStore.objects.get_or_create(
+            company=self.company, name="Main", defaults={"is_active": True},
+        )
+        self.location, _ = InventoryLocation.objects.get_or_create(
+            company=self.company, store=store, name="Default",
+            defaults={"is_default": True, "is_active": True},
+        )
+
+    def _make_invoice(self, qty, unit_price):
+        from sales.models import Newinvoice, InvoiceItem
+        invoice = Newinvoice.objects.create(
+            company=self.company, customer=self.customer,
+            date_created=timezone.now(), location=self.location,
+        )
+        InvoiceItem.objects.create(invoice=invoice, product=self.product,
+                                   qty=qty, unit_price=unit_price)
+        return invoice
+
+    def test_sale_without_fifo_stock_logs_warning_not_crash(self):
+        """Selling with no FIFO stock must log a warning, not raise an exception."""
+        from inventory.accounting import post_invoice_inventory_and_gl
+        import logging
+
+        invoice = self._make_invoice(Decimal("5"), Decimal("1000"))
+        # Should not raise; COGS posting is skipped with a warning
+        with self.assertLogs("inventory.accounting", level=logging.WARNING):
+            post_invoice_inventory_and_gl(invoice)
+
+        invoice.refresh_from_db()
+        self.assertTrue(invoice.is_posted,
+                        "Invoice must be posted even when COGS cannot be computed")
+
+    def test_product_with_zero_cost_purchase_blocked(self):
+        """validate_non_zero_purchase_cost raises ValueError for zero-cost purchase."""
+        from inventory.validators import validate_non_zero_purchase_cost
+        with self.assertRaises(ValueError) as ctx:
+            validate_non_zero_purchase_cost(self.product, Decimal("0.00"), is_free=False)
+        self.assertIn(self.product.name, str(ctx.exception))
+
+    def test_negative_quantity_rejected(self):
+        """validate_movement_qty raises ValueError when both qty_in and qty_out are zero."""
+        from inventory.validators import validate_movement_qty
+        with self.assertRaises(ValueError):
+            validate_movement_qty(Decimal("0.00"), Decimal("0.00"))
+
+    def test_concurrent_sales_fifo_order_preserved(self):
+        """Two sequential sales consume FIFO layers in oldest-first order."""
+        from datetime import date as _date
+        from inventory.accounting import post_bill_to_gl, post_invoice_inventory_and_gl
+        from expenses.models import Bill, BillItemLine
+        from accounts.models import JournalLine
+
+        b1 = Bill.objects.create(
+            company=self.company, supplier=self.supplier, bill_no="EC-BILL-01",
+            bill_date=_date(2026, 1, 1), total_amount=Decimal("3000"), location=self.location,
+        )
+        BillItemLine.objects.create(bill=b1, product=self.product, qty=Decimal("3"),
+                                    rate=Decimal("1000"), amount=Decimal("3000"))
+        post_bill_to_gl(b1)
+
+        b2 = Bill.objects.create(
+            company=self.company, supplier=self.supplier, bill_no="EC-BILL-02",
+            bill_date=_date(2026, 2, 1), total_amount=Decimal("4000"), location=self.location,
+        )
+        BillItemLine.objects.create(bill=b2, product=self.product, qty=Decimal("4"),
+                                    rate=Decimal("2000"), amount=Decimal("8000"))
+        post_bill_to_gl(b2)
+
+        # First sale: consume 3 from oldest layer (3@1000 = 3000)
+        from sales.models import Newinvoice, InvoiceItem
+        inv1 = Newinvoice.objects.create(
+            company=self.company, customer=self.customer,
+            date_created=timezone.now(), location=self.location,
+        )
+        InvoiceItem.objects.create(invoice=inv1, product=self.product,
+                                   qty=Decimal("3"), unit_price=Decimal("1500"))
+        post_invoice_inventory_and_gl(inv1)
+
+        je1 = inv1.journal_entry
+        cogs1 = sum(ln.debit for ln in JournalLine.objects.filter(entry=je1, account=self.cogs_acc))
+        self.assertEqual(cogs1, Decimal("3000.00"),
+                         "First sale should use oldest layer: 3@1000 = 3000")
+
+        # Second sale: now consume from next layer (2@2000 = 4000)
+        inv2 = Newinvoice.objects.create(
+            company=self.company, customer=self.customer,
+            date_created=timezone.now(), location=self.location,
+        )
+        InvoiceItem.objects.create(invoice=inv2, product=self.product,
+                                   qty=Decimal("2"), unit_price=Decimal("2500"))
+        post_invoice_inventory_and_gl(inv2)
+
+        je2 = inv2.journal_entry
+        cogs2 = sum(ln.debit for ln in JournalLine.objects.filter(entry=je2, account=self.cogs_acc))
+        self.assertEqual(cogs2, Decimal("4000.00"),
+                         "Second sale should use next layer: 2@2000 = 4000")

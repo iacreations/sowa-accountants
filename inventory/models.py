@@ -215,6 +215,18 @@ class Product(TenantModel):
                 "FIFO is currently the only supported inventory valuation method."
             )
 
+        # Rule 2: track_inventory=True requires inventory_asset_account
+        if self.track_inventory and not self.inventory_asset_account_id:
+            errors["inventory_asset_account"] = (
+                "An Inventory Asset account is required when Track Inventory is enabled."
+            )
+
+        # Rule 3: track_inventory=True requires cogs_account
+        if self.track_inventory and not self.cogs_account_id:
+            errors["cogs_account"] = (
+                "A Cost of Goods Sold account is required when Track Inventory is enabled."
+            )
+
         if errors:
             raise ValidationError(errors)
 
