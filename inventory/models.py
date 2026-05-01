@@ -210,7 +210,7 @@ class Product(TenantModel):
             errors["cogs_account"] = "COGS account must belong to the same company."
 
         # Enforce FIFO as the only supported inventory valuation method.
-        if self.valuation_method and self.valuation_method != "FIFO":
+        if self.valuation_method != "FIFO":
             errors["valuation_method"] = (
                 "FIFO is currently the only supported inventory valuation method."
             )
