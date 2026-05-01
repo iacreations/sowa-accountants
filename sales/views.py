@@ -1098,7 +1098,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
 
     sr_post_date = getattr(receipt, "receipt_date", None) or timezone.localdate()
 
-    affected_products = set()
+    products_needing_fifo_rebuild = set()
 
     for line in receipt.lines.select_related("product").all():
         p = getattr(line, "product", None)
@@ -1126,7 +1126,9 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         except ValueError as exc:
             logger.warning(
                 "Sales receipt #%s: insufficient FIFO stock for product '%s' (id=%s, qty=%s). "
-                "Stock movement and COGS/inventory GL posting skipped for this line item. Detail: %s",
+                "Stock movement and COGS/inventory GL posting skipped for this line item. "
+                "This may result in incomplete financial records — verify inventory levels and "
+                "consider posting a stock adjustment to correct the balance. Detail: %s",
                 receipt.id, p.name, p.id, qty, exc,
             )
             continue
@@ -1151,13 +1153,13 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
                 cogs_by_acc[cogs_acc] += layer_value
                 inv_by_acc[inv_acc] += layer_value
 
-        affected_products.add(p)
+        products_needing_fifo_rebuild.add(p)
 
     # Rebuild FIFO layers and recompute cached quantity from movements for all
     # affected products.  Use a single aggregate query across all products to
     # minimise database round trips.
-    if affected_products:
-        product_ids = [p.id for p in affected_products]
+    if products_needing_fifo_rebuild:
+        product_ids = {p.id for p in products_needing_fifo_rebuild}
         totals_qs = (
             InventoryMovement.objects
             .filter(product_id__in=product_ids)
@@ -1166,7 +1168,7 @@ def _post_sales_receipt_to_ledger(company, receipt: SalesReceipt):
         )
         totals_by_product = {row["product_id"]: row for row in totals_qs}
 
-        for p in affected_products:
+        for p in products_needing_fifo_rebuild:
             row = totals_by_product.get(p.id, {})
             p.quantity = _inv_dec(row.get("total_in")) - _inv_dec(row.get("total_out"))
             p.save(update_fields=["quantity"])
