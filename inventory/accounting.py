@@ -175,18 +175,19 @@ def _fallback_ar_account(customer, company=None):
     return _find_account_by_name_contains("Accounts Receivable", company) or _find_account_by_name_contains("Receivable", company)
 
 
-def _fallback_sales_account(product: Product, company=None):
+def _fallback_sales_account(product, company=None):
     """
     Income fallback:
-      1) product.income_account
+      1) product.income_account (when product is not None)
       2) "Sales"
       3) account contains "Sales"/"Revenue"
     """
-    company = company or getattr(product, "company", None)
+    company = company or (getattr(product, "company", None) if product else None)
     company_id = getattr(company, "id", company) if company is not None else None
-    inc = getattr(product, "income_account", None)
-    if inc:
-        return inc
+    if product is not None:
+        inc = getattr(product, "income_account", None)
+        if inc:
+            return inc
 
     qs = Account.objects.filter(account_name__iexact="Sales", is_active=True)
     if company_id:
@@ -196,6 +197,34 @@ def _fallback_sales_account(product: Product, company=None):
         return sales
 
     return _find_account_by_name_contains("Sales", company) or _find_account_by_name_contains("Revenue", company)
+
+
+def _fallback_vat_account(company=None):
+    """
+    VAT Payable account fallback.
+
+    Priority:
+      1) Account named exactly "VAT Payable"
+      2) Any active liability account containing "VAT"
+      3) None (caller skips VAT line if no account found)
+    """
+    company_id = getattr(company, "id", company) if company is not None else None
+
+    qs = Account.objects.filter(account_name__iexact="VAT Payable", is_active=True)
+    if company_id:
+        qs = qs.filter(company_id=company_id)
+    acc = qs.first()
+    if acc:
+        return acc
+
+    qs = Account.objects.filter(
+        account_name__icontains="VAT",
+        is_active=True,
+        account_type__in=["CURRENT_LIABILITY", "NON_CURRENT_LIABILITY"],
+    )
+    if company_id:
+        qs = qs.filter(company_id=company_id)
+    return qs.first()
 
 
 # -----------------------------
@@ -557,17 +586,41 @@ post_expense_inventory = post_expense_to_gl
 # -----------------------------
 def post_invoice_inventory_and_gl(invoice):
     """
-    INVOICE:
+    ════════════════════════════════════════════════════════════════════════
+    SINGLE SOURCE OF TRUTH for all invoice GL posting.
+    ════════════════════════════════════════════════════════════════════════
+
+    This is the canonical function for posting a sales invoice to the
+    General Ledger.  All invoice-related accounting — revenue, VAT, COGS,
+    and inventory movements — flows through this function.
+
+    Do NOT add COGS or inventory posting elsewhere (e.g. in
+    _post_invoice_to_ledger).  Duplicate postings will unbalance the GL.
+
+    Posts ONE balanced journal entry per invoice:
+
       A) Revenue side:
           Dr A/R (customer.ar_account or fallback)
-          Cr Income (product.income_account per line)
-      B) COGS side for inventory products:
-          Dr COGS (product.cogs_account OR product.expense_account OR fallback)
-          Cr Inventory Asset (product.inventory_asset_account OR fallback)
-      C) InventoryMovement qty_out using FIFO cost layers (one movement per FIFO layer consumed)
+              = net_revenue + VAT + shipping
+          Cr Income (product.income_account, per line)
+              = line.amount − line.vat  (net of VAT, after discount)
+          Cr Income (default account, shipping_fee)
+          Cr VAT Payable (if invoice.total_vat > 0)
+
+      B) COGS side — inventory products only (FIFO costing):
+          Dr COGS     (product.cogs_account or fallback)  = FIFO cost
+          Cr Inventory Asset (product.inv_asset_account)  = FIFO cost
+
+      C) InventoryMovement qty_out records linked to this JE (one per FIFO layer)
+
+    Marks invoice.is_posted = True and sets invoice.journal_entry.
+    Sets invoice._skip_inventory_signal = True to prevent signal double-run.
     """
+    import logging
     from sales.models import InvoiceItem
     from inventory.fifo import simulate_fifo_consumption, rebuild_layers_from_movements
+
+    logger = logging.getLogger("inventory.accounting")
 
     company = getattr(invoice, "company", None)
     source_type = "INVOICE"
@@ -580,13 +633,21 @@ def post_invoice_inventory_and_gl(invoice):
         _clear_inventory_movements(source_type, source_id)
         _delete_journal_entry_if_exists(invoice)
 
+        # Also clear any legacy lowercase "invoice" source_type entries that may
+        # have been created by the old _post_invoice_to_ledger code path.
+        company_id = getattr(company, "id", company) if company is not None else None
+        from accounts.models import JournalEntry as _JE
+        legacy_qs = _JE.objects.filter(source_type="invoice", source_id=source_id)
+        if company_id:
+            legacy_qs = legacy_qs.filter(company_id=company_id)
+        legacy_qs.delete()
+
         je = _create_journal_entry(
             date=post_date,
             description=f"Invoice {invoice.id} posting",
             source_type=source_type,
             source_id=source_id,
         )
-        company_id = getattr(company, "id", company) if company is not None else None
         if company_id:
             je.company_id = company_id
             je.save(update_fields=["company"])
@@ -594,9 +655,12 @@ def post_invoice_inventory_and_gl(invoice):
         # A/R account (fallback safe)
         ar_acc = _fallback_ar_account(customer, company=company)
         if not ar_acc:
-            raise ValueError("Missing Accounts Receivable account. Create one or set customer.ar_account.")
+            raise ValueError(
+                "Missing Accounts Receivable account. "
+                "Create one or set customer.ar_account."
+            )
 
-        total_ar = DEC0
+        total_revenue = DEC0
         affected_products = set()
 
         lines = InvoiceItem.objects.filter(invoice=invoice).select_related("product")
@@ -606,32 +670,58 @@ def post_invoice_inventory_and_gl(invoice):
                 continue
 
             qty = _dec(getattr(ln, "qty", None))
-            unit_price = _dec(getattr(ln, "unit_price", None))
-
             if qty <= 0:
                 continue
 
-            line_sales = (qty * unit_price).quantize(_Q2, rounding=ROUND_HALF_UP)
-            total_ar += line_sales
+            # Net revenue = line amount minus VAT (accounts for discounts).
+            # line.amount = (qty × unit_price − discount) + vat
+            # net_revenue = line.amount − vat  = qty × price − discount
+            line_vat = _dec(getattr(ln, "vat", None))
+            line_amount = _dec(getattr(ln, "amount", None))
+            line_revenue = (line_amount - line_vat).quantize(_Q2, rounding=ROUND_HALF_UP)
+            if line_revenue <= DEC0:
+                # Non-positive revenue line — still consume inventory if tracked
+                line_revenue = DEC0
 
             income_acc = _fallback_sales_account(product, company=company)
             if not income_acc:
-                raise ValueError(f"Product '{product.name}' missing income_account AND no fallback Sales/Revenue account exists.")
+                raise ValueError(
+                    f"Product '{product.name}' missing income_account AND "
+                    "no fallback Sales/Revenue account exists."
+                )
 
-            _add_line(je=je, account=income_acc, debit=DEC0, credit=line_sales, customer=customer)
+            if line_revenue > DEC0:
+                _add_line(je=je, account=income_acc, debit=DEC0, credit=line_revenue, customer=customer)
+                total_revenue += line_revenue
 
-            # Inventory side
-            if getattr(product, 'track_inventory', False):
+            # ── COGS / Inventory side (FIFO costing) ────────────────────────
+            if getattr(product, "track_inventory", False):
                 cogs_acc = _fallback_cogs_account(product, company=company)
                 inv_acc = _fallback_inventory_asset_account(product, company=company)
 
                 if not cogs_acc:
-                    raise ValueError(f"Product '{product.name}' missing cogs_account/expense_account and no COGS fallback found.")
+                    raise ValueError(
+                        f"Product '{product.name}' missing cogs_account/expense_account "
+                        "and no COGS fallback found."
+                    )
                 if not inv_acc:
-                    raise ValueError(f"Product '{product.name}' missing inventory_asset_account and no Inventory/Expense fallback found.")
+                    raise ValueError(
+                        f"Product '{product.name}' missing inventory_asset_account "
+                        "and no Inventory/Expense fallback found."
+                    )
 
-                # Use FIFO simulation to get per-layer unit costs (read-only)
-                fifo_rows = simulate_fifo_consumption(product, qty)
+                # FIFO simulation is read-only; layers are consumed after this block.
+                try:
+                    fifo_rows = simulate_fifo_consumption(product, qty)
+                except ValueError as exc:
+                    logger.warning(
+                        "Invoice #%s: insufficient FIFO stock for product '%s' "
+                        "(id=%s, qty=%s). COGS/inventory GL posting skipped for "
+                        "this line. Verify inventory levels. Detail: %s",
+                        invoice.id, product.name, product.id, qty, exc,
+                    )
+                    continue
+
                 for layer_cost, layer_qty in fifo_rows:
                     layer_value = (layer_qty * layer_cost).quantize(_Q2, rounding=ROUND_HALF_UP)
                     InventoryMovement.objects.create(
@@ -648,12 +738,30 @@ def post_invoice_inventory_and_gl(invoice):
                         gl_entry=je,
                         is_gl_posted=True,
                     )
-                    _add_line(je=je, account=cogs_acc, debit=layer_value, credit=DEC0)
-                    _add_line(je=je, account=inv_acc, debit=DEC0, credit=layer_value)
+                    if layer_value > DEC0:
+                        _add_line(je=je, account=cogs_acc, debit=layer_value, credit=DEC0)
+                        _add_line(je=je, account=inv_acc, debit=DEC0, credit=layer_value)
 
                 affected_products.add(product)
 
-        if total_ar > 0:
+        # ── Shipping fee → revenue ───────────────────────────────────────────
+        shipping_fee = _dec(getattr(invoice, "shipping_fee", None))
+        if shipping_fee > DEC0:
+            shipping_acc = _fallback_sales_account(None, company=company)
+            if shipping_acc:
+                _add_line(je=je, account=shipping_acc, debit=DEC0, credit=shipping_fee, customer=customer)
+                total_revenue += shipping_fee
+
+        # ── VAT Payable ──────────────────────────────────────────────────────
+        vat_total = _dec(getattr(invoice, "total_vat", None))
+        if vat_total > DEC0:
+            vat_acc = _fallback_vat_account(company=company)
+            if vat_acc:
+                _add_line(je=je, account=vat_acc, debit=DEC0, credit=vat_total)
+
+        # ── Accounts Receivable (debit = revenue + VAT + shipping) ───────────
+        total_ar = total_revenue + (vat_total if vat_total > DEC0 else DEC0)
+        if total_ar > DEC0:
             _add_line(je=je, account=ar_acc, debit=total_ar, credit=DEC0, customer=customer)
 
         # Rebuild FIFO layers and update cached qty for all affected products
@@ -1017,4 +1125,5 @@ def post_stock_adjustment_to_gl(adjustment):
             rebuild_layers_from_movements(product, company=company)
 
         adjustment.journal_entry = je
+        adjustment._skip_inventory_signal = True
         adjustment.save(update_fields=["journal_entry"])
