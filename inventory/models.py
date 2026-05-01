@@ -208,11 +208,9 @@ class Product(TenantModel):
         return (self.quantity or Decimal("0.00")) * (self.avg_cost or Decimal("0.00"))
 
     def get_fifo_value(self):
-        """Return the value of on-hand stock using FIFO cost layers (oldest layer cost × qty)."""
-        oldest = self.fifo_layers.filter(is_exhausted=False).order_by("date_created", "id").first()
-        if oldest:
-            return (self.quantity or Decimal("0.00")) * (oldest.unit_cost or Decimal("0.00"))
-        return Decimal("0.00")
+        """Return the value of on-hand stock using FIFO cost layers (sum of qty_remaining × unit_cost per layer)."""
+        from inventory.fifo import calculate_inventory_value_fifo
+        return calculate_inventory_value_fifo(self)
 
     def __str__(self):
         return self.name or "Product"

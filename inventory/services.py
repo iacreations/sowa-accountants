@@ -25,14 +25,19 @@ def D(v) -> Decimal:
 
 
 def is_inventory(p: Optional[Product]) -> bool:
-    return bool(
-        p and (p.type or "").strip().lower() in [
-            "inventory",
-            "inventory item",
-            "inventory_item",
-            "stock",
-        ]
-    )
+    if not p:
+        return False
+    # A product with track_inventory=True is always treated as an inventory item,
+    # regardless of its type field, because the GL posting path in accounting.py
+    # gates on this flag.
+    if getattr(p, 'track_inventory', False):
+        return True
+    return (p.type or "").strip().lower() in [
+        "inventory",
+        "inventory item",
+        "inventory_item",
+        "stock",
+    ]
 
 
 def safe_qty(v) -> Decimal:
